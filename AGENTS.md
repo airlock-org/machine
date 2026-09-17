@@ -6,8 +6,8 @@
   and Qubes' own tests.
 - Keep Nix as the source of truth wherever practical, but accept existing Qubes
   runtime state such as `qubes.xml` for the first milestone.
-- Physical deployment orchestration lives in the parent `airlock-dev`
-  repository. Commit OS changes here first, then update and commit the `os/`
+- Physical deployment orchestration lives in the parent `airlock`
+  repository. Commit machine changes here first, then update and commit the `airlock-machine/`
   submodule pointer there. A successful build is not a live deployment.
 - Keep development observation separate from production behavior. Observation
   tools should report state without expanding Qubes control authority.

@@ -1,6 +1,6 @@
-# Airlock OS
+# Airlock Machine
 
-`airlock-os` is the independently buildable operating-system source for
+`airlock-machine` is the independently buildable whole-machine source for
 Airlock. It owns the whole-machine Nix configuration, declared dom0 and Qubes
 VM systems, runtime services and packages, bootstrap configuration, and the
 tests that maintain those components. It preserves Qubes' Xen, qrexec,
@@ -30,6 +30,6 @@ make machine-build
 ```
 
 USB image assembly, flashing, provisioning, development-host orchestration,
-and cross-repository deployment tests live in `airlock-dev`. That repository
-pins this one as its `os/` Git submodule and adapts the same machine definitions
+and cross-repository deployment tests live in the main `airlock` repository.
+That repository pins this one as its `airlock-machine/` Git submodule and adapts the same machine definitions
 to the prepared-store USB image format.

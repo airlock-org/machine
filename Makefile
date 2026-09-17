@@ -1,7 +1,7 @@
 SHELL := bash
 
 AIRLOCK_NIX := ./lifecycle/misc/tools/scripts/airlock-nix.sh
-AIRLOCK_LOG_DIR ?= /run/media/user/data/airlock/logs/airlock-os
+AIRLOCK_LOG_DIR ?= /run/media/user/data/airlock/logs/airlock-machine
 
 .PHONY: test-quick check-eval machine-build machine-build-gui gc-auto gc-roots gc-dry-run gc
 
