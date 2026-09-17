@@ -398,6 +398,7 @@
             package = self.packages.${system}.airlock-qubes-vm-kernel;
           };
           airlockGuiDomain = machineDomain "hybrid";
+          airlockMachineGuestEntries = entries;
           airlockSourceRevision = self.rev or "dirty";
           airlockSourceLockHash = builtins.hashFile "sha256" ./flake.lock;
         } // extraSpecialArgs;
