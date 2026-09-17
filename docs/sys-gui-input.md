@@ -109,7 +109,7 @@ with a non-dom0 source value exited 1. This is a handler guard check, not an
 end-to-end policy test from another VM. No full image rebuild or full test
 suite was run. Evidence is in `.airlock-logs/input-proxy/` on the workstation.
 The repository-wide commit formatting hook failed on two unchanged files,
-The parent `airlock-dev` repository owns the image preflight command and nested
+The parent `airlock` repository owns the image preflight command and nested
 GUI integration test.
 Those existing formatting issues were left untouched; the hook was skipped
 for the two scoped commits after the checks above.

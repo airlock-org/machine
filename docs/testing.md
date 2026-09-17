@@ -192,7 +192,7 @@ After increasing `AIRLOCK_VM_MEMORY` or the launcher default, power off nested
 dom0 and wait for QEMU to exit before running `make test-warm` again:
 
 ```bash
-# Run from the parent airlock-dev checkout:
+# Run from the parent airlock checkout:
 ./lifecycle/misc/tools/scripts/ssh-nested-vm.sh 'sudo -n systemctl poweroff'
 ```
 
@@ -295,7 +295,7 @@ Inside nested dom0, cached Qubes RPM/template inputs are copied to:
 ## Generated State
 
 The source tree, Nix code, scripts, docs, and Git history stay in
-`/home/user/dev/airlock`. The Airlock Nix store is a chroot local store at:
+`/home/user/dev/airlock-org/airlock`. The Airlock Nix store is a chroot local store at:
 
 ```text
 /run/media/user/data/airlock/nix-root

@@ -18,7 +18,7 @@ PCI ROM identity. Construct a new VFCT containing only that image, labelled
 with the GPU's observed *guest* PCI address. The ROM bytes are unchanged;
 unrelated ACPI tables, UUID and library entries are not forwarded.
 
-The parent `airlock-dev` image tool `lifecycle/image/tools/amd-vbios.py`
+The parent `airlock` image tool `lifecycle/image/tools/amd-vbios.py`
 implements this offline transformation.
 It contains no PCI writes, reset operations, firmware flashing, device
 assignment or VM-start commands. Outputs require a new directory; existing
@@ -68,7 +68,7 @@ Guest VFCT:c3d6e50174efb225c6fa610458a6d43c1b256a7ebacd0568283234807951329e
 Local capture/preparation command (paths are example local artifacts):
 
 ```sh
-python3 ../airlock-dev/lifecycle/image/tools/amd-vbios.py \
+python3 ../airlock/lifecycle/image/tools/amd-vbios.py \
   --input .airlock-logs/amd-vbios/host-vfct.bin \
   --sha256 933b77e50ac746abddba4e5779993ea93e7f381559422687b7fb34e85fe9d8a1 \
   --host-bdf 0000:04:00.0 --guest-bdf 0000:00:05.0 --device 1681 \

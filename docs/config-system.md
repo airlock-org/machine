@@ -333,7 +333,7 @@ Implementation references: [closure manifest construction](../lifecycle/misc/lib
 (`mkNixStoreClosureManifest`), [domain admission](../lifecycle/runtime/tools/scripts/nix-domain-storage.py)
 (`ensure_shared_store`), and [object reuse and copying](../lifecycle/runtime/tools/pkgs/airlock-qubes-storage/src/airlock_qubes_storage/_engine/objects.py)
 (`admit_object_tar_fragment`, `append_file_to_open_segment_blob`).
-Prepared images are assembled by the parent `airlock-dev` repository's
+Prepared images are assembled by the parent `airlock` repository's
 `lifecycle/image/prepared-guest-store.nix` and USB adapter, while
 [preparation/verification](../lifecycle/runtime/tools/pkgs/airlock-qubes-storage/src/airlock_qubes_storage/_engine/prepared.py).
 
@@ -584,7 +584,7 @@ Explicit flake outputs are also available, for example
 The expected repository path is:
 
 ```text
-/home/user/dev/airlock
+/home/user/dev/airlock-org/airlock
 ```
 
 Airlock does not bake a mutable checkout into the immutable VM closure. If that

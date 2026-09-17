@@ -71,7 +71,7 @@ the dedicated `vm-gpu-lab` directory and SSH port 2322. Wait for
 In another terminal:
 
 ```sh
-# Run from the parent airlock-dev checkout:
+# Run from the parent airlock checkout:
 AIRLOCK_VM_SSH_PORT=2322 ./lifecycle/misc/tools/scripts/ssh-nested-vm.sh
 sudo qvm-start sys-gpu
 sudo qvm-run --pass-io sys-gpu airlock-gpu-probe

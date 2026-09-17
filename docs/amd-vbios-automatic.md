@@ -153,7 +153,7 @@ make usb-dev-provision USB_SERIAL=YOUR_SERIAL
 The libvirt checks only convert synthetic configurations; they do not define
 or start a domain. Without the explicit SSH environment variable they skip.
 The normal provisioning command no longer copies workstation VBIOS artifacts.
-The offline `airlock-dev/lifecycle/image/tools/amd-vbios.py` command is retained for inspection
+The offline `airlock/lifecycle/image/tools/amd-vbios.py` command is retained for inspection
 and historical experiments, using the same validator as the startup extension.
 
 The running laptop uses temporary systemd overrides under `/run`; a reboot
