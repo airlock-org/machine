@@ -6,16 +6,13 @@
   and Qubes' own tests.
 - Keep Nix as the source of truth wherever practical, but accept existing Qubes
   runtime state such as `qubes.xml` for the first milestone.
-- For physical lab development, read `docs/machine-deployment.md` first. Change
-  and commit this repo, then use `make machine-plan` / `make machine-apply`
-  with `DEPLOY_TARGET=...`; verify the resulting whole-machine generation.
-  Never leave successful fixes only in a live VM, `/run`, or an ad-hoc overlay.
-  Record any unavoidable diagnostic mutation and remove it before verification.
-  A successful build is not a successful live deployment; report both separately.
+- Physical deployment orchestration lives in the parent `airlock-dev`
+  repository. Commit OS changes here first, then update and commit the `os/`
+  submodule pointer there. A successful build is not a live deployment.
 - Keep development observation separate from production behavior. Observation
   tools should report state without expanding Qubes control authority.
-- `make test-quick` is the primary feedback loop. Preserve clear logs and
-  machine-readable output under `.airlock-logs/`.
+- `make test-quick` is the primary component feedback loop. Preserve clear logs
+  and machine-readable output under the external Airlock log directory.
 - New tests should be written in the pytest framework. Do not add new Bash test
   scripts; migrate or extend pytest coverage instead.
 - Do not make full GUI support block the first qrexec/VM lifecycle milestone.

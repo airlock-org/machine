@@ -360,9 +360,8 @@
           ];
         };
 
-      mkUsbConfiguration = system:
-      let
-        entries = {
+      machineGuestEntries = system:
+        {
           hybrid = mkUsbSysGuiDomainEntry system;
           gui-lab = mkUsbAmdSysGuiDomainEntry system "gnome" false true;
           gui-lab-hyprland = mkUsbAmdSysGuiDomainEntry system "hyprland" false true;
@@ -372,16 +371,22 @@
           lab-usr-home = (bootstrapDomains.mkHomeVmDomainEntry system) // { preparedDomainName = "usr-home"; };
           lab-usr-browser = (bootstrapDomains.mkBrowserVmDomainEntry system) // { preparedDomainName = "usr-browser"; };
         };
-        preparedStore = import ./lifecycle/image/prepared-guest-store.nix {
-          inherit lib entries;
-          pkgs = pkgsFor system;
-        };
-        preparedDomain = name:
+
+      mkMachineConfiguration =
+        {
+          system ? "x86_64-linux",
+          storeSources ? { },
+          extraModules ? [ ],
+          extraSpecialArgs ? { },
+        }:
+      let
+        entries = machineGuestEntries system;
+        machineDomain = name:
           let domain = materializeNixClosureDomain entries.${name};
           in domain // {
             backend = domain.backend // {
               store = domain.backend.store // {
-                source = "${preparedStore.descriptors}/${name}";
+                source = storeSources.${name} or (toString entries.${name}.storeArtifact);
               };
             };
           };
@@ -392,16 +397,15 @@
             name = airlockQubesVmKernelName;
             package = self.packages.${system}.airlock-qubes-vm-kernel;
           };
-          airlockGuiDomain = preparedDomain "hybrid";
-          airlockUsbPreparedStore = preparedStore;
-          airlockUsbGuestEntries = entries;
+          airlockGuiDomain = machineDomain "hybrid";
           airlockSourceRevision = self.rev or "dirty";
           airlockSourceLockHash = builtins.hashFile "sha256" ./flake.lock;
-        };
+        } // extraSpecialArgs;
         modules = [
           self.nixosModules.dom0
-          ./lifecycle/image/profiles/usb-dev.nix
+          ./lifecycle/image/profiles/machine-host.nix
           ./lifecycle/misc/modules/machine-deployment.nix
+          ./lifecycle/misc/modules/machine-release.nix
           ./lifecycle/image/hardware/thinkpad-t14-gen3-amd.nix
           ({ lib, ... }: {
             airlock.machineDeployment.enable = true;
@@ -417,7 +421,7 @@
               # Replace hybrid guest fields, leaving PCI selection to the
               # reusable module and this machine's hardware inventory.
               airlock.qubes.domains.sys-gui = lib.mapAttrs (_: lib.mkForce)
-                (builtins.removeAttrs (preparedDomain "gui-lab") [ "devices" ]);
+                (builtins.removeAttrs (machineDomain "gui-lab") [ "devices" ]);
             };
             # Keep the guest builders below for future experiments, but do not
             # emit Hyprland or XFCE boot-menu entries during USB-lab work.
@@ -430,7 +434,7 @@
                 # Keep this explicit physical assignment in the forced prepared
                 # descriptor. Without it, the descriptor's device defaults can
                 # win during specialisation merging and sys-gui starts headless.
-                sys-gui = (builtins.removeAttrs (preparedDomain "lab-gui") [ "devices" ]) // {
+                sys-gui = (builtins.removeAttrs (machineDomain "lab-gui") [ "devices" ]) // {
                   devices.pci = [
                     {
                       backend = "dom0";
@@ -441,13 +445,13 @@
                     }
                   ];
                 };
-                sys-dev = preparedDomain "lab-sys-dev";
-                usr-home = preparedDomain "lab-usr-home";
-                usr-browser = (preparedDomain "lab-usr-browser") // { netvm = "sys-dev"; };
+                sys-dev = machineDomain "lab-sys-dev";
+                usr-home = machineDomain "lab-usr-home";
+                usr-browser = (machineDomain "lab-usr-browser") // { netvm = "sys-dev"; };
               };
             };
           })
-        ];
+        ] ++ extraModules;
       };
 
       mkModuleContractCheck =
@@ -520,6 +524,7 @@
         airlockSystem = import ./lifecycle/misc/lib/system.nix;
         airlockTopology = import ./lifecycle/misc/lib/topology.nix;
         airlockQubeTemplate = import ./lifecycle/misc/lib/qube-template.nix;
+        inherit machineGuestEntries mkMachineConfiguration;
       };
 
       airlock.configInputs = airlockConfigInputs;
@@ -601,10 +606,12 @@
           airlock-gpu-probe = pkgs.callPackage ./lifecycle/misc/tools/pkgs/airlock-gpu-probe { };
           airlock-domain-sys-gpu-root-image = (mkSysGpuDomainEntry system).rootImage;
           airlock-domain-sys-gpu-store-closure = (mkSysGpuDomainEntry system).storeArtifact;
+          airlock-machine-release-usb-lab =
+            self.nixosConfigurations.machine.config.specialisation.usb-lab.configuration.system.build.airlockMachineRelease;
+          airlock-machine-release-usb-gui-lab =
+            self.nixosConfigurations.machine.config.specialisation.usb-gui-lab.configuration.system.build.airlockMachineRelease;
           airlock-vm-gpu-lab-image = self.nixosConfigurations.vm-gpu-lab.config.system.build.image;
           airlock-vm-gui-minimal-image = self.nixosConfigurations.vm-gui-minimal.config.system.build.image;
-          airlock-usb-dev-image = self.nixosConfigurations.usb-dev.config.system.build.image;
-          airlock-usb-dom0-console-image = self.nixosConfigurations.usb-dom0-console.config.system.build.image;
           airlock-domain-sys-gui-minimal-root-image = (mkMinimalSysGuiDomainEntry system).rootImage;
           airlock-domain-sys-gui-minimal-store-closure = (mkMinimalSysGuiDomainEntry system).storeArtifact;
           airlock-qubes-vm-kernel = pkgs.repackRpmKernel {
@@ -713,7 +720,8 @@
 
       # Minimal nested desktop harness. No physical GPU assignment and no
       # dependency on the full bootstrap/configuration VM topology.
-      nixosConfigurations.usb-dev = mkUsbConfiguration "x86_64-linux";
+      nixosConfigurations.machine = mkMachineConfiguration { };
+      nixosConfigurations.usb-dev = self.nixosConfigurations.machine;
       nixosConfigurations.airlock-domain-sys-gui-usb =
         (mkUsbSysGuiDomainEntry "x86_64-linux").configuration;
       nixosConfigurations.airlock-domain-sys-gui-usb-gui-lab =
@@ -724,14 +732,6 @@
         (mkUsbAmdSysGuiDomainEntry "x86_64-linux" "xfce" false true).configuration;
       nixosConfigurations.airlock-domain-sys-gui-usb-lab =
         (mkUsbAmdSysGuiDomainEntry "x86_64-linux" "gnome" true false).configuration;
-
-      nixosConfigurations.usb-dom0-console = lib.nixosSystem {
-        system = "x86_64-linux";
-        modules = [
-          self.nixosModules.dom0
-          ./lifecycle/image/profiles/usb-dom0-console.nix
-        ];
-      };
 
       nixosConfigurations.vm-gui-minimal = mkVmConfiguration {
         gui = true;
