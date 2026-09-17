@@ -43,6 +43,54 @@ def clear_running(args):
     return clear_running_ref(args.pool_root, args.domain, args.generation, args.volume)
 
 
+def find_generation(args):
+    """Find the newest inactive/retained generation matching a release entry."""
+    root = ensure_pool(args.pool_root)
+    domain = safe_domain_name(args.domain)
+    generations = root / "domains" / domain / "generations"
+    matches = []
+    if generations.exists():
+        for directory in generations.iterdir():
+            if not directory.is_dir() or not directory.name.isdigit():
+                continue
+            manifest_path = directory / "manifest.json"
+            if not manifest_path.exists():
+                continue
+            manifest = read_json(manifest_path)
+            store = manifest.get("store", {})
+            approval = manifest.get("approval", {})
+            if not generation_is_committed(root, manifest):
+                continue
+            if any(
+                [
+                    manifest.get("domain") != domain,
+                    manifest.get("system") != args.system,
+                    manifest.get("root", {}).get("source", "") != args.root_source,
+                    manifest.get("kernel", {}).get("name", "") != args.kernel_name,
+                    store.get("source", "") != args.closure_source,
+                    store.get("view_backend") != args.view_backend,
+                    approval.get("approved_by") != args.approved_by,
+                ]
+            ):
+                continue
+            matches.append((int(directory.name), manifest_path, manifest))
+    if not matches:
+        return {
+            "schema": "airlock.closure-store.generation-match.v1",
+            "status": "missing",
+            "domain": domain,
+        }
+    generation, manifest_path, manifest = max(matches, key=lambda item: item[0])
+    return {
+        "schema": "airlock.closure-store.generation-match.v1",
+        "status": "found",
+        "domain": domain,
+        "generation": generation,
+        "manifest": str(manifest_path),
+        "closure_hash": manifest["store"]["closure_hash"],
+    }
+
+
 def admit_generation(args):
     root = ensure_pool(args.pool_root)
     domain = safe_domain_name(args.domain)

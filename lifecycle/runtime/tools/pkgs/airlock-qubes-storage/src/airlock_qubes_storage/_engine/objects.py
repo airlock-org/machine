@@ -420,12 +420,36 @@ def admit_object_tar_fragment(
             return dict(current, admitted=False)
         fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
 
-    extent = append_file_to_segment(root, tmp, entry, txid, target_bytes)
+    result = admit_prebuilt_tar_fragment(
+        root, logical_path, tmp, source_hash, txid, target_bytes
+    )
+    remove_path(tmp)
+    return result
+
+
+def admit_prebuilt_tar_fragment(
+    root, logical_path, fragment, source_hash, txid, target_bytes
+):
+    """Publish an already validated deterministic object tar fragment."""
+    root = Path(root)
+    fragment = Path(fragment)
+    entry = store_entry(logical_path)
+    meta = object_blob_meta_path(root, entry)
+    if meta.exists():
+        current = read_json(meta)
+        if current.get("tree_hash") != source_hash:
+            fail(f"existing object hash mismatch for {logical_path}")
+        object_extent_from_meta(root, current, f"canonical object {entry}")
+        return dict(current, admitted=False)
+    if file_size(fragment) % TAR_BLOCK_SIZE != 0:
+        fail(f"object data is not tar-block aligned: {logical_path}")
+
+    extent = append_file_to_segment(root, fragment, entry, txid, target_bytes)
+    lock_path = segment_lock_path(root)
     with lock_path.open("a+", encoding="utf-8") as lock:
         fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
         if meta.exists():
             fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
-            remove_path(tmp)
             current = read_json(meta)
             if current.get("tree_hash") != source_hash:
                 fail(f"existing object hash mismatch for {logical_path}")
@@ -460,9 +484,48 @@ def admit_object_tar_fragment(
         atomic_json(meta, payload)
         maybe_failpoint("object-after-metadata")
         fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
-    remove_path(tmp)
     payload["admitted"] = True
     return payload
+
+
+def admit_prebuilt_object(
+    root, logical_path, fragment, source_hash, txid, target_bytes
+):
+    entry = store_entry(logical_path)
+    existing_meta_path = object_meta_path(root, entry)
+    existing = read_json(existing_meta_path) if existing_meta_path.exists() else {}
+    if existing and existing.get("tree_hash") != source_hash:
+        fail(f"existing object hash mismatch for {logical_path}")
+    tar_fragment = admit_prebuilt_tar_fragment(
+        root, logical_path, fragment, source_hash, txid, target_bytes
+    )
+    admitted = not existing or tar_fragment.get("admitted", False)
+    payload = {
+        "schema": "airlock.closure-store.object.v2",
+        "path": logical_path,
+        "entry": entry,
+        "tree_hash": source_hash,
+        "tar_fragment": {
+            "schema": SCHEMA_OBJECT_BLOB,
+            "segment_id": tar_fragment["segment_id"],
+            "segment_blob": tar_fragment["segment_blob"],
+            "segment_offset": int(tar_fragment["segment_offset"]),
+            "size": int(tar_fragment["size"]),
+            "sha256": tar_fragment["sha256"],
+            "format": tar_fragment.get("format", "posix-tar-fragment-v1"),
+            "locations": tar_fragment.get("locations", []),
+        },
+        "tree_materialized": False,
+        "admitted_at": existing.get("admitted_at", utc_now()),
+    }
+    atomic_json(existing_meta_path, payload)
+    return {
+        "path": logical_path,
+        "entry": entry,
+        "tree_hash": source_hash,
+        "tar_fragment": payload["tar_fragment"],
+        "admitted": admitted,
+    }
 
 
 def reusable_object(root, logical_path):

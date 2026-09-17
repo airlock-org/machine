@@ -9,6 +9,16 @@
     host.enable = true;
     callers = lib.mkForce [ "sys-dev" ];
   };
+  airlock.machineDeployment.poolAdmission = {
+    enable = true;
+    caller = "sys-dev";
+    targets = [
+      "sys-gui"
+      "sys-dev"
+      "usr-home"
+      "usr-browser"
+    ];
+  };
   networking.networkmanager.enable = lib.mkForce false;
   services.tailscale.enable = lib.mkForce false;
   services.openssh.enable = lib.mkForce false;

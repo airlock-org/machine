@@ -12,12 +12,14 @@ from .core import (
 from .generations import (
     admit_generation,
     clear_running,
+    find_generation,
     mark_running,
     rollback,
     set_retention,
     switch,
 )
 from .maintenance import compact, gc, recover, status
+from .pool import admission_lock
 from .views import attach_blob_view, detach_blob_view
 
 
@@ -79,6 +81,21 @@ def build_parser():
         help="whether GC must retain this generation even after it stops being current",
     )
     admit_parser.set_defaults(func=admit_generation)
+
+    find_parser = sub.add_parser("find-generation")
+    add_common(find_parser)
+    find_parser.add_argument("--domain", required=True)
+    find_parser.add_argument("--system", required=True)
+    find_parser.add_argument("--closure-source", required=True)
+    find_parser.add_argument("--root-source", default="")
+    find_parser.add_argument("--kernel-name", default="")
+    find_parser.add_argument("--approved-by", required=True)
+    find_parser.add_argument(
+        "--view-backend",
+        default=DEFAULT_VIEW_BACKEND,
+        choices=[VIEW_BACKEND_EROFS_OBJECTMAP],
+    )
+    find_parser.set_defaults(func=find_generation)
 
     rollback_parser = sub.add_parser("rollback")
     add_common(rollback_parser)
@@ -179,4 +196,7 @@ def build_parser():
 def run(argv=None):
     parser = build_parser()
     args = parser.parse_args(argv)
+    if args.command == "admit":
+        with admission_lock(args.pool_root):
+            return args.func(args)
     return args.func(args)

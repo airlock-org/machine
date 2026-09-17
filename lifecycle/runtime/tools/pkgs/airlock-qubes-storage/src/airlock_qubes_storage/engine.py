@@ -7,5 +7,6 @@ from ._engine.objects import *  # noqa: F403
 from ._engine.views import *  # noqa: F403
 from ._engine.state import *  # noqa: F403
 from ._engine.generations import *  # noqa: F403
+from ._engine.artifacts import *  # noqa: F403
 from ._engine.maintenance import *  # noqa: F403
 from ._engine.cli import *  # noqa: F403

@@ -136,6 +136,7 @@ class Machine(deploy.Coordinator):
         }
         self.initial = baseline
         self.fail = None
+        self.pool_match = None
         super().__init__(state, self.execute)
 
     def execute(self, *args, **kwargs):
@@ -146,6 +147,13 @@ class Machine(deploy.Coordinator):
             return "\n".join(name + "|Running" for name in sorted(self.live))
         if args[0] == "airlock-closure-store":
             assert not any(call[0] == "qvm-shutdown" for call in self.calls)
+            if args[1] == "find-generation":
+                return json.dumps(
+                    {
+                        "status": "found" if self.pool_match is not None else "missing",
+                        "generation": self.pool_match,
+                    }
+                )
             return json.dumps({"generation": "staged-generation"})
         if args[0] == "qvm-shutdown":
             self.live.remove(args[-1])
@@ -249,6 +257,18 @@ def test_stage_failure_never_stops_or_selects(machine, tmp_path, topology):
     assert machine.pointer() is None
     assert machine.status()["failed_phase"] == "staging"
     assert not any(call[0] == "qvm-shutdown" for call in machine.calls)
+
+
+def test_stage_reuses_sys_dev_admitted_generation(machine, tmp_path, topology):
+    machine.pool_match = 17
+    result = machine.apply(new_release(tmp_path, topology))
+    staged = deploy.read_json(
+        machine.state / "transactions" / result["id"] / "staged.json"
+    )
+    assert staged == {"usr-home": 17}
+    pool_calls = [call for call in machine.calls if call[0] == "airlock-closure-store"]
+    assert len(pool_calls) == 1
+    assert pool_calls[0][1] == "find-generation"
 
 
 def test_failure_requires_recovery_and_resume_preserves_previous(

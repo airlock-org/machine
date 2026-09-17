@@ -12,6 +12,7 @@ test-quick:
 	@mkdir -p "$(AIRLOCK_LOG_DIR)"
 	uv run pytest \
 		tests/test_machine_deploy.py \
+		tests/test_pool_artifact.py \
 		tests/test_amd_vbios_runtime.py \
 		tests/test_input_events.py \
 		--junitxml "$(AIRLOCK_LOG_DIR)/pytest-junit.xml" \

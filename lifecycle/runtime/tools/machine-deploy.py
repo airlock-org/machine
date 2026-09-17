@@ -314,6 +314,30 @@ class Coordinator:
             # Image rollback uses the retained, already admitted seed descriptor.
             if (Path(artifact) / "prepared.json").exists():
                 continue
+            match = json.loads(
+                self.command(
+                    "airlock-closure-store",
+                    "find-generation",
+                    "--domain",
+                    name,
+                    "--system",
+                    backend["system"]["source"],
+                    "--closure-source",
+                    artifact,
+                    "--root-source",
+                    backend["root"]["source"],
+                    "--kernel-name",
+                    backend["kernel"]["name"],
+                    "--view-backend",
+                    store["viewBackend"],
+                    "--approved-by",
+                    "sys-dev",
+                )
+            )
+            if match["status"] == "found":
+                staged[name] = match["generation"]
+                atomic_json(directory / "staged.json", staged)
+                continue
             output = self.command(
                 "airlock-closure-store",
                 "admit",

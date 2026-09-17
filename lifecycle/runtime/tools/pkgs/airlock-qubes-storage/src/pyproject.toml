@@ -10,6 +10,8 @@ requires-python = ">=3.11"
 
 [project.scripts]
 airlock-closure-store = "airlock_qubes_storage.cli:main"
+airlock-pool-artifact = "airlock_qubes_storage.artifact_cli:main"
+airlock-pool-send = "airlock_qubes_storage.artifact_cli:send_main"
 
 [project.entry-points."qubes.storage"]
 airlock-closure = "airlock_qubes_storage.qubes:ClosurePool"

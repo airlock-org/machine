@@ -1,3 +1,5 @@
+import fcntl
+from contextlib import contextmanager
 from pathlib import Path
 
 
@@ -9,6 +11,15 @@ from .core import (
     utc_now,
 )
 from .objects import migrate_legacy_blob_maps, migrate_single_blob_to_segments
+
+
+@contextmanager
+def admission_lock(root):
+    root = ensure_pool(root)
+    with (root / "admission.lock").open("a+", encoding="utf-8") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        yield
+        fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
 
 
 def ensure_pool(root):

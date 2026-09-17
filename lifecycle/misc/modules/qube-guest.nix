@@ -19,7 +19,11 @@ let
   hasNetworkProviderRole = hasSysNetRole || hasSysDevRole || cfg.role == "sys-firewall";
   hasConfigRole = hasConfigVaultRole || hasConfigStagingRole || hasConfigValidatorRole;
   hasPrivateNixRole =
-    hasConfigVaultRole || hasConfigStagingRole || hasConfigValidatorRole || hasCmdRole;
+    hasConfigVaultRole
+    || hasConfigStagingRole
+    || hasConfigValidatorRole
+    || hasCmdRole
+    || hasSysDevRole;
   hasConfigInputsImportRole = hasConfigStagingRole || hasConfigValidatorRole;
   qubesAgentLinux = pkgs.qubes-core-agent-linux;
   qubesDbPython =
@@ -54,6 +58,7 @@ let
   '';
   roleGit = pkgs.gitMinimal;
   airlockCli = pkgs.callPackage ../../runtime/tools/pkgs/airlock-cli { };
+  poolArtifacts = pkgs.python3.pkgs.callPackage ../../runtime/tools/pkgs/airlock-qubes-storage { };
   systemdPackage = config.systemd.package;
   configInputsPublicPath = "/etc/airlock/config-inputs";
   cmdPersistentPaths = lib.unique (cfg.cmdPersistentPaths ++ [ cfg.codexHome ]);
@@ -245,6 +250,10 @@ let
     base = [ ];
     sys-net = networkProviderPackages;
     sys-firewall = networkProviderPackages;
+    sys-dev = [
+      (lib.hiPrio configNix)
+      poolSend
+    ];
     sys-config-vault = [
       configVaultInit
       configVaultArchiveCandidate
@@ -441,6 +450,13 @@ let
     mkdir -p "$out/bin"
     ln -s ${configNixWrapper} "$out/bin/airlock-config-nix"
     ln -s ${configNixWrapper} "$out/bin/nix"
+  '';
+  poolSend = pkgs.writeShellScriptBin "airlock-pool-send" ''
+    exec ${poolArtifacts}/bin/airlock-pool-send \
+      --physical-store-root ${lib.escapeShellArg "${cfg.configNixStoreRoot}/nix/store"} \
+      --nix ${configNix}/bin/airlock-config-nix \
+      --nix-store ${lib.escapeShellArg cfg.configNixStoreRoot} \
+      "$@"
   '';
 
   configVaultInit = pkgs.writeShellScriptBin "airlock-config-vault-init" ''
