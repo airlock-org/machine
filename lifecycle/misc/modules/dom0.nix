@@ -207,6 +207,7 @@ in
 {
   imports = [
     ./dev-dom0-terminal.nix
+    ./pool-admission.nix
     ./qubes-input-proxy.nix
     ./amd-vbios.nix
     ./gui-gpu.nix

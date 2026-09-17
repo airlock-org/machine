@@ -9,7 +9,7 @@
     host.enable = true;
     callers = lib.mkForce [ "sys-dev" ];
   };
-  airlock.machineDeployment.poolAdmission = {
+  airlock.poolAdmission = {
     enable = true;
     caller = "sys-dev";
     targets = [
