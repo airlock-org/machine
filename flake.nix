@@ -376,6 +376,7 @@
         {
           system ? "x86_64-linux",
           storeSources ? { },
+          includeRelease ? true,
           extraModules ? [ ],
           extraSpecialArgs ? { },
         }:
@@ -406,7 +407,6 @@
           self.nixosModules.dom0
           ./lifecycle/image/profiles/machine-host.nix
           ./lifecycle/misc/modules/machine-deployment.nix
-          ./lifecycle/misc/modules/machine-release.nix
           ./lifecycle/image/hardware/thinkpad-t14-gen3-amd.nix
           ({ lib, ... }: {
             airlock.machineDeployment.enable = true;
@@ -452,7 +452,9 @@
               };
             };
           })
-        ] ++ extraModules;
+        ]
+        ++ lib.optional includeRelease ./lifecycle/misc/modules/machine-release.nix
+        ++ extraModules;
       };
 
       mkModuleContractCheck =
