@@ -45,7 +45,8 @@ def test_sys_dev_machine_source_and_build_tools_are_persistent_and_scoped():
     assert report["privateStore"].startswith("/rw/")
     assert "airlock.sys-dev-machine-source.v1" in report["sourceTool"]
     assert "checkout has local edits; refusing to overwrite it" in report["sourceTool"]
-    assert "git bundle verify" in report["sourceTool"]
+    assert "git init -q" in report["sourceTool"]
+    assert 'git -C "$verify_repo" bundle verify' in report["sourceTool"]
     assert "private Nix store needs at least 4 GiB free" in report["buildTool"]
     assert "flake metadata --offline" in report["buildTool"]
     assert "airlock-pool-send" in report["buildTool"]

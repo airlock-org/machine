@@ -80,7 +80,9 @@ let
         [ "$(${pkgs.jq}/bin/jq -r '.schema // empty' "$temp/manifest.json")" = 'airlock.sys-dev-machine-source.v1' ] || fail 'unsupported source archive schema'
         [ "$(${pkgs.jq}/bin/jq -r '.revision // empty' "$temp/manifest.json")" = "$expected_revision" ] || fail 'archive revision differs from requested revision'
         [ "$(${pkgs.jq}/bin/jq -r '.lock_hash // empty' "$temp/manifest.json")" = "$expected_lock_hash" ] || fail 'archive lock hash differs from requested lock hash'
-        ${pkgs.gitMinimal}/bin/git bundle verify "$temp/repo.bundle" >/dev/null
+        verify_repo="$temp/verify"
+        ${pkgs.gitMinimal}/bin/git init -q "$verify_repo"
+        ${pkgs.gitMinimal}/bin/git -C "$verify_repo" bundle verify "$temp/repo.bundle" >/dev/null
         staged="$temp/repo"
         ${pkgs.gitMinimal}/bin/git clone --no-checkout "$temp/repo.bundle" "$staged" >/dev/null
         ${pkgs.gitMinimal}/bin/git -C "$staged" checkout --detach "$expected_revision" >/dev/null
