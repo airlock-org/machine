@@ -192,6 +192,7 @@ After increasing `AIRLOCK_VM_MEMORY` or the launcher default, power off nested
 dom0 and wait for QEMU to exit before running `make test-warm` again:
 
 ```bash
+# Run from the parent airlock-dev checkout:
 ./lifecycle/misc/tools/scripts/ssh-nested-vm.sh 'sudo -n systemctl poweroff'
 ```
 

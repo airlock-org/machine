@@ -333,8 +333,8 @@ Implementation references: [closure manifest construction](../lifecycle/misc/lib
 (`mkNixStoreClosureManifest`), [domain admission](../lifecycle/runtime/tools/scripts/nix-domain-storage.py)
 (`ensure_shared_store`), and [object reuse and copying](../lifecycle/runtime/tools/pkgs/airlock-qubes-storage/src/airlock_qubes_storage/_engine/objects.py)
 (`admit_object_tar_fragment`, `append_file_to_open_segment_blob`).
-Prepared images use [the seed builder](../lifecycle/image/prepared-guest-store.nix),
-[USB dependencies](../lifecycle/image/profiles/usb-prepared-store.nix), and
+Prepared images are assembled by the parent `airlock-dev` repository's
+`lifecycle/image/prepared-guest-store.nix` and USB adapter, while
 [preparation/verification](../lifecycle/runtime/tools/pkgs/airlock-qubes-storage/src/airlock_qubes_storage/_engine/prepared.py).
 
 ### What closure and VM storage sharing saves
