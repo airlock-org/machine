@@ -7,6 +7,30 @@ let
       "__airlock_no_pool_admission_target__"
     else
       lib.concatStringsSep "|" cfg.targets;
+  rootReceiver = pkgs.writeShellScript "airlock-pool-admit-root" ''
+    set -eu
+
+    [ "$#" -eq 2 ] || {
+      printf 'airlock.Pool.Admit root receiver requires target and caller\n' >&2
+      exit 1
+    }
+    target="$1"
+    approved_by="$2"
+    [ "$approved_by" = ${lib.escapeShellArg cfg.caller} ] || {
+      printf 'airlock.Pool.Admit root receiver rejected caller: %s\n' "$approved_by" >&2
+      exit 1
+    }
+    case "$target" in
+      ${targets}) ;;
+      *)
+        printf 'airlock.Pool.Admit root receiver rejected target: %s\n' "$target" >&2
+        exit 1
+        ;;
+    esac
+    exec ${poolArtifacts}/bin/airlock-pool-artifact receive \
+      --expected-domain "$target" \
+      --approved-by "$approved_by"
+  '';
   handler = pkgs.writeShellScript "airlock-pool-admit-qrexec" ''
     set -eu
 
@@ -23,9 +47,10 @@ let
         exit 1
         ;;
     esac
-    exec ${poolArtifacts}/bin/airlock-pool-artifact receive \
-      --expected-domain "$target" \
-      --approved-by "$remote"
+    # VM-to-dom0 qrexec services run as dom0's normal control user. Admit
+    # through a separately validated helper so only this pool operation gains
+    # access to the root-owned closure store.
+    exec /run/wrappers/bin/sudo -n ${rootReceiver} "$target" "$remote"
   '';
   policy = pkgs.writeTextDir "etc/qubes/policy.d/42-airlock-pool-admission.policy" ''
     # Managed by Airlock. This service admits an inactive guest store generation.
@@ -60,6 +85,17 @@ in
       source = handler;
       mode = "0555";
     };
+    security.sudo.extraRules = [
+      {
+        users = [ config.airlock.dom0.user ];
+        commands = [
+          {
+            command = "${rootReceiver}";
+            options = [ "NOPASSWD" ];
+          }
+        ];
+      }
+    ];
     virtualisation.qubes.packages = [ policy ];
   };
 }
