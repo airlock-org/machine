@@ -1,5 +1,7 @@
 { config, lib, pkgs, ... }:
 {
+  imports = [ ./sys-dev-machine-build.nix ];
+
   # sys-dev is an intentionally privileged USB-lab development domain. It
   # owns the NIC during the first networking stage and is the Tailnet entry
   # point for the development-only dom0 qrexec shell.

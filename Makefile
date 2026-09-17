@@ -14,6 +14,7 @@ test-quick:
 		tests/test_machine_deploy.py \
 		tests/test_pool_artifact.py \
 		tests/test_pool_admission_module.py \
+		tests/test_sys_dev_machine_build.py \
 		tests/test_amd_vbios_runtime.py \
 		tests/test_input_events.py \
 		--junitxml "$(AIRLOCK_LOG_DIR)/pytest-junit.xml" \
