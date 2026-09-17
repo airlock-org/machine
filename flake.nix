@@ -236,6 +236,17 @@
         inherit airlockConfigInputs;
       };
 
+      mkPoolAdmissionTestSysDev = system:
+        let
+          entry = bootstrapDomains.mkSysDevDomainEntry system;
+        in
+        materializeNixClosureDomain (entry // {
+          domain = entry.domain // {
+            prefs = entry.domain.prefs // { autostart = false; };
+            features = builtins.removeAttrs entry.domain.features [ "airlock-auto-network-pci" ];
+          };
+        });
+
       mkMinimalSysGuiDomainEntry =
         system:
         bootstrapDomains.mkSysGuiDomainEntryWith system {
@@ -252,8 +263,10 @@
           networkDebug ? false,
           gpuLab ? false,
           guiMinimal ? false,
+          poolAdmissionTest ? false,
         }:
-        assert !guiMinimal || (gui && !configSystem && !gpuLab);
+        assert !guiMinimal || (gui && !configSystem && !gpuLab && !poolAdmissionTest);
+        assert !poolAdmissionTest || (gui && configSystem && devMode && !gpuLab);
         lib.nixosSystem {
           inherit system;
           specialArgs =
@@ -262,6 +275,11 @@
               // lib.optionalAttrs gpuLab {
                 airlockConfigDomains = (mkBootstrapConfigDomains system networkDebug) // {
                   sys-gpu = materializeNixClosureDomain (mkSysGpuDomainEntry system);
+                };
+              }
+              // lib.optionalAttrs poolAdmissionTest {
+                airlockConfigDomains = (mkBootstrapConfigDomains system networkDebug) // {
+                  sys-dev = mkPoolAdmissionTestSysDev system;
                 };
               }
             )
@@ -279,6 +297,21 @@
           ++ lib.optional devMode ./lifecycle/image/profiles/dev-mode.nix
           ++ lib.optional configSystem ./lifecycle/bootstrap/config-system.nix
           ++ lib.optional guiMinimal ./lifecycle/image/profiles/vm-gui-minimal.nix
+          ++ lib.optional poolAdmissionTest (
+            { pkgs, ... }:
+            let
+              machineDeploy = pkgs.callPackage ./lifecycle/runtime/tools/pkgs/airlock-machine-deploy { };
+            in
+            {
+              airlock.poolAdmission = {
+                enable = true;
+                caller = "sys-dev";
+                targets = [ "sys-dev" ];
+              };
+              environment.systemPackages = [ machineDeploy ];
+              environment.etc."airlock/machine-profile".text = "vm-pool-admission-test\n";
+            }
+          )
           ++ lib.optional (configSystem && devMode) (
             { ... }:
             {
@@ -652,6 +685,8 @@
           airlock-vm-gui-config-image = self.nixosConfigurations.vm-gui-config.config.system.build.image;
           airlock-vm-gui-config-network-debug-image =
             self.nixosConfigurations.vm-gui-config-network-debug.config.system.build.image;
+          airlock-vm-pool-admission-test-image =
+            self.nixosConfigurations.vm-pool-admission-test.config.system.build.image;
           ovmf-fd = pkgs.OVMF.fd;
           qemu-kvm = pkgs.qemu_kvm;
           qemu-utils = pkgs.qemu-utils;
@@ -760,6 +795,12 @@
         configSystem = true;
         devMode = true;
         networkDebug = true;
+      };
+      nixosConfigurations.vm-pool-admission-test = mkVmConfiguration {
+        gui = true;
+        configSystem = true;
+        devMode = true;
+        poolAdmissionTest = true;
       };
 
       # Separate development image; the normal bootstrap and XFCE session are
