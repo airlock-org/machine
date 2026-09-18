@@ -398,7 +398,6 @@
         {
           hybrid = mkUsbSysGuiDomainEntry system;
           gui-lab = mkUsbAmdSysGuiDomainEntry system "gnome" false true;
-          gui-lab-hyprland = mkUsbAmdSysGuiDomainEntry system "hyprland" false true;
           gui-lab-xfce = mkUsbAmdSysGuiDomainEntry system "xfce" false true;
           lab-gui = mkUsbAmdSysGuiDomainEntry system "gnome" true false;
           lab-sys-dev = (bootstrapDomains.mkSysDevDomainEntryWith system { inherit extraSpecialArgs; }) // { preparedDomainName = "sys-dev"; };
@@ -461,9 +460,8 @@
               airlock.qubes.domains.sys-gui = lib.mapAttrs (_: lib.mkForce)
                 (builtins.removeAttrs (machineDomain "gui-lab") [ "devices" ]);
             };
-            # Keep the guest builders below for future experiments, but do not
-            # emit Hyprland or XFCE boot-menu entries during USB-lab work.
-            # specialisation.usb-gui-lab-hyprland.configuration = { ... };
+            # Keep the XFCE guest builder for future experiments, but do not
+            # emit an extra desktop boot-menu entry during USB-lab work.
             # specialisation.usb-gui-lab-xfce.configuration = { ... };
             specialisation.usb-lab.configuration = {
               airlock.machineDeployment.profile = lib.mkForce "usb-lab";
@@ -768,8 +766,6 @@
         (mkUsbSysGuiDomainEntry "x86_64-linux").configuration;
       nixosConfigurations.airlock-domain-sys-gui-usb-gui-lab =
         (mkUsbAmdSysGuiDomainEntry "x86_64-linux" "gnome" false true).configuration;
-      nixosConfigurations.airlock-domain-sys-gui-usb-gui-lab-hyprland =
-        (mkUsbAmdSysGuiDomainEntry "x86_64-linux" "hyprland" false true).configuration;
       nixosConfigurations.airlock-domain-sys-gui-usb-gui-lab-xfce =
         (mkUsbAmdSysGuiDomainEntry "x86_64-linux" "xfce" false true).configuration;
       nixosConfigurations.airlock-domain-sys-gui-usb-lab =
