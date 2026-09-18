@@ -38,6 +38,7 @@ from .views import materialize_view
 SCHEMA_ARTIFACT = "airlock.pool-artifact.v1"
 SCHEMA_INCREMENTAL = "airlock.pool-artifact.v2"
 SCHEMA_REQUEST = "airlock.pool-artifact-request.v1"
+SCHEMA_ERROR = "airlock.pool-artifact-error.v1"
 MAX_MANIFEST_BYTES = 64 * 1024 * 1024
 STORE_PATH_RE = re.compile(r"^/nix/store/[0-9a-z]{32}-[^/]+$")
 REVISION_RE = re.compile(r"^[0-9a-f]{40,64}$")
@@ -279,7 +280,11 @@ def _tar_tree_hash(fragment, expected_entry):
         digest.update(payload_hash.encode())
     elif root.isdir():
         digest.update(b"D\0")
-        for relative, kind, mode, value in sorted(records):
+        # Match tree_hash's Path ordering, including e.g. pam/environment
+        # before pam.d. Sorting flattened strings changes existing identities.
+        for relative, kind, mode, value in sorted(
+            records, key=lambda record: PurePosixPath(record[0])
+        ):
             if kind == "L":
                 digest.update(f"L\0{relative}\0{value}\0".encode())
             elif kind == "D":

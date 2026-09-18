@@ -320,6 +320,129 @@ def test_incremental_empty_pool_then_no_payload_on_repeat(artifact_input, monkey
         assert archive.getnames() == ["manifest.json"]
 
 
+def test_nested_path_order_matches_existing_tree_hash(artifact_input):
+    source = (
+        artifact_input["kwargs"]["physical_store_root"]
+        / Path(artifact_input["system"]).name
+    )
+    (source / "etc/pam").mkdir(parents=True)
+    (source / "etc/pam/environment").write_text("environment")
+    (source / "etc/pam.d").mkdir()
+    (source / "etc/pam.d/login").symlink_to("../pam/environment")
+    paths = [p.relative_to(source).as_posix() for p in sorted(source.rglob("*"))]
+    assert paths != sorted(paths)  # The ordering that broke live /etc admission.
+    expected = core.tree_hash(source)
+    first, _, _ = incremental_exchange(artifact_input)
+    assert first["objects_admitted"] == 2
+    metadata = core.read_json(
+        artifact_input["pool"] / "objects/metadata" / (source.name + ".json")
+    )
+    assert metadata["tree_hash"] == expected
+    second, request, _ = incremental_exchange(artifact_input)
+    assert request["missing"] == []
+    assert second["objects_reused"] == 2
+
+
+@pytest.mark.parametrize("phase", ["inventory", "payload"])
+def test_receiver_cli_reports_errors_over_protocol(
+    artifact_input, monkeypatch, capsys, phase
+):
+    from airlock_qubes_storage import artifact_cli
+
+    output = io.BytesIO()
+    monkeypatch.setattr(artifact_cli.sys, "stdin", SimpleNamespace(buffer=io.BytesIO()))
+    monkeypatch.setattr(artifact_cli.sys, "stdout", SimpleNamespace(buffer=output))
+
+    def reject(stream, output, **kwargs):
+        if phase == "payload":
+            artifacts.write_message(
+                output, {"schema": artifacts.SCHEMA_REQUEST, "missing": []}
+            )
+        raise core.EngineError("pool artifact tree checksum mismatch: example")
+
+    monkeypatch.setattr(artifact_cli, "receive_incremental", reject)
+    assert (
+        artifact_cli.main(
+            [
+                "receive-incremental",
+                "--expected-domain",
+                "usr-home",
+                "--approved-by",
+                "sys-dev",
+                "--pool-root",
+                str(artifact_input["pool"]),
+            ]
+        )
+        == 1
+    )
+    output.seek(0)
+    if phase == "payload":
+        assert artifacts.read_message(output)["schema"] == artifacts.SCHEMA_REQUEST
+    with pytest.raises(
+        core.EngineError,
+        match="pool receiver rejected admission: pool artifact tree checksum mismatch",
+    ):
+        artifact_cli.read_receiver_message(output)
+    assert "tree checksum mismatch" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("phase", ["inventory", "payload"])
+def test_sender_cli_reports_receiver_rejection(monkeypatch, capsys, phase):
+    from airlock_qubes_storage import artifact_cli
+
+    responses = io.BytesIO()
+    if phase == "payload":
+        artifacts.write_message(
+            responses, {"schema": artifacts.SCHEMA_REQUEST, "missing": []}
+        )
+    artifacts.write_message(
+        responses,
+        {
+            "schema": artifacts.SCHEMA_ERROR,
+            "error": "pool artifact tree checksum mismatch: example",
+        },
+    )
+    responses.seek(0)
+    process = SimpleNamespace(
+        stdin=io.BytesIO(),
+        stdout=responses,
+        poll=lambda: 1,
+        wait=lambda: 1,
+    )
+    monkeypatch.setattr(
+        artifact_cli.subprocess, "Popen", lambda *args, **kwargs: process
+    )
+    monkeypatch.setattr(
+        artifact_cli,
+        "write_artifact",
+        lambda output, negotiate, **kwargs: negotiate({}),
+    )
+    assert (
+        artifact_cli.send_main(
+            [
+                "--domain",
+                "usr-home",
+                "--system",
+                "unused",
+                "--closure-source",
+                "unused",
+                "--source-revision",
+                "1" * 40,
+                "--lock-hash",
+                "2" * 64,
+            ]
+        )
+        == 1
+    )
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert (
+        "pool receiver rejected admission: pool artifact tree checksum mismatch: example"
+        in captured.err
+    )
+    assert "missing, truncated" not in captured.err
+
+
 def test_incremental_reuses_existing_pool_and_sends_only_new_object(
     artifact_input, monkeypatch
 ):

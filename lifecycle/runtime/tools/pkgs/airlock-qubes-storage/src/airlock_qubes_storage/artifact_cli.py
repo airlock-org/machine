@@ -5,6 +5,7 @@ import subprocess
 import sys
 
 from ._engine.artifacts import (
+    SCHEMA_ERROR,
     read_message,
     receive_artifact,
     receive_incremental,
@@ -95,7 +96,27 @@ def main(argv=None):
         return 0
     except (EngineError, OSError, ValueError) as exc:
         print(f"airlock-pool-artifact: {exc}", file=sys.stderr)
+        if args.command == "receive-incremental":
+            # qrexec records dom0 stderr locally; report rejection over the
+            # duplex protocol too, at either negotiation or final receipt.
+            try:
+                write_message(
+                    sys.stdout.buffer,
+                    {"schema": SCHEMA_ERROR, "error": str(exc)[:4096]},
+                )
+            except OSError:
+                pass  # A disconnected sender must not hide the original error.
         return 1
+
+
+def read_receiver_message(stream):
+    result = read_message(stream)
+    if isinstance(result, dict) and result.get("schema") == SCHEMA_ERROR:
+        error = result.get("error")
+        if not isinstance(error, str) or not error or len(error) > 4096:
+            raise EngineError("invalid pool receiver error response")
+        raise EngineError(f"pool receiver rejected admission: {error}")
+    return result
 
 
 def send_main(argv=None):
@@ -117,11 +138,11 @@ def send_main(argv=None):
 
         def negotiate(inventory):
             write_message(process.stdin, inventory)
-            return read_message(process.stdout)
+            return read_receiver_message(process.stdout)
 
         write_artifact(process.stdin, negotiate=negotiate, **prepare_kwargs(args))
         process.stdin.close()
-        result = read_message(process.stdout)
+        result = read_receiver_message(process.stdout)
         code = process.wait()
         if code:
             return code
