@@ -283,6 +283,11 @@ in
   };
   options.airlock.sysGuiGuest.physicalDesktopOnBoot = lib.mkEnableOption
     "automatic physical desktop login after guest boot (not the hybrid relay)";
+  options.airlock.sysGuiGuest.enableXfce = lib.mkOption {
+    type = lib.types.bool;
+    default = true;
+    description = "install the XFCE session and its Airlock-specific integration";
+  };
   options.airlock.sysGuiGuest.personalLaunchers.enable = lib.mkOption {
     type = lib.types.bool;
     default = true;
@@ -312,16 +317,18 @@ in
       pkgs.python3.pkgs.qubes-core-admin-client
       pkgs.python3.pkgs.qubes-desktop-linux-common
       pkgs.python3.pkgs.qubes-desktop-linux-manager
-      pkgs.xfce4-session
-      poweroffSessionAction
-      pkgs.xfce4-panel
-      pkgs.xfdesktop
       pkgs.xdpyinfo
       pkgs.xinit
       pkgs.xorgserver
       pkgs.xdotool
       pkgs.xterm
       appLauncher
+    ]
+    ++ lib.optionals cfg.enableXfce [
+      pkgs.xfce4-session
+      poweroffSessionAction
+      pkgs.xfce4-panel
+      pkgs.xfdesktop
     ]
     ++ lib.optionals cfg.personalLaunchers.enable (
       (map homeApplicationLauncher homeApplications)
@@ -340,7 +347,7 @@ in
     services.udev.packages = [ guiAgent ];
     services.xserver = {
       enable = true;
-      desktopManager.xfce.enable = true;
+      desktopManager.xfce.enable = cfg.enableXfce;
       desktopManager.xterm.enable = false;
       displayManager = {
         xserverBin = lib.mkOverride 50 (if hybrid then loginXserver else physicalXserver);
@@ -414,7 +421,7 @@ in
         "${pkgs.qubes-gui-daemon}/etc/xdg/autostart/qubes-icon-receiver.desktop";
       "xdg/autostart/qubes-screen-layout-watches.desktop".source =
         "${pkgs.qubes-gui-daemon}/etc/xdg/autostart/qubes-screen-layout-watches.desktop";
-      "xdg/autostart/airlock-bootstrap-desktop-launchers.desktop" = lib.mkIf cfg.personalLaunchers.enable {
+      "xdg/autostart/airlock-bootstrap-desktop-launchers.desktop" = lib.mkIf (cfg.personalLaunchers.enable && cfg.enableXfce) {
         text = ''
           [Desktop Entry]
           Type=Application

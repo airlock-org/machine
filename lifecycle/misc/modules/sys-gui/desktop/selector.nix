@@ -18,6 +18,7 @@ in
     airlock.sysGuiHyprland.enable = lib.mkDefault (cfg.session == "hyprland");
     # The common sys-gui role supplies XFCE as its conservative default.
     # A selected implementation must override that default deterministically.
+    airlock.sysGuiGuest.enableXfce = lib.mkDefault (cfg.session == "xfce");
     services.displayManager.defaultSession = lib.mkForce displayManagerSession;
   };
 }
