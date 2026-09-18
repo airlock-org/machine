@@ -164,7 +164,7 @@ let
     build_installable() {
       installable="$1"
       case "$installable" in
-        .#*) installable="#''${installable#.}" ;;
+        .#*) installable="''${installable#.}" ;;
         \#*) ;;
         *) fail 'installable must start with .# or #' ;;
       esac
@@ -198,7 +198,7 @@ let
         ${pkgs.coreutils}/bin/install -d -m 0700 "$state/closures" "$state/admissions"
         closure="$(${pkgs.coreutils}/bin/mktemp -d "$state/closures/$(${pkgs.coreutils}/bin/basename "$system").XXXXXX")"
         airlock-config-nix path-info --recursive --json "$system" |
-          ${pkgs.jq}/bin/jq -r 'if type == "array" then .[] | .path else to_entries[] | .value.path end' |
+          ${pkgs.jq}/bin/jq -r 'if type == "array" then .[] | .path else keys[] end' |
           ${pkgs.coreutils}/bin/sort -u > "$closure/store-paths"
         ${pkgs.gnugrep}/bin/grep -Fx "$system" "$closure/store-paths" >/dev/null || fail 'built system is absent from its closure metadata'
         response="$(${pkgs.coreutils}/bin/mktemp "$state/admissions/response.XXXXXX")"
