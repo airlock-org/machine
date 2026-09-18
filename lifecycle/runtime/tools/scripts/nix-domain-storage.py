@@ -788,7 +788,70 @@ async def ensure_store(args):
     ]
     if missing:
         fail(f"shared-closure mode requires: {', '.join(missing)}")
-    return await ensure_shared_store(args)
+    result = await ensure_shared_store(args)
+    if args.domain == "sys-dev":
+        await ensure_builder_store(args)
+    return result
+
+
+async def ensure_builder_store(args):
+    """Attach the fixed image-seeded builder base; never replace it on OS update."""
+    from airlock_qubes_storage._engine.builder import builder_volume_configs
+
+    desired = builder_volume_configs(args.pool_root, args.pool_name)
+    if not desired:
+        return  # Non-prepared installations have no image-seeded builder yet.
+    qubes = load_qubes()
+
+    def check(vm):
+        for name, config in desired.items():
+            current = vm.volume_config.get(name)
+            if current is None:
+                continue
+            # Persisted upper state may still depend on this exact base.
+            if any(
+                str(current.get(key, False if value is False else None)) != str(value)
+                for key, value in config.items()
+                if key != "size"
+            ):
+                fail(f"refusing to replace persistent builder base: {name}")
+        if any(name in vm.volume_config for name in desired) and not all(
+            name in vm.volume_config for name in desired
+        ):
+            fail("incomplete persistent builder volume configuration")
+
+    def check_frontends(vm):
+        frontends = qubes_boot_frontends(list(vm.volumes))
+        for name, device in zip(desired, ("xvdg", "xvdh", "xvdi")):
+            if frontends.get(name) != device:
+                fail(f"builder frontend mismatch: {name} must be {device}")
+
+    app, vm = load_domain(qubes, args.domain)
+    check(vm)
+    if all(name in vm.volume_config for name in desired):
+        check_frontends(vm)
+        app.close()
+        return
+    if vm.is_running():
+        app.close()
+        fail("stop sys-dev before attaching its persistent builder base")
+    app.close()
+
+    async def install():
+        app, vm = load_domain(qubes, args.domain)
+        check(vm)
+        if vm.is_running():
+            fail("sys-dev started while preparing builder volumes")
+        for name, config in desired.items():
+            vm.volume_config[name] = config.copy()
+            volume = vm.storage.init_volume(name, config.copy())
+            await maybe_await(volume.create())
+        check_frontends(vm)
+        app.save(lock=False)
+        app.close()
+        return {"metadata_changed": True}
+
+    await with_qubesd_restart(True, install)
 
 
 def build_parser():

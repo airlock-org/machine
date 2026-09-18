@@ -84,6 +84,12 @@ def prepare_pool(root, descriptors, specs, runtime_root):
         args.physical_store_root = spec.get("physical_store_root", "/nix/store")
         print(f"Preparing guest configuration: {name}", flush=True)
         admission = admit_generation(args)
+        if spec.get("builder"):
+            from .builder import prepare_builder
+
+            prepare_builder(
+                root, admission, Path(spec["closure_source"]) / "registration"
+            )
         prepared.append((target, admission))
 
     # No runtime admission may append to the checksummed seed segments.
@@ -113,6 +119,18 @@ def prepare_pool(root, descriptors, specs, runtime_root):
         ):
             files.add(str(Path(store[key]).relative_to(runtime_root)))
         files.add(f"transactions/{manifest['transaction']}.json")
+        if manifest.get("builder"):
+            files.add(
+                str(
+                    Path(manifest["builder"]["metadata_image"]).relative_to(
+                        runtime_root
+                    )
+                )
+            )
+            files.add("builders/sys-dev.json")
+            files.add(
+                f"running/{manifest['domain']}/{manifest['generation']}/builder-persistent.json"
+            )
         blob_map = read_json(
             root / Path(store["canonical_blob_map"]).relative_to(runtime_root)
         )

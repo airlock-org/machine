@@ -3,7 +3,7 @@ let
   airlockMachineSeedArchive = args.airlockMachineSeedArchive or null;
 in
 {
-  imports = [ ./sys-dev-machine-build.nix ];
+  imports = [ ./sys-dev-machine-build.nix ./sys-dev-build-store.nix ];
 
   # sys-dev is an intentionally privileged USB-lab development domain. It
   # owns the NIC during the first networking stage and is the Tailnet entry
@@ -32,21 +32,6 @@ in
   airlock.qubeGuest.allowQrexecUserSelection = true;
   networking.firewall.interfaces.tailscale0.allowedTCPPorts = [ 22 ];
   airlock.devDom0Terminal.guest.enable = true;
-
-  systemd.services.airlock-sys-dev-pool-init = {
-    description = "Prepare sys-dev's writable Nix store for pool artifacts";
-    wantedBy = [ "multi-user.target" ];
-    wants = [ "airlock-qubes-rw-init.service" ];
-    requires = [ "airlock-qubes-rw-init.service" ];
-    after = [ "airlock-qubes-rw-init.service" ];
-    before = [ "qubes-qrexec-agent.service" ];
-    path = [ pkgs.coreutils ];
-    script = ''
-      install -d -m 0700 -o ${lib.escapeShellArg config.airlock.qubeGuest.user} -g users \
-        ${lib.escapeShellArg config.airlock.qubeGuest.configNixStoreRoot}
-    '';
-    serviceConfig.Type = "oneshot";
-  };
 
   systemd.services.airlock-sys-dev-machine-seed = lib.mkIf (airlockMachineSeedArchive != null) {
     description = "Seed the pinned shallow airlock-machine checkout in sys-dev";
