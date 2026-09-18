@@ -108,7 +108,10 @@ let
     esac
   '';
   buildTool = pkgs.writeShellScriptBin "airlock-sys-dev-machine-build" ''
-    set -eu
+    set -euo pipefail
+    # build_installable runs inside command substitution during admission.
+    # Bash otherwise clears errexit there and can hide a failed/interrupted build.
+    shopt -s inherit_errexit
 
     repo="''${AIRLOCK_MACHINE_REPO:-${repo}}"
     state="''${AIRLOCK_MACHINE_BUILD_STATE:-${state}}"
