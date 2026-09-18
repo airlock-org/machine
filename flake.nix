@@ -412,12 +412,15 @@
           system ? "x86_64-linux",
           storeSources ? { },
           includeRelease ? true,
+          includeAlternativeGuiProfiles ? true,
           extraModules ? [ ],
           extraSpecialArgs ? { },
           extraGuestSpecialArgs ? { },
         }:
       let
-        entries = mkMachineGuestEntries system extraGuestSpecialArgs;
+        allEntries = mkMachineGuestEntries system extraGuestSpecialArgs;
+        entries = if includeAlternativeGuiProfiles then allEntries else
+          builtins.removeAttrs allEntries [ "sys-gui-hybrid" "sys-gui-standalone" ];
         machineDomain = name:
           let domain = materializeNixClosureDomain entries.${name};
           in domain // {
@@ -434,7 +437,8 @@
             name = airlockQubesVmKernelName;
             package = self.packages.${system}.airlock-qubes-vm-kernel;
           };
-          airlockGuiDomain = machineDomain "sys-gui-hybrid";
+          airlockGuiDomain = machineDomain
+            (if includeAlternativeGuiProfiles then "sys-gui-hybrid" else "sys-gui");
           airlockMachineGuestEntries = entries;
           airlockSourceRevision = self.rev or "dirty";
           airlockSourceLockHash = builtins.hashFile "sha256" ./flake.lock;
@@ -444,21 +448,28 @@
           ./lifecycle/image/profiles/machine-host.nix
           ./lifecycle/misc/modules/machine-deployment.nix
           ./lifecycle/image/hardware/thinkpad-t14-gen3-amd.nix
-          ({ lib, ... }: {
+          ({ config, lib, ... }: {
             airlock.machineDeployment.enable = true;
             airlock.machineDeployment.profile = "usb-dev";
+            # The image's base generation is only a console/bootstrap carrier.
+            # Its normal and recovery specialisations own guest startup.
+            airlock.qubes.setupConfigOnBoot.enable = lib.mkIf
+              (!includeAlternativeGuiProfiles && config.specialisation != { })
+              (lib.mkForce false);
             specialisation.usb-text-recovery.configuration = {
               imports = [ ./lifecycle/image/profiles/usb-recovery.nix ];
               # Do not reconcile or start VMs from possibly changed qubes.xml.
               airlock.qubes.setupConfigOnBoot.enable = lib.mkForce false;
             };
-            specialisation.usb-gui-lab.configuration = {
-              airlock.machineDeployment.profile = lib.mkForce "usb-gui-lab";
-              imports = [ ./lifecycle/image/profiles/usb-gui-lab.nix ];
-              # Replace hybrid guest fields, leaving PCI selection to the
-              # reusable module and this machine's hardware inventory.
-              airlock.qubes.domains.sys-gui = lib.mapAttrs (_: lib.mkForce)
-                (builtins.removeAttrs (machineDomain "sys-gui-standalone") [ "devices" ]);
+            specialisation.usb-gui-lab = lib.mkIf includeAlternativeGuiProfiles {
+              configuration = {
+                airlock.machineDeployment.profile = lib.mkForce "usb-gui-lab";
+                imports = [ ./lifecycle/image/profiles/usb-gui-lab.nix ];
+                # Replace hybrid guest fields, leaving PCI selection to the
+                # reusable module and this machine's hardware inventory.
+                airlock.qubes.domains.sys-gui = lib.mapAttrs (_: lib.mkForce)
+                  (builtins.removeAttrs (machineDomain "sys-gui-standalone") [ "devices" ]);
+              };
             };
             specialisation.usb-lab.configuration = {
               airlock.machineDeployment.profile = lib.mkForce "usb-lab";
@@ -485,6 +496,7 @@
             };
           })
         ]
+        ++ lib.optional (!includeAlternativeGuiProfiles) ./lifecycle/image/profiles/usb-headless.nix
         ++ lib.optional includeRelease ./lifecycle/misc/modules/machine-release.nix
         ++ extraModules;
       };
