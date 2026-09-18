@@ -209,6 +209,7 @@
         mkSysFirewallDomainEntry
         mkSysGuiDomainEntry
         mkSysDevDomainEntry
+        mkSysDevDomainEntryWith
         mkSysNetDomainEntry
         ;
 
@@ -393,17 +394,19 @@
           ];
         };
 
-      machineGuestEntries = system:
+      mkMachineGuestEntries = system: extraSpecialArgs:
         {
           hybrid = mkUsbSysGuiDomainEntry system;
           gui-lab = mkUsbAmdSysGuiDomainEntry system "gnome" false true;
           gui-lab-hyprland = mkUsbAmdSysGuiDomainEntry system "hyprland" false true;
           gui-lab-xfce = mkUsbAmdSysGuiDomainEntry system "xfce" false true;
           lab-gui = mkUsbAmdSysGuiDomainEntry system "gnome" true false;
-          lab-sys-dev = (bootstrapDomains.mkSysDevDomainEntry system) // { preparedDomainName = "sys-dev"; };
+          lab-sys-dev = (bootstrapDomains.mkSysDevDomainEntryWith system { inherit extraSpecialArgs; }) // { preparedDomainName = "sys-dev"; };
           lab-usr-home = (bootstrapDomains.mkHomeVmDomainEntry system) // { preparedDomainName = "usr-home"; };
           lab-usr-browser = (bootstrapDomains.mkBrowserVmDomainEntry system) // { preparedDomainName = "usr-browser"; };
         };
+
+      machineGuestEntries = system: mkMachineGuestEntries system { };
 
       mkMachineConfiguration =
         {
@@ -412,9 +415,10 @@
           includeRelease ? true,
           extraModules ? [ ],
           extraSpecialArgs ? { },
+          extraGuestSpecialArgs ? { },
         }:
       let
-        entries = machineGuestEntries system;
+        entries = mkMachineGuestEntries system extraGuestSpecialArgs;
         machineDomain = name:
           let domain = materializeNixClosureDomain entries.${name};
           in domain // {
@@ -560,7 +564,7 @@
         airlockSystem = import ./lifecycle/misc/lib/system.nix;
         airlockTopology = import ./lifecycle/misc/lib/topology.nix;
         airlockQubeTemplate = import ./lifecycle/misc/lib/qube-template.nix;
-        inherit machineGuestEntries mkMachineConfiguration;
+        inherit mkMachineGuestEntries machineGuestEntries mkMachineConfiguration;
       };
 
       airlock.configInputs = airlockConfigInputs;

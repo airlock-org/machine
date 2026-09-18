@@ -101,14 +101,16 @@ let
       state = sysNetRoleDefaults.state;
     };
 
-  mkSysDevDomainEntry =
+  mkSysDevDomainEntryWith =
     system:
+    { extraSpecialArgs ? { } }:
     let
       qubeBuilders = mkAirlockQubeBuilders system;
     in
     qubeBuilders.mkNixNativeDomain {
       name = "sys-dev";
       guestRole = "sys-dev";
+      inherit extraSpecialArgs;
       modules = [
         ({ ... }: { networking.hostName = sysDevRoleDefaults.guestHostName; })
         ../../misc/modules/sys-dev-guest.nix
@@ -123,6 +125,8 @@ let
       devices = sysDevRoleDefaults.devices;
       state = sysDevRoleDefaults.state;
     };
+
+  mkSysDevDomainEntry = system: mkSysDevDomainEntryWith system { };
 
   mkSysFirewallDomainEntry =
     system:
@@ -273,6 +277,7 @@ in
     mkSysGuiDomainEntryWith
     mkSysNetDomainEntry
     mkSysDevDomainEntry
+    mkSysDevDomainEntryWith
     sysFirewallRoleDefaults
     sysGuiRoleDefaults
     sysNetRoleDefaults
