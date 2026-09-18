@@ -91,6 +91,48 @@ def find_generation(args):
     }
 
 
+def describe_generation(args):
+    """Return the activation identity of one committed pool generation."""
+    root = ensure_pool(args.pool_root)
+    domain = safe_domain_name(args.domain)
+    generation = int(args.generation)
+    manifest_path = generation_manifest_path(root, domain, generation)
+    if not manifest_path.exists():
+        fail(f"generation does not exist for {domain}: {generation}")
+    manifest = read_json(manifest_path)
+    if not generation_is_committed(root, manifest):
+        fail(f"generation is not committed for {domain}: {generation}")
+    store = manifest.get("store", {})
+    return {
+        "schema": "airlock.closure-store.generation-info.v1",
+        "status": "passed",
+        "domain": domain,
+        "generation": generation,
+        "current_generation": current_generation(root, domain),
+        "selected": current_generation(root, domain) == generation,
+        "manifest": str(manifest_path),
+        "system": manifest.get("system"),
+        "root_source": manifest.get("root", {}).get("source", ""),
+        "kernel_name": manifest.get("kernel", {}).get("name", ""),
+        "closure_source": store.get("source", ""),
+        "store": {
+            key: store.get(key)
+            for key in (
+                "mode",
+                "mountpoint",
+                "device",
+                "blob_device",
+                "view_backend",
+                "closure_hash",
+            )
+        },
+        "approval": manifest.get("approval", {}),
+        "provenance": manifest.get("provenance", {}),
+        "verification": manifest.get("verification", {}),
+        "retention": manifest.get("retention", {}),
+    }
+
+
 def admit_generation(args):
     root = ensure_pool(args.pool_root)
     domain = safe_domain_name(args.domain)

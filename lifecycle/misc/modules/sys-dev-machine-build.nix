@@ -213,7 +213,10 @@ let
           --lock-hash "$lock_hash" > "$response"
         ${pkgs.jq}/bin/jq -e '.status == "passed" and .activated == false and .retained == true' "$response" >/dev/null || fail 'pool admission did not create a retained inactive generation'
         recorded="$state/admissions/$(${pkgs.coreutils}/bin/date -u +%Y%m%dT%H%M%SZ)-$(${pkgs.coreutils}/bin/basename "$system").json"
-        ${pkgs.coreutils}/bin/mv "$response" "$recorded"
+        annotated="''${response}.annotated"
+        ${pkgs.jq}/bin/jq --arg receiptPath "$recorded" '. + {receipt_path: $receiptPath}' "$response" > "$annotated"
+        ${pkgs.coreutils}/bin/mv "$annotated" "$recorded"
+        ${pkgs.coreutils}/bin/rm -f "$response"
         exec ${pkgs.coreutils}/bin/cat "$recorded"
         ;;
       *)

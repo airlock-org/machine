@@ -187,6 +187,69 @@ def test_transferred_artifact_is_inactive_retained_and_reused(artifact_input):
     assert not gc_result["removed_object_metadata"]
 
 
+def test_system_only_artifact_inherits_committed_boot_identity(artifact_input):
+    first = receive(artifact_input)
+    generations.switch(
+        SimpleNamespace(
+            pool_root=artifact_input["pool"],
+            domain="usr-home",
+            generation=first["generation"],
+        )
+    )
+    kwargs = artifact_input["kwargs"]
+    expected_root = kwargs["root_source"]
+    expected_kernel = kwargs["kernel_name"]
+    kwargs["root_source"] = ""
+    kwargs["kernel_name"] = ""
+    output = io.BytesIO()
+    artifacts.write_artifact(output, **kwargs)
+    result = artifacts.receive_artifact(
+        io.BytesIO(output.getvalue()),
+        pool_root=artifact_input["pool"],
+        expected_domain="usr-home",
+        approved_by="sys-dev",
+    )
+    assert result["root_source"] == expected_root
+    assert result["kernel_name"] == expected_kernel
+    assert result["previous_generation"] == first["generation"]
+    manifest = core.read_json(result["manifest"])
+    assert manifest["root"]["source"] == expected_root
+    assert manifest["kernel"]["name"] == expected_kernel
+
+
+def test_system_only_artifact_requires_existing_boot_identity(artifact_input):
+    kwargs = artifact_input["kwargs"]
+    kwargs["root_source"] = ""
+    kwargs["kernel_name"] = ""
+    output = io.BytesIO()
+    artifacts.write_artifact(output, **kwargs)
+    with pytest.raises(core.EngineError, match="existing generation"):
+        artifacts.receive_artifact(
+            io.BytesIO(output.getvalue()),
+            pool_root=artifact_input["pool"],
+            expected_domain="usr-home",
+            approved_by="sys-dev",
+        )
+
+
+def test_describe_generation_exposes_activation_identity(artifact_input):
+    result = receive(artifact_input)
+    described = generations.describe_generation(
+        SimpleNamespace(
+            pool_root=artifact_input["pool"],
+            domain="usr-home",
+            generation=result["generation"],
+        )
+    )
+    assert described["schema"] == "airlock.closure-store.generation-info.v1"
+    assert described["selected"] is False
+    assert described["system"] == artifact_input["system"]
+    assert described["root_source"].endswith("-root/root.img")
+    assert described["kernel_name"] == "test-kernel"
+    assert described["approval"]["approved_by"] == "sys-dev"
+    assert described["retention"]["retain"] is True
+
+
 @pytest.mark.parametrize(
     "damage", ["payload", "missing", "unsafe", "incomplete", "truncated"]
 )
@@ -580,7 +643,14 @@ def test_sender_cli_negotiates_and_prints_only_final_response(
 ):
     from airlock_qubes_storage import artifact_cli
 
-    receive(artifact_input)
+    seeded = receive(artifact_input)
+    generations.switch(
+        SimpleNamespace(
+            pool_root=artifact_input["pool"],
+            domain="usr-home",
+            generation=seeded["generation"],
+        )
+    )
     client, server = socket.socketpair()
     client.settimeout(5)
     server.settimeout(5)

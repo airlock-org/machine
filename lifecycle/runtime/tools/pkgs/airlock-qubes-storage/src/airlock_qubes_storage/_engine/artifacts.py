@@ -22,6 +22,7 @@ from .core import (
     maybe_failpoint,
     next_generation,
     physical_store_path,
+    read_json,
     read_store_paths,
     safe_domain_name,
     store_entry,
@@ -32,7 +33,7 @@ from .core import (
 from .objects import admit_prebuilt_object, create_tar_fragment, reusable_object
 from .pool import admission_lock, ensure_pool
 from .segments import configured_segment_target_bytes
-from .state import current_generation
+from .state import current_generation, generation_is_committed, generation_manifest_path
 from .views import materialize_view
 
 SCHEMA_ARTIFACT = "airlock.pool-artifact.v1"
@@ -428,6 +429,21 @@ def _admit_received(manifest, fragments, root, approved_by, *, reused=None):
     generations_dir = domain_dir / "generations"
     generations_dir.mkdir(parents=True, exist_ok=True)
     previous = current_generation(root, domain)
+    root_source = manifest.get("root_source", "")
+    kernel_name = manifest.get("kernel_name", "")
+    if not root_source or not kernel_name:
+        if previous is None:
+            fail(
+                "system-only pool admission requires an existing generation "
+                "from which to inherit root and kernel identity"
+            )
+        previous_manifest = read_json(generation_manifest_path(root, domain, previous))
+        if not generation_is_committed(root, previous_manifest):
+            fail(f"current generation is not committed for {domain}: {previous}")
+        root_source = root_source or previous_manifest.get("root", {}).get("source", "")
+        kernel_name = kernel_name or previous_manifest.get("kernel", {}).get("name", "")
+    if not root_source or not kernel_name:
+        fail("pool admission requires complete root and kernel identity")
     generation = next_generation(domain_dir)
     txid = transaction_id(f"artifact:{domain}:{generation}:{system}")
     tx_path = root / "transactions" / f"{txid}.json"
@@ -471,8 +487,8 @@ def _admit_received(manifest, fragments, root, approved_by, *, reused=None):
         closure_id = closure_hash(
             paths,
             system,
-            manifest.get("root_source", ""),
-            manifest.get("kernel_name", ""),
+            root_source,
+            kernel_name,
         )
         view = materialize_view(
             root,
@@ -504,8 +520,8 @@ def _admit_received(manifest, fragments, root, approved_by, *, reused=None):
                 "artifact_schema": SCHEMA_ARTIFACT,
             },
             "system": system,
-            "root": {"source": manifest.get("root_source", "")},
-            "kernel": {"name": manifest.get("kernel_name", "")},
+            "root": {"source": root_source},
+            "kernel": {"name": kernel_name},
             "store": {
                 "mode": "shared-closure",
                 "closure_hash": closure_id,
@@ -589,6 +605,8 @@ def _admit_received(manifest, fragments, root, approved_by, *, reused=None):
         "retained": True,
         "manifest": str(manifest_path),
         "system": system,
+        "root_source": root_source,
+        "kernel_name": kernel_name,
         "closure_hash": closure_id,
         "objects_total": len(paths),
         "objects_admitted": len(admitted),

@@ -1837,7 +1837,19 @@ setup_nix_closure_domain() {
   fi
 
   root_image="$(resolve_root_image_file "$root_source")"
-  store_artifact="$(resolve_store_artifact "$store_source")"
+  staged_generation=""
+  if [ -n "${AIRLOCK_STAGED_GENERATIONS:-}" ] &&
+    [ -f "$AIRLOCK_STAGED_GENERATIONS" ]; then
+    staged_generation="$(jq -r --arg domain "$domain" '.[$domain] // empty' \
+      "$AIRLOCK_STAGED_GENERATIONS")"
+  fi
+  if [ -n "$staged_generation" ]; then
+    # The root-owned coordinator has already validated and retained this exact
+    # pool generation. Its original closure descriptor may live in sys-dev.
+    store_artifact="$store_source"
+  else
+    store_artifact="$(resolve_store_artifact "$store_source")"
+  fi
   show_domain_boot_status "$domain" "Preparing VM boot files."
   install_domain_kernel_source "$domain" "$kernel_name" "$kernel_source"
 

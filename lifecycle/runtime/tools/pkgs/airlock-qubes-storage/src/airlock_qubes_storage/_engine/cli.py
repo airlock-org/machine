@@ -12,6 +12,7 @@ from .core import (
 from .generations import (
     admit_generation,
     clear_running,
+    describe_generation,
     find_generation,
     mark_running,
     rollback,
@@ -96,6 +97,12 @@ def build_parser():
         choices=[VIEW_BACKEND_EROFS_OBJECTMAP],
     )
     find_parser.set_defaults(func=find_generation)
+
+    describe_parser = sub.add_parser("describe-generation")
+    add_common(describe_parser)
+    describe_parser.add_argument("--domain", required=True)
+    describe_parser.add_argument("--generation", required=True)
+    describe_parser.set_defaults(func=describe_generation)
 
     rollback_parser = sub.add_parser("rollback")
     add_common(rollback_parser)

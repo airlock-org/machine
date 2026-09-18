@@ -6,18 +6,23 @@ Qubes remains responsible for VM lifecycle, devices, policy and storage.
 """
 
 import argparse
+from copy import deepcopy
 import contextlib
 import fcntl
+import hashlib
 import json
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import sys
 import time
 
 STATE = Path("/var/lib/airlock/machine")
 SCHEMA = "airlock.machine-release.v1"
+ADMISSION_SCHEMA = "airlock.closure-store.admission.v1"
+GENERATION_INFO_SCHEMA = "airlock.closure-store.generation-info.v1"
 
 
 class DeploymentError(RuntimeError):
@@ -63,6 +68,15 @@ def load_release(path):
     topology = read_json(path / "topology.json")
     if topology.get("schema") != "airlock.qubes-topology.v1":
         raise DeploymentError("unsupported topology schema")
+    staged = release.get("stagedGenerations", {})
+    if not isinstance(staged, dict) or any(
+        not isinstance(name, str)
+        or not re.fullmatch(r"[A-Za-z0-9_.-]+", name)
+        or not isinstance(generation, int)
+        or generation < 1
+        for name, generation in staged.items()
+    ):
+        raise DeploymentError("invalid staged generation map")
     return release, topology
 
 
@@ -221,6 +235,9 @@ class Coordinator:
         profile = active_profile()
         host = str(Path("/run/current-system").resolve())
         setup = str(Path("/run/current-system/sw/bin/airlock-setup-config").resolve())
+        coordinator = str(
+            Path("/run/current-system/sw/bin/airlock-machine-deploy").resolve()
+        )
         atomic_json(baseline / "topology.json", read_json(source))
         atomic_json(
             baseline / "release.json",
@@ -229,6 +246,7 @@ class Coordinator:
                 "profile": profile,
                 "host": host,
                 "setup": setup,
+                "coordinator": coordinator,
                 "revision": "booted-image-baseline",
                 "lockHash": None,
             },
@@ -241,6 +259,9 @@ class Coordinator:
         current = self.pointer()
         if current:
             previous, old = load_release(current["release"])
+            profile = previous["profile"]
+        elif desired.get("baseRelease"):
+            previous, old = load_release(desired["baseRelease"])
             profile = previous["profile"]
         else:
             profile = active_profile()
@@ -255,6 +276,206 @@ class Coordinator:
         )
         result["revision"] = desired["revision"]
         return result
+
+    def generation_info(self, domain, generation):
+        result = json.loads(
+            self.command(
+                "airlock-closure-store",
+                "describe-generation",
+                "--domain",
+                domain,
+                "--generation",
+                str(generation),
+            )
+        )
+        if (
+            result.get("schema") != GENERATION_INFO_SCHEMA
+            or result.get("status") != "passed"
+        ):
+            raise DeploymentError("closure store returned invalid generation details")
+        return result
+
+    def validate_staged_generation(
+        self, info, domain, generation, backend, release_manifest
+    ):
+        store = backend["store"]
+        expected = {
+            "domain": domain,
+            "generation": generation,
+            "system": backend["system"]["source"],
+            "root_source": backend["root"]["source"],
+            "kernel_name": backend["kernel"]["name"],
+            "closure_source": store["source"],
+        }
+        if any(info.get(key) != value for key, value in expected.items()):
+            raise DeploymentError(f"{domain}: staged generation identity mismatch")
+        expected_store = {
+            "mode": "shared-closure",
+            "mountpoint": store["mountpoint"],
+            "device": store["device"],
+            "blob_device": store["blobDevice"],
+            "view_backend": store["viewBackend"],
+        }
+        if any(
+            info.get("store", {}).get(key) != value
+            for key, value in expected_store.items()
+        ):
+            raise DeploymentError(f"{domain}: staged generation storage mismatch")
+        approval = info.get("approval", {})
+        provenance = info.get("provenance", {})
+        if (
+            approval.get("approved_by") != "sys-dev"
+            or approval.get("transport") != "qrexec"
+            or approval.get("source") != store["source"]
+        ):
+            raise DeploymentError(f"{domain}: staged generation approval mismatch")
+        if provenance.get("source_revision") != release_manifest[
+            "revision"
+        ] or provenance.get("lock_hash") != release_manifest.get("lockHash"):
+            raise DeploymentError(f"{domain}: staged generation provenance mismatch")
+        if info.get("verification", {}).get("status") != "passed":
+            raise DeploymentError(f"{domain}: staged generation is not verified")
+        if info.get("retention", {}).get("retain") is not True:
+            raise DeploymentError(f"{domain}: staged generation is not retained")
+
+    def guest_candidate(self, receipt):
+        required = {
+            "schema": ADMISSION_SCHEMA,
+            "status": "passed",
+            "transport": "qrexec",
+            "activated": False,
+            "retained": True,
+        }
+        if not isinstance(receipt, dict) or any(
+            receipt.get(key) != value for key, value in required.items()
+        ):
+            raise DeploymentError("receipt is not a retained inactive qrexec admission")
+        domain = receipt.get("domain")
+        generation = receipt.get("generation")
+        revision = receipt.get("source_revision")
+        lock_hash = receipt.get("lock_hash")
+        if not isinstance(domain, str) or not re.fullmatch(r"[A-Za-z0-9_.-]+", domain):
+            raise DeploymentError("invalid receipt domain")
+        if not isinstance(generation, int) or generation < 1:
+            raise DeploymentError("invalid receipt generation")
+        if not isinstance(revision, str) or not re.fullmatch(
+            r"[0-9a-f]{40,64}", revision
+        ):
+            raise DeploymentError("invalid receipt source revision")
+        if not isinstance(lock_hash, str) or not re.fullmatch(
+            r"[0-9a-f]{64}", lock_hash
+        ):
+            raise DeploymentError("invalid receipt lock hash")
+
+        baseline = self.baseline()
+        current_release, topology = load_release(baseline)
+        if domain not in topology["domains"]:
+            raise DeploymentError(f"receipt target is not declared: {domain}")
+        backend = topology["domains"][domain].get("backend", {})
+        if (
+            backend.get("type") != "nix-closure"
+            or backend.get("store", {}).get("mode") != "shared-closure"
+        ):
+            raise DeploymentError(f"{domain}: receipt requires shared-closure storage")
+
+        info = self.generation_info(domain, generation)
+        receipt_identity = {
+            "domain": domain,
+            "generation": generation,
+            "manifest": receipt.get("manifest"),
+            "system": receipt.get("system"),
+            "root_source": receipt.get("root_source"),
+            "kernel_name": receipt.get("kernel_name"),
+            "closure_hash": receipt.get("closure_hash"),
+        }
+        info_identity = {
+            "domain": info.get("domain"),
+            "generation": info.get("generation"),
+            "manifest": info.get("manifest"),
+            "system": info.get("system"),
+            "root_source": info.get("root_source"),
+            "kernel_name": info.get("kernel_name"),
+            "closure_hash": info.get("store", {}).get("closure_hash"),
+        }
+        if info_identity != receipt_identity:
+            raise DeploymentError("receipt does not identify the admitted generation")
+        if info.get("selected") is not False or generation == receipt.get(
+            "current_generation"
+        ):
+            raise DeploymentError("receipt generation is already active")
+        provenance = info.get("provenance", {})
+        if (
+            provenance.get("source_revision") != revision
+            or provenance.get("lock_hash") != lock_hash
+        ):
+            raise DeploymentError("receipt provenance differs from pool generation")
+        if (
+            not isinstance(info.get("closure_source"), str)
+            or not info["closure_source"]
+        ):
+            raise DeploymentError("pool generation has no closure source identity")
+
+        candidate_topology = deepcopy(topology)
+        candidate_backend = candidate_topology["domains"][domain]["backend"]
+        candidate_backend["system"]["source"] = info["system"]
+        candidate_backend["store"]["source"] = info["closure_source"]
+        candidate_manifest = deepcopy(current_release)
+        candidate_manifest.update(
+            revision=revision,
+            lockHash=lock_hash,
+            baseRelease=str(baseline),
+            stagedGenerations={domain: generation},
+            guestAdmission={
+                "domain": domain,
+                "generation": generation,
+                "manifest": info["manifest"],
+            },
+        )
+        self.validate_staged_generation(
+            info, domain, generation, candidate_backend, candidate_manifest
+        )
+        if backend["system"]["source"] == info["system"]:
+            raise DeploymentError("admitted guest system is already selected")
+
+        identity = hashlib.sha256(
+            json.dumps(
+                {
+                    "baseline": str(baseline),
+                    "receipt": receipt_identity,
+                    "revision": revision,
+                    "lock_hash": lock_hash,
+                },
+                sort_keys=True,
+            ).encode()
+        ).hexdigest()
+        candidate = self.state / "candidates" / identity
+        expected = {
+            "release.json": candidate_manifest,
+            "topology.json": candidate_topology,
+            "staged.json": {domain: generation},
+            "receipt.json": receipt,
+        }
+        if candidate.exists():
+            if any(
+                not (candidate / name).is_file() or read_json(candidate / name) != value
+                for name, value in expected.items()
+            ):
+                raise DeploymentError("existing guest candidate differs from receipt")
+        else:
+            candidate.parent.mkdir(parents=True, exist_ok=True)
+            temporary = candidate.parent / f".{identity}.new-{time.time_ns()}"
+            temporary.mkdir()
+            try:
+                for name, value in expected.items():
+                    atomic_json(temporary / name, value)
+                temporary.rename(candidate)
+            finally:
+                shutil.rmtree(temporary, ignore_errors=True)
+        return candidate
+
+    def inspect_guest(self, receipt):
+        candidate = self.guest_candidate(receipt)
+        return {"candidate": str(candidate), "plan": self.inspect(candidate)}
 
     def install_boot_hook(self, release, baseline):
         """Repository-owned compatibility bridge for already-flashed images."""
@@ -306,11 +527,28 @@ class Coordinator:
             self.command("systemctl", "daemon-reload")
 
     def stage(self, release, topology, names, directory):
+        release_manifest, _ = load_release(release)
+        preferred = release_manifest.get("stagedGenerations", {})
+        unexpected = set(preferred) - set(names)
+        if unexpected:
+            raise DeploymentError(
+                "staged generation is not part of this plan: "
+                + ", ".join(sorted(unexpected))
+            )
         staged = {}
         for name in names:
             backend = topology["domains"][name]["backend"]
             store = backend["store"]
             artifact = store["source"]
+            if name in preferred:
+                generation = preferred[name]
+                info = self.generation_info(name, generation)
+                self.validate_staged_generation(
+                    info, name, generation, backend, release_manifest
+                )
+                staged[name] = generation
+                atomic_json(directory / "staged.json", staged)
+                continue
             # Image rollback uses the retained, already admitted seed descriptor.
             if (Path(artifact) / "prepared.json").exists():
                 continue
@@ -628,6 +866,15 @@ class Coordinator:
                 "interrupted deployment; use machine-deploy resume/rollback in recovery"
             )
         setup = release["setup"]
+        staged = Path(selected["release"]) / "staged.json"
+        if release.get("stagedGenerations"):
+            if not staged.exists() or read_json(staged) != release["stagedGenerations"]:
+                raise DeploymentError(
+                    "selected release staged generation map is missing"
+                )
+            os.environ["AIRLOCK_STAGED_GENERATIONS"] = str(staged)
+        else:
+            os.environ.pop("AIRLOCK_STAGED_GENERATIONS", None)
         os.execv(
             setup,
             [
@@ -644,6 +891,8 @@ def main(argv=None):
     sub = parser.add_subparsers(dest="action", required=True)
     for action in ("plan", "apply"):
         sub.add_parser(action).add_argument("release", type=Path)
+    for action in ("guest-plan", "guest-apply"):
+        sub.add_parser(action).add_argument("receipt")
     for action in ("status", "verify", "resume", "rollback"):
         sub.add_parser(action)
     boot = sub.add_parser("boot-setup")
@@ -659,6 +908,19 @@ def main(argv=None):
             result = coordinator.inspect(args.release)
         elif args.action == "apply":
             result = coordinator.apply(args.release)
+        elif args.action in ("guest-plan", "guest-apply"):
+            receipt = (
+                json.load(sys.stdin) if args.receipt == "-" else read_json(args.receipt)
+            )
+            candidate = coordinator.guest_candidate(receipt)
+            result = (
+                coordinator.apply(candidate)
+                if args.action == "guest-apply"
+                else {
+                    "candidate": str(candidate),
+                    "plan": coordinator.inspect(candidate),
+                }
+            )
         elif args.action in ("resume", "rollback"):
             status = coordinator.status()
             key = "release" if args.action == "resume" else "previous"

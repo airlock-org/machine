@@ -136,7 +136,9 @@ class Machine(deploy.Coordinator):
         }
         self.initial = baseline
         self.fail = None
+        self.fail_after = None
         self.pool_match = None
+        self.generation_details = None
         super().__init__(state, self.execute)
 
     def execute(self, *args, **kwargs):
@@ -147,6 +149,10 @@ class Machine(deploy.Coordinator):
             return "\n".join(name + "|Running" for name in sorted(self.live))
         if args[0] == "airlock-closure-store":
             assert not any(call[0] == "qvm-shutdown" for call in self.calls)
+            if args[1] == "describe-generation":
+                if self.generation_details is None:
+                    raise deploy.DeploymentError("missing simulated generation")
+                return json.dumps(self.generation_details)
             if args[1] == "find-generation":
                 return json.dumps(
                     {
@@ -165,6 +171,8 @@ class Machine(deploy.Coordinator):
                 name: vm["backend"]["system"]["source"]
                 for name, vm in target["domains"].items()
             }
+            if self.fail_after == args[0]:
+                raise deploy.DeploymentError("simulated failure after storage selection")
             deploy.atomic_json(
                 Path(kwargs["env"]["AIRLOCK_LOG_DIR"]) / "setup-config.json",
                 {"restart_required": False},
@@ -194,6 +202,62 @@ def new_release(tmp_path, topology):
     new = deepcopy(topology)
     new["domains"]["usr-home"]["backend"]["system"]["source"] += "-new"
     return write_release(tmp_path / "new", new)
+
+
+def guest_receipt(machine, topology, generation=17):
+    revision = "a" * 40
+    lock_hash = "b" * 64
+    system = topology["domains"]["usr-home"]["backend"]["system"]["source"] + "-new"
+    source = "/home/user/.local/share/airlock/machine-build/closures/usr-home"
+    manifest = f"/var/lib/airlock/closure-store/domains/usr-home/generations/{generation}/manifest.json"
+    store = topology["domains"]["usr-home"]["backend"]["store"]
+    machine.generation_details = {
+        "schema": deploy.GENERATION_INFO_SCHEMA,
+        "status": "passed",
+        "domain": "usr-home",
+        "generation": generation,
+        "current_generation": 1,
+        "selected": False,
+        "manifest": manifest,
+        "system": system,
+        "root_source": topology["domains"]["usr-home"]["backend"]["root"]["source"],
+        "kernel_name": topology["domains"]["usr-home"]["backend"]["kernel"]["name"],
+        "closure_source": source,
+        "store": {
+            "mode": "shared-closure",
+            "mountpoint": store["mountpoint"],
+            "device": store["device"],
+            "blob_device": store["blobDevice"],
+            "view_backend": store["viewBackend"],
+            "closure_hash": "c" * 64,
+        },
+        "approval": {
+            "approved_by": "sys-dev",
+            "source": source,
+            "transport": "qrexec",
+        },
+        "provenance": {"source_revision": revision, "lock_hash": lock_hash},
+        "verification": {"status": "passed"},
+        "retention": {"retain": True},
+    }
+    return {
+        "schema": deploy.ADMISSION_SCHEMA,
+        "status": "passed",
+        "transport": "qrexec",
+        "domain": "usr-home",
+        "generation": generation,
+        "previous_generation": 1,
+        "current_generation": 1,
+        "activated": False,
+        "retained": True,
+        "manifest": manifest,
+        "system": system,
+        "root_source": machine.generation_details["root_source"],
+        "kernel_name": machine.generation_details["kernel_name"],
+        "closure_hash": machine.generation_details["store"]["closure_hash"],
+        "source_revision": revision,
+        "lock_hash": lock_hash,
+    }
 
 
 def test_boot_start_image_autostart_and_dependencies(machine, tmp_path, topology):
@@ -269,6 +333,89 @@ def test_stage_reuses_sys_dev_admitted_generation(machine, tmp_path, topology):
     pool_calls = [call for call in machine.calls if call[0] == "airlock-closure-store"]
     assert len(pool_calls) == 1
     assert pool_calls[0][1] == "find-generation"
+
+
+def test_guest_candidate_activates_exact_admitted_generation_and_rolls_back(
+    machine, topology
+):
+    receipt = guest_receipt(machine, topology)
+    preview = machine.inspect_guest(receipt)
+    candidate = Path(preview["candidate"])
+    assert preview["plan"]["changed"] == ["usr-home"]
+    assert preview["plan"]["host_reboot_required"] is True
+    assert deploy.read_json(candidate / "staged.json") == {"usr-home": 17}
+    result = machine.apply(candidate)
+    assert result["plan"]["changed"] == ["usr-home"]
+    assert result["observed"]["usr-home"]["running"] == receipt["system"]
+    staged = deploy.read_json(
+        machine.state / "transactions" / result["id"] / "staged.json"
+    )
+    assert staged == {"usr-home": 17}
+    assert not any(
+        call[:2] == ("airlock-closure-store", "find-generation")
+        for call in machine.calls
+    )
+    machine.calls.clear()
+    rollback = machine.apply(machine.initial, recover=True)
+    assert rollback["observed"]["usr-home"]["running"].endswith("-system")
+
+
+@pytest.mark.parametrize("recovery", ["resume", "rollback"])
+def test_interrupted_guest_activation_remains_recoverable(machine, topology, recovery):
+    candidate = machine.guest_candidate(guest_receipt(machine, topology))
+    machine.fail_after = "/nix/store/setup/bin/airlock-setup-config"
+    with pytest.raises(deploy.DeploymentError, match="after storage selection"):
+        machine.apply(candidate)
+    assert machine.status()["failed_phase"] == "configuring"
+    assert machine.pointer()["release"] == str(candidate)
+    machine.fail_after = None
+    machine.calls.clear()
+    target = candidate if recovery == "resume" else machine.initial
+    result = machine.apply(target, recover=True)
+    assert result["phase"] == "reboot-required"
+    expected = (
+        machine.generation_details["system"]
+        if recovery == "resume"
+        else topology["domains"]["usr-home"]["backend"]["system"]["source"]
+    )
+    assert result["observed"]["usr-home"]["running"] == expected
+
+
+@pytest.mark.parametrize(
+    "field,value,error",
+    [
+        ("selected", True, "already active"),
+        ("root_source", "/nix/store/wrong-root", "receipt does not identify"),
+        ("retention", {"retain": False}, "not retained"),
+        (
+            "provenance",
+            {"source_revision": "f" * 40, "lock_hash": "b" * 64},
+            "provenance",
+        ),
+    ],
+)
+def test_guest_candidate_rejects_untrusted_generation(
+    machine, topology, field, value, error
+):
+    receipt = guest_receipt(machine, topology)
+    machine.generation_details[field] = value
+    with pytest.raises(deploy.DeploymentError, match=error):
+        machine.guest_candidate(receipt)
+
+
+def test_selected_guest_candidate_restores_staged_map_at_boot(
+    machine, topology, monkeypatch
+):
+    candidate = machine.guest_candidate(guest_receipt(machine, topology))
+    machine.apply(candidate)
+    calls = []
+    monkeypatch.delenv("AIRLOCK_STAGED_GENERATIONS", raising=False)
+    monkeypatch.setattr(deploy.os, "execv", lambda *args: calls.append(args))
+    machine.boot_setup("/image-setup", ["--apply"])
+    assert calls
+    assert deploy.os.environ["AIRLOCK_STAGED_GENERATIONS"] == str(
+        candidate / "staged.json"
+    )
 
 
 def test_failure_requires_recovery_and_resume_preserves_previous(

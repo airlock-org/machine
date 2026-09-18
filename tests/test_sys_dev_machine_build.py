@@ -56,6 +56,7 @@ def test_sys_dev_machine_source_and_build_tools_are_persistent_and_scoped():
     assert '--domain "$target"' in report["buildTool"]
     assert "--domain sys-dev" not in report["buildTool"]
     assert ".activated == false and .retained == true" in report["buildTool"]
+    assert "receipt_path" in report["buildTool"]
 
 
 def test_sys_dev_seed_service_includes_gzip_for_the_embedded_archive():
