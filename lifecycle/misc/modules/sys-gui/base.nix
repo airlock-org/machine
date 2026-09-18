@@ -406,7 +406,13 @@ in
 
     environment.etc = {
       "X11/xorg-qubes.conf.template".source = "${guiAgent}/etc/X11/xorg-qubes.conf.template";
-      "X11/xinit/xinitrc".source = "${guiAgent}/bin/qubes-session";
+      # Only profiles that explicitly enable XFCE should retain its session.
+      "X11/xinit/xinitrc".source = if cfg.enableXfce then
+        pkgs.writeShellScript "airlock-qubes-xfce-session" ''
+          export XSESSION=${pkgs.xfce4-session}/bin/xfce4-session
+          exec ${guiAgent}/bin/qubes-session
+        ''
+      else "${guiAgent}/bin/qubes-session";
       "qubes-rpc/qubes.GuiVMSession" = lib.mkIf hybrid { source = guiSession; };
       "qubes-rpc/qubes.SetMonitorLayout".source = "${guiAgent}/etc/qubes-rpc/qubes.SetMonitorLayout";
       "qubes-rpc/qubes.WindowIconUpdater".source =

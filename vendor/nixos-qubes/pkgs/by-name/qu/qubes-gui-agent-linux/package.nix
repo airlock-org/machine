@@ -27,7 +27,6 @@
   xorgproto,
   util-macros,
   xinit,
-  xfce4-session,
   systemd,
   xdpyinfo,
 }:
@@ -144,7 +143,7 @@ stdenv.mkDerivation {
       --replace-fail /usr/bin/qubes-run-xephyr "$out/bin/qubes-run-xephyr"
     substituteInPlace "$out/bin/qubes-session" \
       --replace-fail '. /usr/lib/qubes/init/functions' '. ${qubes-core-agent-linux}/lib/qubes/init/functions' \
-      --replace-fail /usr/bin/xfce4-session "${xfce4-session}/bin/xfce4-session" \
+      --replace-fail 'XSESSION=/usr/bin/xfce4-session' 'echo "qubes-session: GUI VM requires an explicit XSESSION" >&2; exit 1' \
       --replace-fail /usr/bin/qubesdb-read "${qubes-core-qubesdb}/bin/qubesdb-read"
     substituteInPlace "$out/lib/systemd/system/qubes-gui-agent.service" \
       --replace-fail /usr/bin/qubes-gui "$out/bin/qubes-gui" \
