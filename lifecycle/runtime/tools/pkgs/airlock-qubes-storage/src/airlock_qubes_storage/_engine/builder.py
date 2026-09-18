@@ -3,6 +3,7 @@
 import hashlib
 import os
 import re
+import shutil
 import tempfile
 from pathlib import Path
 
@@ -59,17 +60,24 @@ def prepare_builder(root, admission, registration):
         "closure_hash": manifest["store"]["closure_hash"],
         "registration_sha256": hashlib.sha256(registration).hexdigest(),
     }
-    metadata_image = manifest_path.parent / "builder-metadata.erofs"
+    # Copy only the small index, never the external package payload. Keep the
+    # canonical guest index untouched: this image belongs to the frozen builder.
+    metadata_image = manifest_path.parent / "builder-store.erofs"
+    shutil.copyfile(manifest["store"]["canonical_metadata_image"], metadata_image)
+    os.chmod(metadata_image, 0o644)
     with tempfile.TemporaryDirectory(dir=root / "tmp", prefix="builder-") as temporary:
         source = Path(temporary)
         source.chmod(0o755)
-        (source / "registration").write_bytes(registration)
-        core.atomic_json(source / "identity.json", identity)
-        (source / "skeleton/.links").mkdir(parents=True)
+        metadata = source / ".airlock-builder"
+        metadata.mkdir()
+        (metadata / "registration").write_bytes(registration)
+        core.atomic_json(metadata / "identity.json", identity)
+        (source / ".links").mkdir()
         views.run_checked(
             [
                 views.require_tool("mkfs.erofs", "AIRLOCK_MKFS_EROFS"),
                 "--quiet",
+                "--incremental=data",
                 "--all-root",
                 "-T",
                 "1",
@@ -149,12 +157,8 @@ def builder_volume_configs(root, pool_name):
         "closure_hash": store["closure_hash"],
         "manifest_path": str(manifest_path),
     }
-    images = {
-        "builder-store": store["canonical_metadata_image"],
-        "builder-metadata": data["metadata_image"],
-    }
     result = {}
-    for name in ("builder-store", "builder-data", "builder-metadata"):
+    for name in ("builder-store", "builder-data"):
         volume = {
             **common,
             "name": name,
@@ -168,7 +172,7 @@ def builder_volume_configs(root, pool_name):
                 size=store["blob_logical_size"],
             )
         else:
-            path = Path(images[name])
+            path = Path(data["metadata_image"])
             if path.stat().st_mode & 0o222:
                 core.fail("builder metadata image must be read-only")
             volume.update(

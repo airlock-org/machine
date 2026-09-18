@@ -34,6 +34,13 @@
       airlockImageBuildToolsOverlay =
         _final: prev:
         {
+          erofs-utils = prev.erofs-utils.overrideAttrs (oldAttrs: {
+            # Upstream fix: incremental additions must not produce dangling inodes.
+            patches = (oldAttrs.patches or [ ]) ++ lib.optionals (
+              lib.versionAtLeast oldAttrs.version "1.9"
+              && lib.versionOlder oldAttrs.version "1.9.4"
+            ) [ ./lifecycle/misc/overlays/erofs-incremental-data.patch ];
+          });
           lkl = prev.lkl.overrideAttrs (oldAttrs: {
             postPatch = (oldAttrs.postPatch or "") + ''
               substituteInPlace tools/lkl/cptofs.c \
@@ -638,6 +645,7 @@
           airlock-qubes-storage =
             pkgs.python3.pkgs.callPackage ./lifecycle/runtime/tools/pkgs/airlock-qubes-storage
               { };
+          airlock-erofs-utils = pkgs.erofs-utils;
           airlock-qube-bootstrap =
             pkgs.callPackage ./lifecycle/bootstrap/tools/pkgs/airlock-qube-bootstrap
               { };

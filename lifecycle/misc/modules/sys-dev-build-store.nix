@@ -5,7 +5,7 @@ let
     exec ${pkgs.python3}/bin/python3 ${../../runtime/tools/scripts/sys-dev-build-store.py} \
       "$@" --user ${lib.escapeShellArg cfg.user} --nix-store ${pkgs.nix}/bin/nix-store
   '';
-  devices = [ "dev-xvdg.device" "dev-xvdh.device" "dev-xvdi.device" ];
+  devices = [ "dev-xvdg.device" "dev-xvdh.device" ];
 in
 {
   airlock.qubeGuest.configNixStoreRoot = lib.mkDefault "/rw/airlock-builder/merged";

@@ -804,6 +804,8 @@ async def ensure_builder_store(args):
     qubes = load_qubes()
 
     def check(vm):
+        if "builder-metadata" in vm.volume_config or "builder-metadata" in vm.volumes:
+            fail("legacy three-disk builder requires explicit offline migration")
         for name, config in desired.items():
             current = vm.volume_config.get(name)
             if current is None:
@@ -822,7 +824,7 @@ async def ensure_builder_store(args):
 
     def check_frontends(vm):
         frontends = qubes_boot_frontends(list(vm.volumes))
-        for name, device in zip(desired, ("xvdg", "xvdh", "xvdi")):
+        for name, device in zip(desired, ("xvdg", "xvdh")):
             if frontends.get(name) != device:
                 fail(f"builder frontend mismatch: {name} must be {device}")
 

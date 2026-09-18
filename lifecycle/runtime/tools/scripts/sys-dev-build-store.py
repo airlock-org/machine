@@ -81,10 +81,6 @@ def start(args):
         mounts.append(str(target))
 
     try:
-        metadata = runtime / "metadata"
-        mount(metadata, "-t", "erofs", "-o", "ro,nodev,nosuid", args.metadata_device)
-        identity, registration = read_identity(metadata)
-        record_base(state, identity)
         pool = runtime / "pool"
         mount(
             pool,
@@ -94,9 +90,11 @@ def start(args):
             f"ro,nodev,nosuid,device={args.blob_device}",
             args.store_device,
         )
+        identity, registration = read_identity(pool / ".airlock-builder")
+        record_base(state, identity)
         lower = runtime / "lower"
         # --load-db registers metadata, never imports package payloads. State is
-        # rebuilt from the immutable metadata disk each boot, not trusted from
+        # rebuilt from the immutable combined index each boot, not trusted from
         # guest-writable Nix state. Initialize before covering the empty store.
         checked(
             args.nix_store,
@@ -105,14 +103,8 @@ def start(args):
             "--load-db",
             input=registration.decode(),
         )
-        mount(
-            lower / "nix/store",
-            "-t",
-            "overlay",
-            "overlay",
-            "-o",
-            f"ro,index=off,metacopy=off,redirect_dir=nofollow,lowerdir={pool}:{metadata}/skeleton",
-        )
+        mount(lower / "nix/store", "--bind", str(pool))
+        checked("mount", "-o", "remount,bind,ro", str(lower / "nix/store"))
         db = lower / "nix/var/nix/db"
         checked("mount", "--bind", str(db), str(db))
         mounts.append(str(db))
@@ -167,7 +159,6 @@ def main():
     parser.add_argument("--user", default="user")
     parser.add_argument("--store-device", default="/dev/xvdg")
     parser.add_argument("--blob-device", default="/dev/xvdh")
-    parser.add_argument("--metadata-device", default="/dev/xvdi")
     parser.add_argument("--nix-store", default="nix-store")
     args = parser.parse_args()
     (start if args.command == "start" else stop)(args)
