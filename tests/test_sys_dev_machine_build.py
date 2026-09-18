@@ -52,6 +52,8 @@ def test_sys_dev_machine_source_and_build_tools_are_persistent_and_scoped():
     assert 'installable="${installable#.}"' in report["buildTool"]
     assert 'if type == "array" then .[] | .path else keys[] end' in report["buildTool"]
     assert "airlock-pool-send" in report["buildTool"]
+    assert '--domain "$target"' in report["buildTool"]
+    assert "--domain sys-dev" not in report["buildTool"]
     assert ".activated == false and .retained == true" in report["buildTool"]
 
 

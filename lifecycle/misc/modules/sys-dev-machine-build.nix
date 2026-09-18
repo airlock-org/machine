@@ -203,7 +203,7 @@ let
         ${pkgs.gnugrep}/bin/grep -Fx "$system" "$closure/store-paths" >/dev/null || fail 'built system is absent from its closure metadata'
         response="$(${pkgs.coreutils}/bin/mktemp "$state/admissions/response.XXXXXX")"
         airlock-pool-send \
-          --domain sys-dev \
+          --domain "$target" \
           --system "$system" \
           --closure-source "$closure" \
           --source-revision "$revision" \
