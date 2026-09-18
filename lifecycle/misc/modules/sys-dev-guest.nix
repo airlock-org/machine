@@ -61,7 +61,7 @@ in
       repo=/home/${config.airlock.qubeGuest.user}/dev/airlock-machine
       [ ! -e "$repo" ] || exit 0
       cache=/home/${config.airlock.qubeGuest.user}/.cache/airlock-machine-source
-      install -d -m 0700 -o ${config.airlock.qubeGuest.user} -g users "$cache" "$(dirname "$repo")"
+      install -d -m 0700 -o ${config.airlock.qubeGuest.user} -g users "$(dirname "$cache")" "$cache" "$(dirname "$repo")"
       temp="$(mktemp -d "$cache/seed.XXXXXX")"
       trap 'rm -rf "$temp"' EXIT
       tar -xzf ${lib.escapeShellArg airlockMachineSeedArchive} -C "$temp" --no-same-owner --no-same-permissions
@@ -72,10 +72,10 @@ in
       [ "$(git -C "$temp/repo" rev-parse HEAD)" = "$revision" ]
       [ "$(git -C "$temp/repo" rev-parse --is-shallow-repository)" = true ]
       [ "$(sha256sum "$temp/repo/flake.lock" | awk '{print $1}')" = "$lock_hash" ]
+      git -C "$temp/repo" config airlock.seedRevision "$revision"
+      git -C "$temp/repo" config airlock.seedLockHash "$lock_hash"
       chown -R ${config.airlock.qubeGuest.user}:users "$temp/repo"
       mv "$temp/repo" "$repo"
-      git -C "$repo" config airlock.seedRevision "$revision"
-      git -C "$repo" config airlock.seedLockHash "$lock_hash"
     '';
     serviceConfig.Type = "oneshot";
   };
