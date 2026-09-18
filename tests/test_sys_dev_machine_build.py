@@ -49,5 +49,6 @@ def test_sys_dev_machine_source_and_build_tools_are_persistent_and_scoped():
     assert 'git -C "$verify_repo" bundle verify' in report["sourceTool"]
     assert "private Nix store needs at least 4 GiB free" in report["buildTool"]
     assert "flake metadata --offline" in report["buildTool"]
+    assert 'installable="#${installable#.}"' in report["buildTool"]
     assert "airlock-pool-send" in report["buildTool"]
     assert ".activated == false and .retained == true" in report["buildTool"]

@@ -163,6 +163,11 @@ let
 
     build_installable() {
       installable="$1"
+      case "$installable" in
+        .#*) installable="#''${installable#.}" ;;
+        \#*) ;;
+        *) fail 'installable must start with .# or #' ;;
+      esac
       preflight >/dev/null
       result="$(airlock-config-nix --extra-experimental-features nix-command --extra-experimental-features flakes build "$repo$installable" --no-link --json)"
       system="$(printf '%s\n' "$result" | ${pkgs.jq}/bin/jq -er '.[0].outputs.out')"
