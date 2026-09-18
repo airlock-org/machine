@@ -53,3 +53,9 @@ def test_sys_dev_machine_source_and_build_tools_are_persistent_and_scoped():
     assert 'if type == "array" then .[] | .path else keys[] end' in report["buildTool"]
     assert "airlock-pool-send" in report["buildTool"]
     assert ".activated == false and .retained == true" in report["buildTool"]
+
+
+def test_sys_dev_seed_service_includes_gzip_for_the_embedded_archive():
+    guest_module = (ROOT / "lifecycle/misc/modules/sys-dev-guest.nix").read_text()
+
+    assert "pkgs.gnutar pkgs.gzip" in guest_module

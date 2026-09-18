@@ -55,7 +55,7 @@ in
     requires = [ "airlock-qubes-rw-init.service" ];
     after = [ "airlock-qubes-rw-init.service" ];
     before = [ "qubes-qrexec-agent.service" ];
-    path = [ pkgs.coreutils pkgs.gitMinimal pkgs.gnugrep pkgs.gnutar pkgs.gawk pkgs.jq ];
+    path = [ pkgs.coreutils pkgs.gitMinimal pkgs.gnugrep pkgs.gnutar pkgs.gzip pkgs.gawk pkgs.jq ];
     script = ''
       set -eu
       repo=/home/${config.airlock.qubeGuest.user}/dev/airlock-machine
