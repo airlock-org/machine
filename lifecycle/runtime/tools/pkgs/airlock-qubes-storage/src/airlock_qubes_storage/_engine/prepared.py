@@ -82,7 +82,7 @@ def prepare_pool(root, descriptors, specs, runtime_root):
         # Build-time sources use the sandbox's normal store, never the host's
         # AIRLOCK_NIX_ROOT setting (which may have been inherited by a caller).
         args.physical_store_root = spec.get("physical_store_root", "/nix/store")
-        print(f"Preparing guest store: {name}", flush=True)
+        print(f"Preparing guest configuration: {name}", flush=True)
         admission = admit_generation(args)
         prepared.append((target, admission))
 

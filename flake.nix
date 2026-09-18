@@ -396,12 +396,13 @@
 
       mkMachineGuestEntries = system: extraSpecialArgs:
         {
-          hybrid = mkUsbSysGuiDomainEntry system;
-          gui-lab = mkUsbAmdSysGuiDomainEntry system "gnome" false true;
-          lab-gui = mkUsbAmdSysGuiDomainEntry system "gnome" true false;
-          lab-sys-dev = (bootstrapDomains.mkSysDevDomainEntryWith system { inherit extraSpecialArgs; }) // { preparedDomainName = "sys-dev"; };
-          lab-usr-home = (bootstrapDomains.mkHomeVmDomainEntry system) // { preparedDomainName = "usr-home"; };
-          lab-usr-browser = (bootstrapDomains.mkBrowserVmDomainEntry system) // { preparedDomainName = "usr-browser"; };
+          # Build labels identify guest configurations; variants share a VM name.
+          sys-gui-hybrid = mkUsbSysGuiDomainEntry system;
+          sys-gui-standalone = mkUsbAmdSysGuiDomainEntry system "gnome" false true;
+          sys-gui = mkUsbAmdSysGuiDomainEntry system "gnome" true false;
+          sys-dev = (bootstrapDomains.mkSysDevDomainEntryWith system { inherit extraSpecialArgs; }) // { preparedDomainName = "sys-dev"; };
+          usr-home = (bootstrapDomains.mkHomeVmDomainEntry system) // { preparedDomainName = "usr-home"; };
+          usr-browser = (bootstrapDomains.mkBrowserVmDomainEntry system) // { preparedDomainName = "usr-browser"; };
         };
 
       machineGuestEntries = system: mkMachineGuestEntries system { };
@@ -433,7 +434,7 @@
             name = airlockQubesVmKernelName;
             package = self.packages.${system}.airlock-qubes-vm-kernel;
           };
-          airlockGuiDomain = machineDomain "hybrid";
+          airlockGuiDomain = machineDomain "sys-gui-hybrid";
           airlockMachineGuestEntries = entries;
           airlockSourceRevision = self.rev or "dirty";
           airlockSourceLockHash = builtins.hashFile "sha256" ./flake.lock;
@@ -457,7 +458,7 @@
               # Replace hybrid guest fields, leaving PCI selection to the
               # reusable module and this machine's hardware inventory.
               airlock.qubes.domains.sys-gui = lib.mapAttrs (_: lib.mkForce)
-                (builtins.removeAttrs (machineDomain "gui-lab") [ "devices" ]);
+                (builtins.removeAttrs (machineDomain "sys-gui-standalone") [ "devices" ]);
             };
             specialisation.usb-lab.configuration = {
               airlock.machineDeployment.profile = lib.mkForce "usb-lab";
@@ -466,7 +467,7 @@
                 # Keep this explicit physical assignment in the forced prepared
                 # descriptor. Without it, the descriptor's device defaults can
                 # win during specialisation merging and sys-gui starts headless.
-                sys-gui = (builtins.removeAttrs (machineDomain "lab-gui") [ "devices" ]) // {
+                sys-gui = (builtins.removeAttrs (machineDomain "sys-gui") [ "devices" ]) // {
                   devices.pci = [
                     {
                       backend = "dom0";
@@ -477,9 +478,9 @@
                     }
                   ];
                 };
-                sys-dev = machineDomain "lab-sys-dev";
-                usr-home = machineDomain "lab-usr-home";
-                usr-browser = (machineDomain "lab-usr-browser") // { netvm = "sys-dev"; };
+                sys-dev = machineDomain "sys-dev";
+                usr-home = machineDomain "usr-home";
+                usr-browser = (machineDomain "usr-browser") // { netvm = "sys-dev"; };
               };
             };
           })
