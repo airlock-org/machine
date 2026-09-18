@@ -4,7 +4,13 @@ import os
 import subprocess
 import sys
 
-from ._engine.artifacts import receive_artifact, write_artifact
+from ._engine.artifacts import (
+    read_message,
+    receive_artifact,
+    receive_incremental,
+    write_artifact,
+    write_message,
+)
 from ._engine.core import EngineError, default_physical_store_root
 
 
@@ -35,6 +41,10 @@ def build_parser():
     receive.add_argument("--pool-root", default="/var/lib/airlock/closure-store")
     receive.add_argument("--expected-domain", required=True)
     receive.add_argument("--approved-by", required=True)
+    incremental = sub.add_parser("receive-incremental")
+    incremental.add_argument("--pool-root", default="/var/lib/airlock/closure-store")
+    incremental.add_argument("--expected-domain", required=True)
+    incremental.add_argument("--approved-by", required=True)
     return parser
 
 
@@ -64,11 +74,22 @@ def main(argv=None):
         if args.command == "prepare":
             write_artifact(sys.stdout.buffer, **prepare_kwargs(args))
             return 0
-        result = receive_artifact(
+        receiver = (
+            receive_incremental
+            if args.command == "receive-incremental"
+            else receive_artifact
+        )
+        extra = (
+            {"output": sys.stdout.buffer}
+            if args.command == "receive-incremental"
+            else {}
+        )
+        result = receiver(
             sys.stdin.buffer,
             pool_root=args.pool_root,
             expected_domain=args.expected_domain,
             approved_by=args.approved_by,
+            **extra,
         )
         print(json.dumps(result, sort_keys=True))
         return 0
@@ -88,13 +109,33 @@ def send_main(argv=None):
             [
                 args.qrexec_client,
                 "dom0",
-                f"airlock.Pool.Admit+{args.domain}",
+                f"airlock.Pool.AdmitIncremental+{args.domain}",
             ],
             stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
         )
-        write_artifact(process.stdin, **prepare_kwargs(args))
+
+        def negotiate(inventory):
+            write_message(process.stdin, inventory)
+            return read_message(process.stdout)
+
+        write_artifact(process.stdin, negotiate=negotiate, **prepare_kwargs(args))
         process.stdin.close()
-        return process.wait()
+        result = read_message(process.stdout)
+        code = process.wait()
+        if code:
+            return code
+        if (
+            not isinstance(result, dict)
+            or result.get("status") != "passed"
+            or result.get("domain") != args.domain
+            or result.get("system") != args.system
+            or result.get("activated") is not False
+            or result.get("retained") is not True
+        ):
+            raise EngineError("invalid pool admission response")
+        print(json.dumps(result, sort_keys=True))
+        return 0
     except (EngineError, OSError, ValueError) as exc:
         if process is not None and process.poll() is None:
             process.terminate()

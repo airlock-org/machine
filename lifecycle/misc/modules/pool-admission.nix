@@ -7,7 +7,7 @@ let
       "__airlock_no_pool_admission_target__"
     else
       lib.concatStringsSep "|" cfg.targets;
-  rootReceiver = pkgs.writeShellScript "airlock-pool-admit-root" ''
+  mkRootReceiver = incremental: pkgs.writeShellScript "airlock-pool-admit-root${lib.optionalString incremental "-incremental"}" ''
     set -eu
 
     [ "$#" -eq 2 ] || {
@@ -27,11 +27,11 @@ let
         exit 1
         ;;
     esac
-    exec ${poolArtifacts}/bin/airlock-pool-artifact receive \
+    exec ${poolArtifacts}/bin/airlock-pool-artifact receive${lib.optionalString incremental "-incremental"} \
       --expected-domain "$target" \
       --approved-by "$approved_by"
   '';
-  handler = pkgs.writeShellScript "airlock-pool-admit-qrexec" ''
+  mkHandler = receiver: pkgs.writeShellScript "airlock-pool-admit-qrexec" ''
     set -eu
 
     remote="''${QREXEC_REMOTE_DOMAIN:-}"
@@ -50,12 +50,18 @@ let
     # VM-to-dom0 qrexec services run as dom0's normal control user. Admit
     # through a separately validated helper so only this pool operation gains
     # access to the root-owned closure store.
-    exec /run/wrappers/bin/sudo -n ${rootReceiver} "$target" "$remote"
+    exec /run/wrappers/bin/sudo -n ${receiver} "$target" "$remote"
   '';
+  rootReceiver = mkRootReceiver false;
+  incrementalReceiver = mkRootReceiver true;
+  handler = mkHandler rootReceiver;
+  incrementalHandler = mkHandler incrementalReceiver;
   policy = pkgs.writeTextDir "etc/qubes/policy.d/42-airlock-pool-admission.policy" ''
     # Managed by Airlock. This service admits an inactive guest store generation.
     ${lib.concatMapStringsSep "\n" (target: "airlock.Pool.Admit +${target} ${cfg.caller} dom0 allow") cfg.targets}
     airlock.Pool.Admit * @anyvm @anyvm deny
+    ${lib.concatMapStringsSep "\n" (target: "airlock.Pool.AdmitIncremental +${target} ${cfg.caller} dom0 allow") cfg.targets}
+    airlock.Pool.AdmitIncremental * @anyvm @anyvm deny
   '';
 in
 {
@@ -85,12 +91,20 @@ in
       source = handler;
       mode = "0555";
     };
+    environment.etc."qubes-rpc/airlock.Pool.AdmitIncremental" = {
+      source = incrementalHandler;
+      mode = "0555";
+    };
     security.sudo.extraRules = [
       {
         users = [ config.airlock.dom0.user ];
         commands = [
           {
             command = "${rootReceiver}";
+            options = [ "NOPASSWD" ];
+          }
+          {
+            command = "${incrementalReceiver}";
             options = [ "NOPASSWD" ];
           }
         ];

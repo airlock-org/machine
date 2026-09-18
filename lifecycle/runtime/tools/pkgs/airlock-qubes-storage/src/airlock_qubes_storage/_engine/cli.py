@@ -196,7 +196,9 @@ def build_parser():
 def run(argv=None):
     parser = build_parser()
     args = parser.parse_args(argv)
-    if args.command == "admit":
+    # Negotiated transfers hold this lock from inventory selection through
+    # publication; maintenance must not remove or relocate reusable objects.
+    if args.command in ("admit", "gc", "compact", "recover"):
         with admission_lock(args.pool_root):
             return args.func(args)
     return args.func(args)

@@ -3,6 +3,9 @@ import json
 import os
 import sys
 import tarfile
+import socket
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -12,12 +15,12 @@ ROOT = Path(__file__).resolve().parents[1]
 ENGINE_SOURCE = ROOT / "lifecycle/runtime/tools/pkgs/airlock-qubes-storage/src"
 sys.path.insert(0, str(ENGINE_SOURCE))
 
-from airlock_qubes_storage._engine import (
+from airlock_qubes_storage._engine import (  # noqa: E402
     artifacts,
     core,
     generations,
     maintenance,
-)  # noqa: E402
+)
 
 
 @pytest.fixture
@@ -97,8 +100,7 @@ def artifact_input(tmp_path, monkeypatch):
 
     monkeypatch.setattr(artifacts, "materialize_view", fake_view)
     output = io.BytesIO()
-    artifacts.write_artifact(
-        output,
+    kwargs = dict(
         domain="usr-home",
         system=system,
         closure_source=closure,
@@ -109,12 +111,14 @@ def artifact_input(tmp_path, monkeypatch):
         physical_store_root=physical,
         path_info=path_info,
     )
+    artifacts.write_artifact(output, **kwargs)
     return {
         "bytes": output.getvalue(),
         "pool": tmp_path / "pool",
         "common": common,
         "system": system,
         "closure": str(closure),
+        "kwargs": kwargs,
     }
 
 
@@ -254,3 +258,274 @@ def test_interrupted_admission_is_invisible_and_retryable(artifact_input, monkey
     assert result["status"] == "passed"
     assert result["objects_reused"] == 1
     assert result["objects_admitted"] == 1
+
+
+def incremental_exchange(case, transform=lambda data: data):
+    """Exercise the inventory/response/payload handshake over real duplex I/O."""
+    client, server = socket.socketpair()
+    client.settimeout(5)
+    server.settimeout(5)
+    request = None
+    with (
+        client,
+        server,
+        client.makefile("rwb") as sender,
+        server.makefile("rwb") as receiver,
+    ):
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            pending = executor.submit(
+                artifacts.receive_incremental,
+                receiver,
+                receiver,
+                pool_root=case["pool"],
+                expected_domain="usr-home",
+                approved_by="sys-dev",
+            )
+
+            def negotiate(inventory):
+                nonlocal request
+                artifacts.write_message(sender, inventory)
+                request = artifacts.read_message(sender)
+                return request
+
+            try:
+                payload = io.BytesIO()
+                artifacts.write_artifact(payload, negotiate=negotiate, **case["kwargs"])
+                sender.write(transform(payload.getvalue()))
+                sender.flush()
+            finally:
+                client.shutdown(socket.SHUT_WR)
+            return pending.result(timeout=5), request, payload.getvalue()
+
+
+def test_incremental_empty_pool_then_no_payload_on_repeat(artifact_input, monkeypatch):
+    first, request, _ = incremental_exchange(artifact_input)
+    assert request["missing"] == [artifact_input["common"], artifact_input["system"]]
+    assert first["objects_transferred"] == first["objects_admitted"] == 2
+    assert first["payload_bytes_transferred"] > 0
+    assert first["activated"] is False
+    assert first["retained"] is True
+    monkeypatch.setattr(
+        artifacts,
+        "create_tar_fragment",
+        lambda *args: pytest.fail("reused objects must not be packaged"),
+    )
+    second, request, payload = incremental_exchange(artifact_input)
+    assert request["missing"] == []
+    assert second["objects_transferred"] == second["objects_admitted"] == 0
+    assert second["payload_bytes_transferred"] == 0
+    assert second["objects_reused"] == 2
+    assert second["current_generation"] is None
+    with tarfile.open(fileobj=io.BytesIO(payload)) as archive:
+        assert archive.getnames() == ["manifest.json"]
+
+
+def test_incremental_reuses_existing_pool_and_sends_only_new_object(
+    artifact_input, monkeypatch
+):
+    # Seed through the existing full-artifact path: old objects need no migration.
+    receive(artifact_input)
+    new = "/nix/store/" + "d" * 32 + "-new-system"
+    kwargs = artifact_input["kwargs"]
+    source = kwargs["physical_store_root"] / Path(new).name
+    source.mkdir()
+    (source / "payload").write_text("new-system-content")
+    with (kwargs["closure_source"] / "store-paths").open("a") as stream:
+        stream.write(new + "\n")
+    kwargs["system"] = new
+    kwargs["path_info"][new] = {
+        "references": [artifact_input["system"]],
+        "narHash": "sha256-new",
+        "narSize": 3,
+    }
+    packaged = []
+    original = artifacts.create_tar_fragment
+
+    def track(source, entry, fragment):
+        packaged.append(entry)
+        return original(source, entry, fragment)
+
+    monkeypatch.setattr(artifacts, "create_tar_fragment", track)
+    result, request, _ = incremental_exchange(artifact_input)
+    assert request["missing"] == [new]
+    assert packaged == [Path(new).name]
+    assert result["objects_reused"] == 2
+    assert result["objects_admitted"] == result["objects_transferred"] == 1
+
+
+@pytest.mark.parametrize("damage", ["payload", "missing", "inventory", "truncated"])
+def test_incremental_rejects_bad_payload_without_publication(artifact_input, damage):
+    def transform(data):
+        if damage == "payload":
+            return data.replace(b"common-content", b"broken-content", 1)
+        if damage == "truncated":
+            return data[: len(data) // 2]
+        if damage == "missing":
+            return rewrite_artifact(
+                data,
+                lambda members: [
+                    item for item in members if not item[0].endswith("-common.tar")
+                ],
+            )
+
+        def change_manifest(members):
+            result = []
+            for name, payload in members:
+                if name == "manifest.json":
+                    manifest = json.loads(payload)
+                    manifest["source_revision"] = "f" * 40
+                    payload = json.dumps(manifest).encode()
+                result.append((name, payload))
+            return result
+
+        return rewrite_artifact(data, change_manifest)
+
+    with pytest.raises(core.EngineError):
+        incremental_exchange(artifact_input, transform)
+    assert not list((artifact_input["pool"] / "domains").glob("*/*/*/manifest.json"))
+    assert not list((artifact_input["pool"] / "tmp").iterdir())
+    result, _, _ = incremental_exchange(artifact_input)
+    assert result["status"] == "passed"
+
+
+def test_inventory_hash_conflict_rejected_before_request(artifact_input):
+    receive(artifact_input)
+    with tarfile.open(fileobj=io.BytesIO(artifact_input["bytes"])) as archive:
+        inventory = json.load(archive.extractfile("manifest.json"))
+    inventory["schema"] = artifacts.SCHEMA_INCREMENTAL
+    inventory["objects"][0]["tree_hash"] = "0" * 64
+    output = io.BytesIO()
+    with pytest.raises(core.EngineError, match="existing object hash mismatch"):
+        artifacts.receive_incremental(
+            io.BytesIO(json.dumps(inventory).encode() + b"\n"),
+            output,
+            pool_root=artifact_input["pool"],
+            expected_domain="usr-home",
+            approved_by="sys-dev",
+        )
+    assert output.getvalue() == b""
+
+
+@pytest.mark.parametrize(
+    "missing",
+    [["/nix/store/" + "f" * 32 + "-unlisted"], [None], ["duplicate", "duplicate"]],
+)
+def test_sender_rejects_invalid_missing_request(artifact_input, missing):
+    output = io.BytesIO()
+    with pytest.raises(core.EngineError, match="invalid missing-object request"):
+        artifacts.write_artifact(
+            output,
+            **artifact_input["kwargs"],
+            negotiate=lambda _: {
+                "schema": artifacts.SCHEMA_REQUEST,
+                "missing": missing,
+            },
+        )
+    assert output.getvalue() == b""
+
+
+@pytest.mark.parametrize("command", ["gc", "compact", "recover"])
+def test_maintenance_serializes_with_negotiated_admission(
+    artifact_input, monkeypatch, command
+):
+    from airlock_qubes_storage._engine import cli
+
+    locked = False
+
+    @contextmanager
+    def lock(root):
+        nonlocal locked
+        locked = True
+        yield
+        locked = False
+
+    def maintenance(args):
+        assert locked
+        return {"status": "passed"}
+
+    monkeypatch.setattr(cli, "admission_lock", lock)
+    monkeypatch.setattr(cli, command, maintenance)
+    assert (
+        cli.run([command, "--pool-root", str(artifact_input["pool"])])["status"]
+        == "passed"
+    )
+    assert not locked
+
+
+def test_sender_cli_negotiates_and_prints_only_final_response(
+    artifact_input, monkeypatch, capsys, tmp_path
+):
+    from airlock_qubes_storage import artifact_cli
+
+    receive(artifact_input)
+    client, server = socket.socketpair()
+    client.settimeout(5)
+    server.settimeout(5)
+    kwargs = artifact_input["kwargs"]
+    info = tmp_path / "path-info.json"
+    info.write_text(json.dumps(kwargs["path_info"]))
+    with (
+        client,
+        server,
+        server.makefile("rwb") as receiver,
+        ThreadPoolExecutor(max_workers=1) as executor,
+    ):
+
+        def receive_session():
+            result = artifacts.receive_incremental(
+                receiver,
+                receiver,
+                pool_root=artifact_input["pool"],
+                expected_domain="usr-home",
+                approved_by="sys-dev",
+            )
+            artifacts.write_message(receiver, result)
+            return 0
+
+        future = executor.submit(receive_session)
+        with client.makefile("wb") as stdin, client.makefile("rb") as stdout:
+
+            def close_input():
+                stdin.close()
+                client.shutdown(socket.SHUT_WR)
+
+            def popen(argv, **options):
+                assert argv == [
+                    "qrexec-client-vm",
+                    "dom0",
+                    "airlock.Pool.AdmitIncremental+usr-home",
+                ]
+                return SimpleNamespace(
+                    stdin=SimpleNamespace(
+                        write=stdin.write, flush=stdin.flush, close=close_input
+                    ),
+                    stdout=stdout,
+                    wait=lambda: future.result(timeout=5),
+                    poll=lambda: 0 if future.done() else None,
+                    terminate=lambda: client.shutdown(socket.SHUT_RDWR),
+                )
+
+            monkeypatch.setattr(artifact_cli.subprocess, "Popen", popen)
+            result = artifact_cli.send_main(
+                [
+                    "--domain",
+                    "usr-home",
+                    "--system",
+                    kwargs["system"],
+                    "--closure-source",
+                    str(kwargs["closure_source"]),
+                    "--source-revision",
+                    kwargs["source_revision"],
+                    "--lock-hash",
+                    kwargs["lock_hash"],
+                    "--physical-store-root",
+                    str(kwargs["physical_store_root"]),
+                    "--path-info-json",
+                    str(info),
+                ]
+            )
+    assert result == 0
+    response = json.loads(capsys.readouterr().out)
+    assert response["objects_transferred"] == 0
+    assert response["objects_reused"] == 2
+    assert response["activated"] is False

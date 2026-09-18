@@ -36,6 +36,8 @@ from .state import current_generation
 from .views import materialize_view
 
 SCHEMA_ARTIFACT = "airlock.pool-artifact.v1"
+SCHEMA_INCREMENTAL = "airlock.pool-artifact.v2"
+SCHEMA_REQUEST = "airlock.pool-artifact-request.v1"
 MAX_MANIFEST_BYTES = 64 * 1024 * 1024
 STORE_PATH_RE = re.compile(r"^/nix/store/[0-9a-z]{32}-[^/]+$")
 REVISION_RE = re.compile(r"^[0-9a-f]{40,64}$")
@@ -116,6 +118,7 @@ def write_artifact(
     nix="nix",
     nix_store=None,
     path_info=None,
+    negotiate=None,
 ):
     """Write a streaming tar artifact; package fragments precede its manifest."""
     domain = safe_domain_name(domain)
@@ -138,26 +141,60 @@ def write_artifact(
         fail(f"Nix path metadata differs from closure: missing={missing} extra={extra}")
 
     objects = []
+    for logical_path in paths:
+        source = physical_store_path(logical_path, physical_store_root)
+        info = metadata[logical_path]
+        objects.append(
+            {
+                "path": logical_path,
+                "entry": store_entry(logical_path),
+                "references": info.get("references", []),
+                "nar_hash": info.get("narHash", ""),
+                "nar_size": int(info.get("narSize", 0)),
+                "tree_hash": tree_hash(source),
+                "fragment": f"objects/{store_entry(logical_path)}.tar",
+            }
+        )
+    manifest = {
+        "schema": SCHEMA_INCREMENTAL if negotiate else SCHEMA_ARTIFACT,
+        "domain": domain,
+        "system": system,
+        "closure_source": logical_closure_source,
+        "root_source": str(root_source),
+        "kernel_name": str(kernel_name),
+        "source_revision": source_revision,
+        "lock_hash": lock_hash,
+        "object_count": len(objects),
+        "objects": objects,
+    }
+    _validate_received(manifest, {}, domain, inventory=True)
+    missing = set(paths)
+    if negotiate:
+        request = negotiate(manifest)
+        requested = request.get("missing") if isinstance(request, dict) else None
+        if (
+            not isinstance(request, dict)
+            or request.get("schema") != SCHEMA_REQUEST
+            or not isinstance(requested, list)
+            or any(not isinstance(path, str) for path in requested)
+            or len(set(requested)) != len(requested)
+            or not set(requested) <= set(paths)
+        ):
+            fail("invalid missing-object request")
+        missing = set(requested)
     with tempfile.TemporaryDirectory(prefix="airlock-pool-artifact-") as temp_name:
         temp = Path(temp_name)
         with tarfile.open(
             fileobj=output, mode="w|", format=tarfile.PAX_FORMAT
         ) as archive:
-            for logical_path in paths:
+            for record in objects:
+                logical_path = record["path"]
+                if logical_path not in missing:
+                    continue
                 entry = store_entry(logical_path)
                 source = physical_store_path(logical_path, physical_store_root)
                 if not source.exists() and not source.is_symlink():
                     fail(f"store object source is missing: {logical_path}")
-                info = metadata[logical_path]
-                references = sorted(
-                    {_validate_store_path(path) for path in info.get("references", [])}
-                )
-                outside = sorted(set(references) - set(paths))
-                if outside:
-                    fail(
-                        f"closure is incomplete for {logical_path}: "
-                        + ", ".join(outside)
-                    )
                 fragment = temp / f"{entry}.tar"
                 create_tar_fragment(source, entry, fragment)
                 fragment_size = fragment.stat().st_size
@@ -169,33 +206,14 @@ def write_artifact(
                 member.mtime = 1
                 with fragment.open("rb") as stream:
                     archive.addfile(member, stream)
-                objects.append(
+                record.update(
                     {
-                        "path": logical_path,
-                        "entry": entry,
-                        "references": references,
-                        "nar_hash": info.get("narHash", ""),
-                        "nar_size": int(info.get("narSize", 0)),
-                        "tree_hash": tree_hash(source),
-                        "fragment": member_name,
                         "fragment_size": fragment_size,
                         "fragment_sha256": fragment_hash,
                     }
                 )
                 fragment.unlink()
 
-            manifest = {
-                "schema": SCHEMA_ARTIFACT,
-                "domain": domain,
-                "system": system,
-                "closure_source": logical_closure_source,
-                "root_source": str(root_source),
-                "kernel_name": str(kernel_name),
-                "source_revision": source_revision,
-                "lock_hash": lock_hash,
-                "object_count": len(objects),
-                "objects": objects,
-            }
             payload = (json.dumps(manifest, sort_keys=True) + "\n").encode()
             member = tarfile.TarInfo("manifest.json")
             member.size = len(payload)
@@ -275,7 +293,7 @@ def _tar_tree_hash(fragment, expected_entry):
     return digest.hexdigest()
 
 
-def _receive_members(stream, staging):
+def _receive_members(stream, staging, allowed_fragments=None):
     fragments = {}
     manifest = None
     try:
@@ -296,6 +314,11 @@ def _receive_members(stream, staging):
                 match = re.fullmatch(r"objects/([0-9a-z]{32}-[^/]+)\.tar", member.name)
                 if not match or member.name in fragments:
                     fail(f"unexpected or duplicate artifact member: {member.name}")
+                if (
+                    allowed_fragments is not None
+                    and member.name not in allowed_fragments
+                ):
+                    fail(f"unrequested artifact fragment: {member.name}")
                 target = staging / (match.group(1) + ".tar")
                 source = archive.extractfile(member)
                 with target.open("xb") as output:
@@ -317,9 +340,15 @@ def _receive_members(stream, staging):
     return manifest, fragments
 
 
-def _validate_received(manifest, fragments, expected_domain):
-    if not isinstance(manifest, dict) or manifest.get("schema") != SCHEMA_ARTIFACT:
+def _validate_received(
+    manifest, fragments, expected_domain, *, reused=None, inventory=False
+):
+    if not isinstance(manifest, dict) or manifest.get("schema") not in (
+        SCHEMA_ARTIFACT,
+        SCHEMA_INCREMENTAL,
+    ):
         fail("unsupported pool artifact schema")
+    reused = reused or {}
     domain = safe_domain_name(manifest.get("domain"))
     if domain != expected_domain:
         fail(f"pool artifact target mismatch: {domain} != {expected_domain}")
@@ -339,18 +368,29 @@ def _validate_received(manifest, fragments, expected_domain):
         if item.get("entry") != entry:
             fail(f"pool artifact object identity mismatch: {path}")
         member_name = f"objects/{entry}.tar"
-        if item.get("fragment") != member_name or member_name not in fragments:
+        if item.get("fragment") != member_name:
             fail(f"pool artifact fragment is missing: {path}")
         if path in objects:
             fail(f"duplicate pool artifact object: {path}")
-        fragment = fragments[member_name]
-        if (
-            item.get("fragment_size") != fragment["size"]
-            or item.get("fragment_sha256") != fragment["sha256"]
+        if not isinstance(item.get("tree_hash"), str) or not LOCK_HASH_RE.fullmatch(
+            item["tree_hash"]
         ):
-            fail(f"pool artifact fragment checksum mismatch: {path}")
-        if item.get("tree_hash") != _tar_tree_hash(fragment["path"], entry):
-            fail(f"pool artifact tree checksum mismatch: {path}")
+            fail(f"invalid object tree hash: {path}")
+        if not inventory:
+            if path in reused:
+                if item["tree_hash"] != reused[path]["tree_hash"]:
+                    fail(f"existing object hash mismatch for {path}")
+            else:
+                if member_name not in fragments:
+                    fail(f"pool artifact fragment is missing: {path}")
+                fragment = fragments[member_name]
+                if (
+                    item.get("fragment_size") != fragment["size"]
+                    or item.get("fragment_sha256") != fragment["sha256"]
+                ):
+                    fail(f"pool artifact fragment checksum mismatch: {path}")
+                if item["tree_hash"] != _tar_tree_hash(fragment["path"], entry):
+                    fail(f"pool artifact tree checksum mismatch: {path}")
         references = item.get("references")
         if not isinstance(references, list):
             fail(f"pool artifact references are invalid: {path}")
@@ -360,7 +400,9 @@ def _validate_received(manifest, fragments, expected_domain):
             fail(f"pool artifact NAR size is invalid: {path}")
         item["references"] = sorted({_validate_store_path(ref) for ref in references})
         objects[path] = item
-    if set(fragments) != {item["fragment"] for item in objects.values()}:
+    if not inventory and set(fragments) != {
+        item["fragment"] for path, item in objects.items() if path not in reused
+    }:
         fail("pool artifact contains unlisted object fragments")
     if system not in objects:
         fail("pool artifact does not contain its guest system")
@@ -372,10 +414,10 @@ def _validate_received(manifest, fragments, expected_domain):
     return domain, system, objects
 
 
-def _admit_received(manifest, fragments, root, approved_by):
+def _admit_received(manifest, fragments, root, approved_by, *, reused=None):
     root = ensure_pool(root)
     domain, system, objects = _validate_received(
-        manifest, fragments, manifest["domain"]
+        manifest, fragments, manifest["domain"], reused=reused
     )
     domain_dir = root / "domains" / domain
     generations_dir = domain_dir / "generations"
@@ -546,6 +588,10 @@ def _admit_received(manifest, fragments, root, approved_by):
         "objects_total": len(paths),
         "objects_admitted": len(admitted),
         "objects_reused": len(reused),
+        "objects_transferred": len(fragments),
+        "payload_bytes_transferred": sum(
+            fragment["size"] for fragment in fragments.values()
+        ),
         "source_revision": manifest["source_revision"],
         "lock_hash": manifest["lock_hash"],
     }
@@ -557,6 +603,8 @@ def receive_artifact(stream, *, pool_root, expected_domain, approved_by):
     staging = Path(tempfile.mkdtemp(prefix="incoming-", dir=root / "tmp"))
     try:
         manifest, fragments = _receive_members(stream, staging)
+        if not isinstance(manifest, dict) or manifest.get("schema") != SCHEMA_ARTIFACT:
+            fail("incremental artifacts require a negotiated session")
         domain, _, _ = _validate_received(manifest, fragments, expected_domain)
         if domain != expected_domain:
             fail("pool artifact target mismatch")
@@ -564,3 +612,75 @@ def receive_artifact(stream, *, pool_root, expected_domain, approved_by):
             return _admit_received(manifest, fragments, root, approved_by)
     finally:
         shutil.rmtree(staging, ignore_errors=True)
+
+
+def write_message(stream, payload):
+    data = json.dumps(payload, sort_keys=True).encode() + b"\n"
+    if len(data) > MAX_MANIFEST_BYTES:
+        fail("pool protocol message is too large")
+    stream.write(data)
+    stream.flush()
+
+
+def read_message(stream):
+    data = stream.readline(MAX_MANIFEST_BYTES + 1)
+    if len(data) > MAX_MANIFEST_BYTES or not data.endswith(b"\n"):
+        fail("missing, truncated or oversized pool protocol message")
+    try:
+        return json.loads(data)
+    except (ValueError, UnicodeError):
+        fail("invalid pool protocol JSON")
+
+
+def receive_incremental(stream, output, *, pool_root, expected_domain, approved_by):
+    """Keep reusable objects protected from GC until generation publication."""
+    expected_domain = safe_domain_name(expected_domain)
+    inventory = read_message(stream)
+    if not isinstance(inventory, dict) or inventory.get("schema") != SCHEMA_INCREMENTAL:
+        fail("unsupported incremental inventory schema")
+    _, _, objects = _validate_received(inventory, {}, expected_domain, inventory=True)
+    root = ensure_pool(pool_root)
+    with admission_lock(root):
+        reused = {}
+        for path, record in objects.items():
+            existing = reusable_object(root, path)
+            if existing is not None:
+                if existing["tree_hash"] != record["tree_hash"]:
+                    fail(f"existing object hash mismatch for {path}")
+                reused[path] = existing
+        write_message(
+            output,
+            {
+                "schema": SCHEMA_REQUEST,
+                "missing": sorted(set(objects) - set(reused)),
+            },
+        )
+        staging = Path(tempfile.mkdtemp(prefix="incoming-", dir=root / "tmp"))
+        try:
+            manifest, fragments = _receive_members(
+                stream,
+                staging,
+                {
+                    record["fragment"]
+                    for path, record in objects.items()
+                    if path not in reused
+                },
+            )
+            _validate_received(manifest, fragments, expected_domain, reused=reused)
+            # Only transport checksums may be added after negotiation.
+            comparable = dict(manifest)
+            comparable["objects"] = [
+                {
+                    key: value
+                    for key, value in record.items()
+                    if key not in ("fragment_size", "fragment_sha256")
+                }
+                for record in manifest.get("objects", [])
+            ]
+            if comparable != inventory:
+                fail("artifact differs from negotiated inventory")
+            return _admit_received(
+                manifest, fragments, root, approved_by, reused=reused
+            )
+        finally:
+            shutil.rmtree(staging, ignore_errors=True)
