@@ -170,7 +170,7 @@ let
         .#*) installable="''${installable#.}" ;;
         \#*) ;;
         *) fail 'installable must start with .# or #' ;;
-      esac
+    esac
       preflight >/dev/null
       result="$(airlock-config-nix --extra-experimental-features nix-command --extra-experimental-features flakes build "$repo$installable" --no-link --json)"
       system="$(printf '%s\n' "$result" | ${pkgs.jq}/bin/jq -er '.[0].outputs.out')"
@@ -223,13 +223,43 @@ let
         usage >&2
         exit 2
         ;;
-    esac
+      esac
   '';
+  configNixStore = pkgs.writeShellScriptBin "airlock-config-nix-store" ''
+    set -eu
+
+    ready=/run/airlock-builder/ready.json
+    [ -r "$ready" ] \
+      && ${pkgs.util-linux}/bin/mountpoint -q ${lib.escapeShellArg "${cfg.configNixStoreRoot}/nix/store"} \
+      && ${pkgs.util-linux}/bin/mountpoint -q /run/airlock-builder/lower/nix/store || {
+      echo 'sys-dev pool-backed build store is not ready; inspect airlock-sys-dev-build-store.service' >&2
+      exit 1
+    }
+    store_uri="$(${pkgs.jq}/bin/jq -er .uri "$ready")"
+    exec ${pkgs.nix}/bin/nix-store \
+      --option experimental-features 'nix-command flakes local-overlay-store read-only-local-store' \
+      --option build-hook "" --store "$store_uri" "$@"
+  '';
+  deployTool = pkgs.writeShellApplication {
+    name = "airlock-sys-dev-machine-deploy";
+    runtimeInputs = [
+      configNixStore
+      pkgs.coreutils
+      pkgs.gitMinimal
+      pkgs.gzip
+      pkgs.python3
+    ];
+    text = ''
+      exec ${pkgs.python3}/bin/python3 ${../../runtime/tools/sys-dev-machine-deploy.py} "$@"
+    '';
+  };
 in
 {
   environment.systemPackages = [
     sourceTool
     buildTool
+    configNixStore
+    deployTool
     pkgs.gitMinimal
     pkgs.gnutar
   ];

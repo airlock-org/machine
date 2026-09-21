@@ -22,9 +22,13 @@ def test_sys_dev_machine_source_and_build_tools_are_persistent_and_scoped():
         ) guest.environment.systemPackages);
         sourceTool = package "airlock-sys-dev-machine-source";
         buildTool = package "airlock-sys-dev-machine-build";
+        storeTool = package "airlock-config-nix-store";
+        deployTool = package "airlock-sys-dev-machine-deploy";
       in {{
         sourceTool = builtins.readFile "${{sourceTool}}/bin/airlock-sys-dev-machine-source";
         buildTool = builtins.readFile "${{buildTool}}/bin/airlock-sys-dev-machine-build";
+        storeTool = builtins.readFile "${{storeTool}}/bin/airlock-config-nix-store";
+        deployTool = builtins.readFile "${{deployTool}}/bin/airlock-sys-dev-machine-deploy";
         privateStore = guest.airlock.qubeGuest.configNixStoreRoot;
         assertionsPass = builtins.all (entry: entry.assertion) guest.assertions;
       }}
@@ -57,6 +61,9 @@ def test_sys_dev_machine_source_and_build_tools_are_persistent_and_scoped():
     assert "--domain sys-dev" not in report["buildTool"]
     assert ".activated == false and .retained == true" in report["buildTool"]
     assert "receipt_path" in report["buildTool"]
+    assert "local-overlay-store" in report["storeTool"]
+    assert "nix-store" in report["storeTool"]
+    assert "sys-dev-machine-deploy.py" in report["deployTool"]
 
 
 def test_sys_dev_seed_service_includes_gzip_for_the_embedded_archive():
