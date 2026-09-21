@@ -248,6 +248,7 @@ let
       pkgs.gitMinimal
       pkgs.gzip
       pkgs.python3
+      pkgs.util-linux
     ];
     text = ''
       exec ${pkgs.python3}/bin/python3 ${../../runtime/tools/sys-dev-machine-deploy.py} "$@"

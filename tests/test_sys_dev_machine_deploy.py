@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+from io import BytesIO
 
 import pytest
 
@@ -25,6 +26,45 @@ def release_manifest(revision="a" * 40, lock_hash="b" * 64):
         "profile": "usb-lab",
         "coordinator": "/nix/store/coordinator/bin/airlock-machine-deploy",
     }
+
+
+def test_dom0_bridge_allocates_the_terminal_required_by_qrexec(monkeypatch):
+    class Process:
+        stdin = BytesIO()
+        stdout = BytesIO()
+
+        @staticmethod
+        def poll():
+            return 0
+
+        @staticmethod
+        def wait(timeout):
+            return 0
+
+    calls = []
+
+    def popen(arguments, **kwargs):
+        calls.append((arguments, kwargs))
+        return Process()
+
+    monkeypatch.setattr(DEPLOY.subprocess, "Popen", popen)
+    monkeypatch.setattr(
+        DEPLOY.Dom0,
+        "until",
+        lambda _self, tokens, timeout: (tokens[-1], b""),
+    )
+
+    DEPLOY.Dom0()
+
+    assert calls[0][0] == [
+        "script",
+        "--quiet",
+        "--return",
+        "--flush",
+        "--command",
+        "airlock-dom0-shell",
+        "/dev/null",
+    ]
 
 
 def test_source_identity_requires_a_clean_commit(tmp_path):

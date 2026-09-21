@@ -52,8 +52,19 @@ class Dom0:
     """Root command channel over the existing development-only dom0 PTY."""
 
     def __init__(self):
+        # The qrexec client intentionally configures its controlling terminal
+        # before passing raw keystrokes to dom0. Give it a private local PTY;
+        # the deployment client itself can continue to use framed pipes.
         self.process = subprocess.Popen(
-            ["airlock-dom0-shell"],
+            [
+                "script",
+                "--quiet",
+                "--return",
+                "--flush",
+                "--command",
+                "airlock-dom0-shell",
+                "/dev/null",
+            ],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
