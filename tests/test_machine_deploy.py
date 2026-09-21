@@ -167,12 +167,21 @@ class Machine(deploy.Coordinator):
             self.live.add(args[-1])
         if args[0].endswith("/airlock-setup-config"):
             target = deploy.read_json(args[-1])
+            for vm in target["domains"].values():
+                for token in vm.get("prefs", {}).get("kernelopts", "").split():
+                    if token.startswith("airlock.system="):
+                        assert (
+                            token
+                            == "airlock.system=" + vm["backend"]["system"]["source"]
+                        )
             self.selected = {
                 name: vm["backend"]["system"]["source"]
                 for name, vm in target["domains"].items()
             }
             if self.fail_after == args[0]:
-                raise deploy.DeploymentError("simulated failure after storage selection")
+                raise deploy.DeploymentError(
+                    "simulated failure after storage selection"
+                )
             deploy.atomic_json(
                 Path(kwargs["env"]["AIRLOCK_LOG_DIR"]) / "setup-config.json",
                 {"restart_required": False},
@@ -360,6 +369,50 @@ def test_guest_candidate_activates_exact_admitted_generation_and_rolls_back(
     assert rollback["observed"]["usr-home"]["running"].endswith("-system")
 
 
+def test_guest_candidate_updates_boot_system_and_preserves_other_options(
+    machine, topology
+):
+    old = topology["domains"]["usr-home"]["backend"]["system"]["source"]
+    opts = f"console=hvc0  airlock.system={old} init=/sbin/init airlock.store=/dev/xvde"
+    topology["domains"]["usr-home"]["prefs"]["kernelopts"] = opts
+    deploy.atomic_json(machine.initial / "topology.json", topology)
+    receipt = guest_receipt(machine, topology)
+    candidate = machine.guest_candidate(receipt)
+    changed = deploy.read_json(candidate / "topology.json")
+    assert changed["domains"]["usr-home"]["prefs"]["kernelopts"] == opts.replace(
+        old, receipt["system"]
+    )
+    assert changed["domains"]["sys-dev"] == topology["domains"]["sys-dev"]
+    assert machine.guest_candidate(receipt) == candidate
+    machine.apply(candidate)
+    machine.calls.clear()
+    machine.apply(machine.initial, recover=True)
+
+
+@pytest.mark.parametrize(
+    "opts", ["airlock.system=/wrong", "airlock.system=/wrong airlock.system=/wrong"]
+)
+def test_guest_candidate_rejects_inconsistent_baseline_boot_options(
+    machine, topology, opts
+):
+    topology["domains"]["usr-home"]["prefs"]["kernelopts"] = opts
+    deploy.atomic_json(machine.initial / "topology.json", topology)
+    with pytest.raises(deploy.DeploymentError, match="baseline guest boot system"):
+        machine.guest_candidate(guest_receipt(machine, topology))
+
+
+def test_guest_candidate_identity_includes_controller_version(
+    machine, topology, monkeypatch
+):
+    receipt = guest_receipt(machine, topology)
+    original = machine.guest_candidate(receipt)
+    controller = "/nix/store/new-coordinator/bin/airlock-machine-deploy"
+    monkeypatch.setenv("AIRLOCK_MACHINE_COORDINATOR", controller)
+    updated = machine.guest_candidate(receipt)
+    assert updated != original
+    assert deploy.read_json(updated / "release.json")["coordinator"] == controller
+
+
 @pytest.mark.parametrize("recovery", ["resume", "rollback"])
 def test_interrupted_guest_activation_remains_recoverable(machine, topology, recovery):
     candidate = machine.guest_candidate(guest_receipt(machine, topology))
@@ -464,6 +517,15 @@ def test_native_boot_hooks_do_not_write_readonly_systemd_tree(
 
     def command(*args):
         calls.append(args)
+        if args[0] == "nix-store":
+            assert args == (
+                "nix-store",
+                "--add-root",
+                str(state / "roots" / "new-engine"),
+                "--realise",
+                "/nix/store/new-engine",
+            )
+            return ""
         assert args[:2] == ("systemctl", "show")
         if args[3] == "--property=LoadState":
             return (

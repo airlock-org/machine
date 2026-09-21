@@ -419,7 +419,24 @@ class Coordinator:
         candidate_backend = candidate_topology["domains"][domain]["backend"]
         candidate_backend["system"]["source"] = info["system"]
         candidate_backend["store"]["source"] = info["closure_source"]
+        prefs = candidate_topology["domains"][domain].get("prefs", {})
+        opts = prefs.get("kernelopts", "")
+        matches = re.findall(r"(?<!\S)airlock\.system=(\S+)", opts)
+        if matches:
+            if matches != [backend["system"]["source"]]:
+                raise DeploymentError(
+                    "baseline guest boot system differs from topology"
+                )
+            prefs["kernelopts"] = re.sub(
+                r"(?<!\S)airlock\.system=\S+",
+                lambda _: "airlock.system=" + info["system"],
+                opts,
+            )
         candidate_manifest = deepcopy(current_release)
+        if os.environ.get("AIRLOCK_MACHINE_COORDINATOR"):
+            candidate_manifest["coordinator"] = os.environ[
+                "AIRLOCK_MACHINE_COORDINATOR"
+            ]
         candidate_manifest.update(
             revision=revision,
             lockHash=lock_hash,
@@ -444,6 +461,8 @@ class Coordinator:
                     "receipt": receipt_identity,
                     "revision": revision,
                     "lock_hash": lock_hash,
+                    "topology": candidate_topology,
+                    "release": candidate_manifest,
                 },
                 sort_keys=True,
             ).encode()
@@ -483,6 +502,10 @@ class Coordinator:
         fallback, _ = load_release(baseline)
         controller = manifest.get("coordinator")
         if controller:
+            controller_path = Path(controller).resolve()
+            if str(controller_path).startswith("/nix/store/"):
+                package = Path("/nix/store") / controller_path.parts[3]
+                self.pin(package.name, package)
             link = self.state / "controller.new"
             link.unlink(missing_ok=True)
             link.symlink_to(controller)

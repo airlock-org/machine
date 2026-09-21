@@ -639,6 +639,7 @@
           airlock-nix-domain-storage =
             pkgs.callPackage ./lifecycle/runtime/tools/pkgs/airlock-nix-domain-storage
               { };
+          airlock-machine-deploy = pkgs.callPackage ./lifecycle/runtime/tools/pkgs/airlock-machine-deploy { };
           airlock-nix-closure-domain-smoke =
             pkgs.callPackage ./lifecycle/misc/tools/pkgs/airlock-nix-closure-domain-smoke
               { };
