@@ -238,17 +238,6 @@ def transfer(release, session, state=DEFAULT_STATE):
     if not missing:
         return {"paths_total": len(metadata), "paths_transferred": 0, "nar_bytes": 0}
     needed = sum(metadata[path]["narSize"] for path in missing)
-    free = int(
-        session.run(
-            "python3 -c 'import os; s=os.statvfs(\"/nix/store\"); print(s.f_bavail*s.f_frsize)'"
-        )
-    )
-    required = 2 * needed + 2 * 1024**3
-    if free < required:
-        raise RuntimeError(
-            f"dom0 needs approximately {required / 1024**3:.1f} GiB free to stage this release; "
-            f"only {free / 1024**3:.1f} GiB is available"
-        )
     state = Path(state)
     incoming = state / "incoming"
     incoming.mkdir(parents=True, exist_ok=True)
@@ -271,12 +260,28 @@ def transfer(release, session, state=DEFAULT_STATE):
     if export.wait() or gzip.returncode:
         archive.unlink(missing_ok=True)
         raise RuntimeError("Nix closure export failed")
-    with archive.open("rb") as stream:
-        digest = hashlib.file_digest(stream, "sha256").hexdigest()
-    destination = f"/var/lib/airlock/machine/incoming-{nonce}.nar.gz"
-    fetch = shlex.join(["qrexec-client", "-d", "sys-dev", "user:cat " + str(archive)])
-    print(f"Transferring {len(missing)} missing Nix paths to dom0…", flush=True)
     try:
+        free = int(
+            session.run(
+                "python3 -c 'import os; s=os.statvfs(\"/nix/store\"); print(s.f_bavail*s.f_frsize)'"
+            )
+        )
+        # Dom0 temporarily holds both the compressed export and its imported
+        # NAR payload. Measure the former instead of assuming it is as large as
+        # the unpacked closure, while retaining room for normal host activity.
+        required = archive.stat().st_size + needed + 2 * 1024**3
+        if free < required:
+            raise RuntimeError(
+                f"dom0 needs approximately {required / 1024**3:.1f} GiB free to stage this release; "
+                f"only {free / 1024**3:.1f} GiB is available"
+            )
+        with archive.open("rb") as stream:
+            digest = hashlib.file_digest(stream, "sha256").hexdigest()
+        destination = f"/var/lib/airlock/machine/incoming-{nonce}.nar.gz"
+        fetch = shlex.join(
+            ["qrexec-client", "-d", "sys-dev", "user:cat " + str(archive)]
+        )
+        print(f"Transferring {len(missing)} missing Nix paths to dom0…", flush=True)
         session.run(
             f"umask 077; {fetch} > {shlex.quote(destination)} && "
             f"echo '{digest}  {destination}' | sha256sum -c - && "
