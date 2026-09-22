@@ -20,11 +20,6 @@ let
   qubesSmoke = pkgs.callPackage ../tools/pkgs/airlock-qubes-smoke { };
   qrexecDom0 = pkgs.python3.pkgs.qubes-core-qrexec.dom0;
   qubesAdminClient = pkgs.python3.pkgs.qubes-core-admin-client;
-  dom0DevPackages = with pkgs; [
-    codex
-    git
-    zellij
-  ];
   devNetworkProxy = cfg.devModeNetworkProxy;
   devNetworkProxyListen = "${devNetworkProxy.listenAddress}:${toString devNetworkProxy.port}";
   devNetworkProxyUrl = "http://${devNetworkProxyListen}";
@@ -559,8 +554,7 @@ in
       qubeBootstrap
       qubeGuiSmoke
       qubesSmoke
-    ]
-    ++ lib.optionals imageCfg.devMode.enable dom0DevPackages;
+    ];
 
     environment.etc."airlock/dev-mode" = lib.mkIf imageCfg.devMode.enable {
       text = ''
