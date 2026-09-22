@@ -10,7 +10,7 @@ let
   recoveryConsole = pkgs.writeShellScript "airlock-boot-recovery-console" ''
     set -eu
     ${supervisor}/bin/airlock-boot-supervisor recovery-ack
-    clear
+    ${pkgs.ncurses}/bin/clear
     echo
     echo "  Airlock | Safe boot recovery"
     echo
@@ -22,6 +22,24 @@ let
     echo "  Failed units:       systemctl --failed"
     echo
     echo "  Log in below, inspect the evidence, then reboot to make one new attempt."
+    echo
+    exec ${pkgs.util-linux}/bin/agetty --noclear tty1 linux
+  '';
+  failureConsole = pkgs.writeShellScript "airlock-boot-failure-console" ''
+    set -eu
+    ${pkgs.ncurses}/bin/clear
+    boot_id="$(${pkgs.coreutils}/bin/tr -d '\n' </proc/sys/kernel/random/boot_id)"
+    echo
+    echo "  Airlock | Boot failed"
+    echo
+    echo "  A required VM did not become ready. Airlock has not accepted this boot."
+    echo "  The failed stage and diagnostics have been saved."
+    echo
+    echo "  Evidence:     /var/log/airlock/boot-attempts/$boot_id"
+    echo "  Attempt state: /var/lib/airlock/boot-attempts/$boot_id/state.json"
+    echo "  Failed units:  systemctl --failed"
+    echo
+    echo "  Log in below to inspect the failure."
     echo
     exec ${pkgs.util-linux}/bin/agetty --noclear tty1 linux
   '';
@@ -62,8 +80,27 @@ in
       description = "Capture Airlock boot failure for %i";
       serviceConfig = {
         Type = "oneshot";
-        ExecStart = "${supervisor}/bin/airlock-boot-supervisor fail unit:%i 'systemd boot stage failed'";
+        ExecStart = [
+          "${supervisor}/bin/airlock-boot-supervisor fail unit:%i 'systemd boot stage failed'"
+          "${pkgs.systemd}/bin/systemctl --no-block start airlock-boot-failure-console.service"
+        ];
         TimeoutStartSec = 90;
+      };
+    };
+
+    systemd.services.airlock-boot-failure-console = {
+      description = "Show an actionable console after a supervised boot failure";
+      serviceConfig = {
+        Type = "idle";
+        ExecStart = failureConsole;
+        Restart = "always";
+        RestartSec = 1;
+        StandardInput = "tty";
+        StandardOutput = "tty";
+        StandardError = "tty";
+        TTYPath = "/dev/tty1";
+        TTYReset = true;
+        TTYVHangup = true;
       };
     };
 
