@@ -355,7 +355,9 @@ def test_nix_selection_drives_reservation_assignment_and_start():
     assert report["framebuffer"]["statusDevice"] == "/dev/tty1"
     assert report["framebuffer"]["getty"] is False
     assert report["framebuffer"]["displayManager"] is False
-    assert any(command.endswith("/bin/chvt 1") for command in report["framebuffer"]["prepare"])
+    assert any(
+        command.endswith("/bin/chvt 1") for command in report["framebuffer"]["prepare"]
+    )
     assert "initcall_blacklist=sysfb_init" not in report["lab"]["params"]
     assert "video=efifb:off" not in report["lab"]["params"]
     assert "fbcon=nodefer" in report["lab"]["params"]
@@ -365,10 +367,7 @@ def test_nix_selection_drives_reservation_assignment_and_start():
     )
     assert "initcall_blacklist=sysfb_init" in report["dark"]["params"]
     assert "video=efifb:off" in report["dark"]["params"]
-    assert (
-        "boot-framebuffer.py --gpu 0000:04:00.0"
-        in "\n".join(pre)
-    )
+    assert "boot-framebuffer.py --gpu 0000:04:00.0" in "\n".join(pre)
     assert any(command.endswith("/bin/journalctl --sync") for command in pre)
     assert "airlock-start-qube-ready sys-gui" in service["serviceConfig"]["ExecStart"]
     assert service["serviceConfig"]["ExecStartPost"].endswith("/bin/journalctl --sync")

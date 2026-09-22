@@ -5,7 +5,6 @@ import os
 from pathlib import Path
 import subprocess
 
-
 ROOT = Path(__file__).resolve().parents[1]
 SUPERVISOR = ROOT / "lifecycle/runtime/tools/boot-supervisor.py"
 START_READY = ROOT / "lifecycle/misc/tools/scripts/start-qube-ready.sh"
