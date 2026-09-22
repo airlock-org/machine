@@ -102,6 +102,20 @@ def test_unsupported_changes_fail(topology, change):
         deploy.plan(topology, new, set())
 
 
+def test_removal_requires_exact_authorization_and_no_surviving_dependencies(topology):
+    new = deepcopy(topology)
+    del new["domains"]["usr-home"]
+    result = deploy.plan(topology, new, set(), retire_removed=["usr-home"])
+    assert result["retire"] == ["usr-home"]
+    with pytest.raises(deploy.DeploymentError, match="does not match"):
+        deploy.plan(topology, new, set(), retire_removed=["usr-browser"])
+
+    dependent = deepcopy(topology)
+    del dependent["domains"]["sys-dev"]
+    with pytest.raises(deploy.DeploymentError, match="still depends"):
+        deploy.plan(topology, dependent, set(), retire_removed=["sys-dev"])
+
+
 def test_dependencies_started_even_without_autostart(topology):
     for vm in topology["domains"].values():
         vm["prefs"]["autostart"] = False
@@ -110,7 +124,7 @@ def test_dependencies_started_even_without_autostart(topology):
     assert result["start"] == ["sys-gui", "sys-dev", "usr-browser"]
 
 
-def write_release(path, topology, revision="new"):
+def write_release(path, topology, revision="new", retire=()):
     path.mkdir()
     deploy.atomic_json(
         path / "release.json",
@@ -120,6 +134,8 @@ def write_release(path, topology, revision="new"):
             "host": "/nix/store/host-" + revision,
             "revision": revision,
             "setup": "/nix/store/setup/bin/airlock-setup-config",
+            "retireDomains": list(retire),
+            "trashRetentionDays": 30,
         },
     )
     deploy.atomic_json(path / "topology.json", topology)
@@ -139,6 +155,9 @@ class Machine(deploy.Coordinator):
         self.fail_after = None
         self.pool_match = None
         self.generation_details = None
+        self.generations = {name: 1 for name in topology["domains"]}
+        self.tags = {name: set() for name in topology["domains"]}
+        self.uuids = {name: "uuid-" + name for name in topology["domains"]}
         super().__init__(state, self.execute)
 
     def execute(self, *args, **kwargs):
@@ -146,13 +165,28 @@ class Machine(deploy.Coordinator):
         if self.fail and args[0] == self.fail:
             raise deploy.DeploymentError("simulated failure")
         if args[0] == "qvm-ls":
+            if "--raw-list" in args:
+                return "\n".join(sorted(self.selected))
             return "\n".join(name + "|Running" for name in sorted(self.live))
         if args[0] == "airlock-closure-store":
-            assert not any(call[0] == "qvm-shutdown" for call in self.calls)
+            if args[1] in ("admit", "describe-generation", "find-generation"):
+                assert not any(call[0] == "qvm-shutdown" for call in self.calls)
             if args[1] == "describe-generation":
-                if self.generation_details is None:
-                    raise deploy.DeploymentError("missing simulated generation")
-                return json.dumps(self.generation_details)
+                name = args[args.index("--domain") + 1]
+                generation = int(args[args.index("--generation") + 1])
+                if self.generation_details is not None:
+                    return json.dumps(self.generation_details)
+                return json.dumps(
+                    {
+                        "schema": deploy.GENERATION_INFO_SCHEMA,
+                        "status": "passed",
+                        "domain": name,
+                        "generation": generation,
+                        "system": self.selected[name],
+                        "manifest": f"/pool/{name}/{generation}/manifest.json",
+                        "retention": {"retain": True},
+                    }
+                )
             if args[1] == "find-generation":
                 return json.dumps(
                     {
@@ -165,8 +199,31 @@ class Machine(deploy.Coordinator):
             self.live.remove(args[-1])
         if args[0] == "qvm-start":
             self.live.add(args[-1])
+        if args[0] == "qvm-prefs":
+            if args[2] == "uuid":
+                return self.uuids[args[1]]
+            return ""
+        if args[0] == "qvm-tags":
+            name, action = args[1:3]
+            if action == "list":
+                return "\n".join(sorted(self.tags[name]))
+            if action == "add":
+                self.tags[name].add(args[3])
+            elif action == "del":
+                self.tags[name].discard(args[3])
+            return ""
+        if args[0] == "qvm-remove":
+            name = args[-1]
+            self.live.discard(name)
+            self.selected.pop(name, None)
+            self.tags.pop(name, None)
+            return ""
         if args[0].endswith("/airlock-setup-config"):
             target = deploy.read_json(args[-1])
+            for name in target["domains"]:
+                self.generations.setdefault(name, 1)
+                self.tags.setdefault(name, set())
+                self.uuids.setdefault(name, "uuid-" + name)
             for vm in target["domains"].values():
                 for token in vm.get("prefs", {}).get("kernelopts", "").split():
                     if token.startswith("airlock.system="):
@@ -174,10 +231,12 @@ class Machine(deploy.Coordinator):
                             token
                             == "airlock.system=" + vm["backend"]["system"]["source"]
                         )
-            self.selected = {
-                name: vm["backend"]["system"]["source"]
-                for name, vm in target["domains"].items()
-            }
+            self.selected.update(
+                {
+                    name: vm["backend"]["system"]["source"]
+                    for name, vm in target["domains"].items()
+                }
+            )
             if self.fail_after == args[0]:
                 raise deploy.DeploymentError(
                     "simulated failure after storage selection"
@@ -187,6 +246,8 @@ class Machine(deploy.Coordinator):
                 {"restart_required": False},
             )
         if args[0] == "qvm-features":
+            if args[2] == "airlock-store-generation":
+                return str(self.generations[args[1]])
             return self.selected[args[1]]
         if args[0] == "qrexec-client":
             return self.selected[args[2]]
@@ -594,6 +655,138 @@ def test_rollback_after_vm_addition_keeps_new_vm_halted(machine, tmp_path, topol
     assert "usr-extra" not in machine.live
     assert result["plan"]["retained_undeclared"] == ["usr-extra"]
     assert all(call[0] != "qvm-remove" for call in machine.calls)
+
+
+def retirement_release(tmp_path, topology, name="usr-home"):
+    retired = deepcopy(topology)
+    del retired["domains"][name]
+    return write_release(tmp_path / "retired", retired, "retired", retire=[name])
+
+
+def test_retirement_is_recoverable_and_rollback_restores_identity(
+    machine, tmp_path, topology
+):
+    release = retirement_release(tmp_path, topology)
+    preview = machine.inspect(release)
+    assert preview["retirement"] == [
+        {
+            "domain": "usr-home",
+            "uuid": "uuid-usr-home",
+            "private": "usr-home-private",
+            "pool_generation": 1,
+            "pool_manifest": "/pool/usr-home/1/manifest.json",
+            "retention_days": 30,
+        }
+    ]
+    result = machine.apply(release)
+    assert result["plan"]["retire"] == ["usr-home"]
+    assert "usr-home" not in machine.live
+    assert machine.tags["usr-home"] == {"airlock-retired"}
+    record = machine.active_trash()["usr-home"]
+    assert record["uuid"] == "uuid-usr-home"
+    assert record["storage"]["private"] == "usr-home-private"
+    assert record["retention_days"] == 30
+    assert any(
+        call[:3] == ("qvm-prefs", "usr-home", "autostart") for call in machine.calls
+    )
+    assert any(
+        call[:2] == ("airlock-closure-store", "set-retention") for call in machine.calls
+    )
+
+    machine.calls.clear()
+    restored = machine.apply(machine.initial, recover=True)
+    assert restored["plan"]["restore"] == ["usr-home"]
+    assert "usr-home" in machine.live
+    assert machine.tags["usr-home"] == set()
+    assert machine.trash_records()[0]["status"] == "restored"
+    assert machine.uuids["usr-home"] == "uuid-usr-home"
+
+
+def test_restore_rejects_private_storage_identity_change(machine, tmp_path, topology):
+    machine.apply(retirement_release(tmp_path, topology))
+    changed = deepcopy(topology)
+    changed["domains"]["usr-home"]["backend"]["state"]["persistent"] = "other"
+    restore = write_release(tmp_path / "restore", changed, "restore")
+    with pytest.raises(deploy.DeploymentError, match="private storage identity"):
+        machine.apply(restore)
+
+
+def test_boot_enforces_trash_and_refuses_running_retired_vm(
+    machine, tmp_path, topology
+):
+    release = retirement_release(tmp_path, topology)
+    machine.apply(release)
+    machine.tags["usr-home"].clear()
+    machine.boot_start("/missing-image")
+    assert machine.tags["usr-home"] == {"airlock-retired"}
+    machine.live.add("usr-home")
+    with pytest.raises(deploy.DeploymentError, match="has been stopped"):
+        machine.boot_start("/missing-image")
+    assert "usr-home" not in machine.live
+
+
+def test_interrupted_retirement_resumes_from_durable_record(
+    machine, tmp_path, topology
+):
+    release = retirement_release(tmp_path, topology)
+    machine.fail = "qvm-tags"
+    with pytest.raises(deploy.DeploymentError, match="simulated failure"):
+        machine.apply(release)
+    record = machine.trash_records()[0]
+    assert record["status"] == "retiring"
+    assert machine.status()["failed_phase"] == "retiring"
+
+    machine.fail = None
+    machine.calls.clear()
+    result = machine.apply(release, recover=True)
+    assert result["phase"] == "reboot-required"
+    assert machine.active_trash()["usr-home"]["status"] == "trashed"
+
+
+def test_purge_requires_expiry_and_no_rollback_reference(machine, tmp_path, topology):
+    release = retirement_release(tmp_path, topology)
+    machine.apply(release)
+    record = machine.active_trash()["usr-home"]
+    with pytest.raises(deploy.DeploymentError, match="retention window"):
+        machine.purge_trash(record["id"], record["id"])
+
+    path = machine.trash_path(record["id"])
+    record["purge_after"] = 0
+    deploy.atomic_json(path, record)
+    with pytest.raises(deploy.DeploymentError, match="previous deployment"):
+        machine.purge_trash(record["id"], record["id"])
+
+    selection = machine.pointer()
+    selection["previous"] = str(release)
+    deploy.atomic_json(machine.state / "selection.json", selection)
+    result = machine.purge_trash(record["id"], record["id"])
+    assert result["status"] == "purged"
+    assert "usr-home" not in machine.selected
+    assert any(call[0] == "qvm-remove" for call in machine.calls)
+    assert any(
+        call[:2] == ("airlock-closure-store", "retire-generation")
+        for call in machine.calls
+    )
+
+
+def test_interrupted_purge_is_retryable(machine, tmp_path, topology):
+    release = retirement_release(tmp_path, topology)
+    machine.apply(release)
+    record = machine.active_trash()["usr-home"]
+    record["purge_after"] = 0
+    deploy.atomic_json(machine.trash_path(record["id"]), record)
+    selection = machine.pointer()
+    selection["previous"] = str(release)
+    deploy.atomic_json(machine.state / "selection.json", selection)
+
+    machine.fail = "airlock-closure-store"
+    with pytest.raises(deploy.DeploymentError, match="simulated failure"):
+        machine.purge_trash(record["id"], record["id"])
+    assert machine.trash_records()[0]["status"] == "purging"
+    assert "usr-home" not in machine.selected
+
+    machine.fail = None
+    assert machine.purge_trash(record["id"], record["id"])["status"] == "purged"
 
 
 def test_reapplying_same_release_does_not_lose_rollback(machine, tmp_path, topology):

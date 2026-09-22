@@ -4,6 +4,7 @@ import os
 from .core import (
     SCHEMA_ADMISSION,
     SCHEMA_GENERATION,
+    SCHEMA_GENERATION_RETIREMENT,
     SCHEMA_RETENTION,
     SCHEMA_ROLLBACK,
     SCHEMA_SWITCH,
@@ -25,10 +26,12 @@ from .objects import admit_object, reusable_object
 from .pool import ensure_pool
 from .segments import configured_segment_target_bytes
 from .state import (
+    clear_current,
     clear_running_ref,
     current_generation,
     generation_is_committed,
     generation_manifest_path,
+    iter_running_generation_refs,
     mark_running_ref,
     switch_current,
 )
@@ -356,6 +359,41 @@ def set_retention(args):
         "generation": generation,
         "previous_retain": previous,
         "retain": retain,
+        "manifest": str(manifest_path),
+    }
+
+
+def retire_generation(args):
+    root = ensure_pool(args.pool_root)
+    domain = safe_domain_name(args.domain)
+    generation = int(args.generation)
+    manifest_path = generation_manifest_path(root, domain, generation)
+    manifest = read_json(manifest_path)
+    if not generation_is_committed(root, manifest):
+        fail(f"generation is not committed for {domain}: {generation}")
+    running = [
+        str(path)
+        for ref_domain, ref_generation, path, _ in iter_running_generation_refs(root)
+        if ref_domain == domain and ref_generation == generation
+    ]
+    if running:
+        fail(f"generation still has running references for {domain}: {generation}")
+    retention = manifest.setdefault("retention", {})
+    current = current_generation(root, domain)
+    if current == generation:
+        clear_current(root, domain, generation)
+    elif current is not None or retention.get("retain", False):
+        fail(f"generation is not current for {domain}: {generation}")
+    retention["retain"] = False
+    retention["updated_at"] = utc_now()
+    retention["retired_at"] = utc_now()
+    atomic_json(manifest_path, manifest)
+    return {
+        "schema": SCHEMA_GENERATION_RETIREMENT,
+        "status": "retired",
+        "pool_root": str(root),
+        "domain": domain,
+        "generation": generation,
         "manifest": str(manifest_path),
     }
 

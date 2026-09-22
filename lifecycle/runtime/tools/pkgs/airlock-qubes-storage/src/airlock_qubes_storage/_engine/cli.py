@@ -16,6 +16,7 @@ from .generations import (
     find_generation,
     mark_running,
     rollback,
+    retire_generation,
     set_retention,
     switch,
 )
@@ -116,6 +117,12 @@ def build_parser():
     retention_parser.add_argument("--generation", required=True)
     retention_parser.add_argument("--retain", required=True, choices=["true", "false"])
     retention_parser.set_defaults(func=set_retention)
+
+    retire_parser = sub.add_parser("retire-generation")
+    add_common(retire_parser)
+    retire_parser.add_argument("--domain", required=True)
+    retire_parser.add_argument("--generation", required=True)
+    retire_parser.set_defaults(func=retire_generation)
 
     switch_parser = sub.add_parser("switch")
     add_common(switch_parser)

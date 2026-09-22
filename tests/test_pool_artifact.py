@@ -250,6 +250,27 @@ def test_describe_generation_exposes_activation_identity(artifact_input):
     assert described["retention"]["retain"] is True
 
 
+def test_retire_generation_clears_selection_only_without_running_refs(
+    artifact_input,
+):
+    result = receive(artifact_input)
+    args = SimpleNamespace(
+        pool_root=artifact_input["pool"],
+        domain="usr-home",
+        generation=result["generation"],
+    )
+    generations.switch(args)
+    running = SimpleNamespace(**vars(args), volume="store")
+    generations.mark_running(running)
+    with pytest.raises(core.EngineError, match="running references"):
+        generations.retire_generation(args)
+    generations.clear_running(running)
+    retired = generations.retire_generation(args)
+    assert retired["status"] == "retired"
+    assert generations.describe_generation(args)["selected"] is False
+    assert generations.describe_generation(args)["retention"]["retain"] is False
+
+
 @pytest.mark.parametrize(
     "damage", ["payload", "missing", "unsafe", "incomplete", "truncated"]
 )

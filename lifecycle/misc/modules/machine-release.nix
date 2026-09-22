@@ -45,6 +45,8 @@ let
       coordinator = "${engine}/bin/airlock-machine-deploy";
       revision = airlockSourceRevision;
       lockHash = airlockSourceLockHash;
+      retireDomains = config.airlock.machineDeployment.retireDomains;
+      trashRetentionDays = config.airlock.machineDeployment.trashRetentionDays;
     }
   );
   releaseTopology = pkgs.writeText "airlock-machine-topology.json" (

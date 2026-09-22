@@ -89,6 +89,15 @@ def switch_current(root, domain, generation):
     maybe_failpoint("switch-after-current-replace")
 
 
+def clear_current(root, domain, generation):
+    domain_dir = Path(root) / "domains" / domain
+    link = domain_dir / "current"
+    if current_generation(root, domain) != int(generation):
+        fail(f"generation is not current for {domain}: {generation}")
+    link.unlink()
+    fsync_dir(domain_dir)
+
+
 def mark_running_ref(root, domain, generation, volume):
     root = ensure_pool(root)
     domain = safe_domain_name(domain)

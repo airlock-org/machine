@@ -23,6 +23,9 @@ STATE = Path("/var/lib/airlock/machine")
 SCHEMA = "airlock.machine-release.v1"
 ADMISSION_SCHEMA = "airlock.closure-store.admission.v1"
 GENERATION_INFO_SCHEMA = "airlock.closure-store.generation-info.v1"
+TRASH_SCHEMA = "airlock.machine-trash.v1"
+DEFAULT_TRASH_RETENTION_DAYS = 30
+RETIRED_POLICY = "/var/lib/airlock/qubes-policy.d/05-airlock-retired.policy"
 
 
 class DeploymentError(RuntimeError):
@@ -77,6 +80,21 @@ def load_release(path):
         for name, generation in staged.items()
     ):
         raise DeploymentError("invalid staged generation map")
+    retire = release.get("retireDomains", [])
+    if (
+        not isinstance(retire, list)
+        or len(set(retire)) != len(retire)
+        or any(
+            not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9_.-]+", name)
+            for name in retire
+        )
+    ):
+        raise DeploymentError("invalid retired domain list")
+    if set(retire) & set(topology["domains"]):
+        raise DeploymentError("retired domains must be absent from the topology")
+    retention = release.get("trashRetentionDays", DEFAULT_TRASH_RETENTION_DAYS)
+    if not isinstance(retention, int) or not 1 <= retention <= 3650:
+        raise DeploymentError("trash retention must be between 1 and 3650 days")
     return release, topology
 
 
@@ -91,7 +109,7 @@ def active_profile():
     raise DeploymentError("this boot profile does not support machine deployment")
 
 
-def dependencies(topology):
+def domain_references(topology):
     domains = topology["domains"]
     result = {}
     defaults = topology.get("prefs", {})
@@ -102,10 +120,20 @@ def dependencies(topology):
             prefs.get(key, defaults.get("default_" + key))
             for key in ("guivm", "audiovm")
         ]
-        for assignments in domain.get("devices", {}).values():
-            refs += [device.get("backend") for device in assignments]
-        result[name] = {ref for ref in refs if ref in domains and ref != name}
+        devices = domain.get("devices", {})
+        if isinstance(devices, dict):
+            for assignments in devices.values():
+                refs += [device.get("backend") for device in assignments]
+        result[name] = {ref for ref in refs if ref and ref != name}
     return result
+
+
+def dependencies(topology):
+    domains = topology["domains"]
+    return {
+        name: {ref for ref in refs if ref in domains}
+        for name, refs in domain_references(topology).items()
+    }
 
 
 def ordered(topology):
@@ -121,12 +149,28 @@ def ordered(topology):
     return result
 
 
-def plan(old, new, running, retain_removed=False):
+def plan(old, new, running, retire_removed=(), trashed=(), retain_removed=False):
     """Conservative lifecycle plan; never silently ignore destructive changes."""
     before, after = old["domains"], new["domains"]
     removed = before.keys() - after.keys()
-    if removed and not retain_removed:
-        raise DeploymentError("VM removal requires a migration: " + ", ".join(removed))
+    authorized = set(retire_removed)
+    if authorized - removed:
+        raise DeploymentError(
+            "retirement does not match removed VMs: "
+            + ", ".join(sorted(authorized - removed))
+        )
+    unauthorized = removed - authorized
+    if unauthorized and not retain_removed:
+        raise DeploymentError(
+            "VM removal requires explicit retirement: "
+            + ", ".join(sorted(unauthorized))
+        )
+    for name, refs in domain_references(new).items():
+        blocked = refs & removed
+        if blocked:
+            raise DeploymentError(
+                f"{name}: still depends on retired VM(s): " + ", ".join(sorted(blocked))
+            )
     for name, domain in after.items():
         backend = domain.get("backend", {})
         if backend.get("type") != "nix-closure":
@@ -187,6 +231,8 @@ def plan(old, new, running, retain_removed=False):
         "stop": [name for name in reversed(ordered(old)) if name in affected & running],
         "start": [name for name in ordered(new) if name in start],
         "affected": sorted(affected),
+        "retire": sorted(removed),
+        "restore": sorted(set(after) & set(trashed)),
         "retained_undeclared": sorted(removed),
     }
 
@@ -223,6 +269,245 @@ class Coordinator:
         root.parent.mkdir(exist_ok=True)
         self.command("nix-store", "--add-root", str(root), "--realise", str(path))
 
+    def trash_records(self):
+        records = []
+        directory = self.state / "trash"
+        if not directory.exists():
+            return records
+        for path in sorted(directory.glob("*.json")):
+            record = read_json(path)
+            if record.get("schema") != TRASH_SCHEMA or record.get("id") != path.stem:
+                raise DeploymentError(f"invalid machine trash record: {path.name}")
+            records.append(record)
+        return records
+
+    def active_trash(self):
+        active = {}
+        for record in self.trash_records():
+            if record.get("status") not in ("retiring", "trashed", "purging"):
+                continue
+            name = record["domain"]
+            if name in active:
+                raise DeploymentError(f"multiple active trash records for {name}")
+            active[name] = record
+        return active
+
+    def trash_path(self, identity):
+        if not re.fullmatch(r"[0-9]+-[A-Za-z0-9_.-]+", identity):
+            raise DeploymentError("invalid trash record id")
+        return self.state / "trash" / f"{identity}.json"
+
+    def retirement_details(self, topology, names, retention_days):
+        if not names:
+            return []
+        self.command("test", "-r", RETIRED_POLICY)
+        details = []
+        for name in names:
+            domain = topology["domains"][name]
+            generation_text = self.command(
+                "qvm-features", name, "airlock-store-generation"
+            )
+            if not generation_text.isdigit():
+                raise DeploymentError(
+                    f"{name}: selected pool generation is unavailable"
+                )
+            generation = int(generation_text)
+            info = self.generation_info(name, generation)
+            if info.get("system") != domain["backend"]["system"]["source"]:
+                raise DeploymentError(
+                    f"{name}: selected pool generation differs from release"
+                )
+            details.append(
+                {
+                    "domain": name,
+                    "uuid": self.command("qvm-prefs", name, "uuid"),
+                    "private": domain.get("backend", {})
+                    .get("state", {})
+                    .get("persistent"),
+                    "pool_generation": generation,
+                    "pool_manifest": info.get("manifest"),
+                    "retention_days": retention_days,
+                }
+            )
+        return details
+
+    def prepare_retirement(self, name, domain, release, transaction, retention_days):
+        existing = self.active_trash().get(name)
+        if existing:
+            if existing.get("status") == "purging":
+                raise DeploymentError(f"{name}: trash purge is already in progress")
+            if existing.get("domain_config") != domain:
+                raise DeploymentError(f"{name}: active trash identity differs")
+            if self.command("qvm-prefs", name, "uuid") != existing.get("uuid"):
+                raise DeploymentError(
+                    f"{name}: registered VM identity differs from trash"
+                )
+            return existing
+        generation_text = self.command("qvm-features", name, "airlock-store-generation")
+        if not generation_text.isdigit():
+            raise DeploymentError(f"{name}: selected pool generation is unavailable")
+        generation = int(generation_text)
+        info = self.generation_info(name, generation)
+        if info.get("system") != domain["backend"]["system"]["source"]:
+            raise DeploymentError(
+                f"{name}: selected pool generation differs from release"
+            )
+        now = time.time()
+        identity = f"{transaction}-{name}"
+        record = {
+            "schema": TRASH_SCHEMA,
+            "id": identity,
+            "status": "planned",
+            "domain": name,
+            "uuid": self.command("qvm-prefs", name, "uuid"),
+            "domain_config": domain,
+            "source_release": str(release),
+            "source_transaction": transaction,
+            "pool_generation": generation,
+            "retired_at": None,
+            "purge_after": now + retention_days * 86400,
+            "retention_days": retention_days,
+            "storage": {
+                "disposition": "registered-stopped",
+                "private": domain.get("backend", {}).get("state", {}).get("persistent"),
+                "pool_manifest": info.get("manifest"),
+            },
+        }
+        atomic_json(
+            self.state / "transactions" / transaction / "trash-plan.json", record
+        )
+        if str(release).startswith("/nix/store/"):
+            self.pin("trash-" + identity, release)
+        return record
+
+    def retire(self, record):
+        path = self.trash_path(record["id"])
+        if path.exists():
+            current = read_json(path)
+            if current.get("domain_config") != record.get("domain_config"):
+                raise DeploymentError(
+                    f"{record['domain']}: existing trash record differs"
+                )
+            record = current
+        record["status"] = "retiring"
+        atomic_json(path, record)
+        name = record["domain"]
+        self.command("qvm-prefs", name, "autostart", "False")
+        self.command("qvm-tags", name, "add", "airlock-retired")
+        self.command(
+            "airlock-closure-store",
+            "set-retention",
+            "--domain",
+            name,
+            "--generation",
+            str(record["pool_generation"]),
+            "--retain",
+            "true",
+        )
+        if record.get("retired_at") is None:
+            record["retired_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        record["status"] = "trashed"
+        atomic_json(path, record)
+        return record
+
+    def validate_restore(self, name, domain, record):
+        if record.get("status") == "purging":
+            raise DeploymentError(f"{name}: trash purge is already in progress")
+        previous = record["domain_config"]
+        if any(previous.get(key) != domain.get(key) for key in ("class", "template")):
+            raise DeploymentError(f"{name}: restore changes Qubes identity")
+        if previous.get("backend", {}).get("state") != domain.get("backend", {}).get(
+            "state"
+        ):
+            raise DeploymentError(f"{name}: restore changes private storage identity")
+        if self.command("qvm-prefs", name, "uuid") != record.get("uuid"):
+            raise DeploymentError(f"{name}: registered VM identity differs from trash")
+
+    def restore(self, record, release, transaction):
+        name = record["domain"]
+        self.command("qvm-tags", name, "del", "airlock-retired")
+        record["status"] = "restored"
+        record["restored_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        record["restored_by_release"] = str(release)
+        record["restored_by_transaction"] = transaction
+        record["storage"]["disposition"] = "active"
+        atomic_json(self.trash_path(record["id"]), record)
+        root = self.state / "roots" / ("trash-" + record["id"])
+        root.unlink(missing_ok=True)
+        return record
+
+    def enforce_trash(self):
+        records = self.active_trash()
+        running = self.running()
+        domains = set(self.command("qvm-ls", "--raw-list").splitlines())
+        for name in sorted(records):
+            if name not in domains:
+                if records[name].get("status") == "purging":
+                    continue
+                raise DeploymentError(f"trashed VM is missing: {name}")
+            if name in running:
+                self.command(
+                    "qvm-shutdown", "--wait", "--timeout", "120", name, timeout=150
+                )
+                raise DeploymentError(
+                    f"trashed VM was running and has been stopped: {name}"
+                )
+            self.command("qvm-prefs", name, "autostart", "False")
+            tags = self.command("qvm-tags", name, "list").splitlines()
+            if "airlock-retired" not in tags:
+                self.command("qvm-tags", name, "add", "airlock-retired")
+        return [records[name] for name in sorted(records)]
+
+    def purge_trash(self, identity, confirmation, now=None):
+        if confirmation != identity:
+            raise DeploymentError("trash purge confirmation does not match record id")
+        with self.locked():
+            path = self.trash_path(identity)
+            if not path.exists():
+                raise DeploymentError("trash record does not exist")
+            record = read_json(path)
+            if record.get("schema") != TRASH_SCHEMA or record.get("id") != identity:
+                raise DeploymentError("invalid trash record")
+            if record.get("status") not in ("trashed", "purging"):
+                raise DeploymentError("trash record is not eligible for purge")
+            now = time.time() if now is None else now
+            if now < record["purge_after"]:
+                raise DeploymentError("trash retention window has not expired")
+            name = record["domain"]
+            selected = self.pointer() or {}
+            for key in ("release", "previous"):
+                release = selected.get(key)
+                if release and name in load_release(release)[1]["domains"]:
+                    raise DeploymentError(
+                        f"{name}: retained {key} deployment still references VM"
+                    )
+            if name in self.running():
+                raise DeploymentError(f"{name}: cannot purge a running VM")
+            record["status"] = "purging"
+            atomic_json(path, record)
+            domains = set(self.command("qvm-ls", "--raw-list").splitlines())
+            if name in domains:
+                if self.command("qvm-prefs", name, "uuid") != record.get("uuid"):
+                    raise DeploymentError(
+                        f"{name}: registered VM identity differs from trash"
+                    )
+                self.command("qvm-remove", "--force", name)
+            self.command(
+                "airlock-closure-store",
+                "retire-generation",
+                "--domain",
+                name,
+                "--generation",
+                str(record["pool_generation"]),
+            )
+            root = self.state / "roots" / ("trash-" + identity)
+            root.unlink(missing_ok=True)
+            record["status"] = "purged"
+            record["purged_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now))
+            record["storage"]["disposition"] = "purged"
+            atomic_json(path, record)
+            return record
+
     def baseline(self):
         selected = self.pointer()
         if selected:
@@ -249,6 +534,8 @@ class Coordinator:
                 "coordinator": coordinator,
                 "revision": "booted-image-baseline",
                 "lockHash": None,
+                "retireDomains": [],
+                "trashRetentionDays": DEFAULT_TRASH_RETENTION_DAYS,
             },
         )
         self.pin("baseline-host", host)
@@ -264,13 +551,24 @@ class Coordinator:
             previous, old = load_release(desired["baseRelease"])
             profile = previous["profile"]
         else:
-            profile = active_profile()
-            old = read_json("/var/lib/airlock/system/current-topology.json")
+            previous, old = load_release(self.baseline())
+            profile = previous["profile"]
         if profile != desired["profile"]:
             raise DeploymentError(
                 f"profile mismatch: booted {profile}, release {desired['profile']}"
             )
-        result = plan(old, new, self.running())
+        result = plan(
+            old,
+            new,
+            self.running(),
+            retire_removed=desired.get("retireDomains", []),
+            trashed=self.active_trash(),
+        )
+        result["retirement"] = self.retirement_details(
+            old,
+            result["retire"],
+            desired.get("trashRetentionDays", DEFAULT_TRASH_RETENTION_DAYS),
+        )
         result["host_reboot_required"] = (
             str(Path("/run/current-system").resolve()) != desired["host"]
         )
@@ -692,6 +990,7 @@ class Coordinator:
                     "release"
                 ] == str(release):
                     self.verify(topology, set(existing["plan"]["start"]))
+                    self.enforce_trash()
                     return existing
             if (
                 latest.exists()
@@ -718,8 +1017,26 @@ class Coordinator:
             rollback = (
                 interrupted is not None and str(release) != interrupted["release"]
             )
-            changes = plan(old, topology, wanted_running, retain_removed=rollback)
+            changes = plan(
+                old,
+                topology,
+                wanted_running,
+                retire_removed=manifest.get("retireDomains", []),
+                trashed=self.active_trash(),
+                retain_removed=rollback,
+            )
             changes["stop"] = [name for name in changes["stop"] if name in runtime]
+            changes["retirement"] = self.retirement_details(
+                old,
+                changes["retire"],
+                manifest.get("trashRetentionDays", DEFAULT_TRASH_RETENTION_DAYS),
+            )
+            active_trash = self.active_trash()
+            restore_plan = []
+            for name in changes["restore"]:
+                trash = active_trash[name]
+                self.validate_restore(name, topology["domains"][name], trash)
+                restore_plan.append(trash)
             transaction = str(time.time_ns())
             directory = self.state / "transactions" / transaction
             directory.mkdir(parents=True)
@@ -746,6 +1063,18 @@ class Coordinator:
                     self.pin(transaction, release)
                 self.install_boot_hook(release, baseline)
                 self.stage(release, topology, changes["stage"], directory)
+                trash_plan = [
+                    self.prepare_retirement(
+                        name,
+                        old["domains"][name],
+                        baseline,
+                        transaction,
+                        manifest.get(
+                            "trashRetentionDays", DEFAULT_TRASH_RETENTION_DAYS
+                        ),
+                    )
+                    for name in changes["retire"]
+                ]
                 # Selection is written before disruption. Boot fails closed on an
                 # interrupted transaction instead of restoring the image topology.
                 atomic_json(
@@ -762,8 +1091,13 @@ class Coordinator:
                     self.command(
                         "qvm-shutdown", "--wait", "--timeout", "120", name, timeout=150
                     )
+                phase("retiring")
+                retired = [self.retire(entry) for entry in trash_plan]
                 phase("configuring")
                 self.setup(release, directory)
+                restored = [
+                    self.restore(entry, release, transaction) for entry in restore_plan
+                ]
                 phase("host-boot-selection")
                 self.command(
                     "nix-env",
@@ -787,6 +1121,10 @@ class Coordinator:
                 phase(
                     "reboot-required" if pending else "complete",
                     observed=observed,
+                    trash={
+                        "retired": [entry["id"] for entry in retired],
+                        "restored": [entry["id"] for entry in restored],
+                    },
                     host_running=str(Path("/run/current-system").resolve()),
                     host_selected=manifest["host"],
                 )
@@ -816,6 +1154,7 @@ class Coordinator:
                 raise DeploymentError("unfinished deployment; resume or rollback first")
             manifest, topology = load_release(selected["release"])
             record["observed"] = self.verify(topology, set(record["plan"]["start"]))
+            record["trash_active"] = [entry["id"] for entry in self.enforce_trash()]
             record["host_running"] = str(Path("/run/current-system").resolve())
             record["phase"] = (
                 "complete"
@@ -849,6 +1188,7 @@ class Coordinator:
                 _, topology = load_release(selected["release"])
             else:
                 topology = read_json(default_topology)
+            trash = self.enforce_trash()
             running = self.running()
             missing = set(require_running) - running
             if missing:
@@ -863,7 +1203,12 @@ class Coordinator:
                     self.command("qvm-start", name, timeout=180)
                     started.append(name)
             observed = self.verify(topology, set(starts) | set(require_running))
-            return {"autostart": starts, "started": started, "observed": observed}
+            return {
+                "autostart": starts,
+                "started": started,
+                "observed": observed,
+                "trash_active": [entry["id"] for entry in trash],
+            }
 
     def boot_setup(self, default_setup, args):
         with self.locked() as lock:
@@ -917,8 +1262,11 @@ def main(argv=None):
         sub.add_parser(action).add_argument("release", type=Path)
     for action in ("guest-plan", "guest-apply"):
         sub.add_parser(action).add_argument("receipt")
-    for action in ("status", "verify", "resume", "rollback"):
+    for action in ("status", "verify", "resume", "rollback", "trash-list"):
         sub.add_parser(action)
+    purge = sub.add_parser("trash-purge")
+    purge.add_argument("identity")
+    purge.add_argument("--confirm", required=True)
     boot = sub.add_parser("boot-setup")
     boot.add_argument("setup")
     boot.add_argument("args", nargs=argparse.REMAINDER)
@@ -958,6 +1306,10 @@ def main(argv=None):
             result = coordinator.boot_start(args.topology, args.require_running)
         elif args.action == "verify":
             result = coordinator.verify_selected()
+        elif args.action == "trash-list":
+            result = {"schema": TRASH_SCHEMA, "records": coordinator.trash_records()}
+        elif args.action == "trash-purge":
+            result = coordinator.purge_trash(args.identity, args.confirm)
         else:
             result = coordinator.status()
         print(json.dumps(result, sort_keys=True, indent=2))
