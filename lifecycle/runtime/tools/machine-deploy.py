@@ -862,7 +862,8 @@ class Coordinator:
                 if name not in running:
                     self.command("qvm-start", name, timeout=180)
                     started.append(name)
-            return {"autostart": starts, "started": started}
+            observed = self.verify(topology, set(starts) | set(require_running))
+            return {"autostart": starts, "started": started, "observed": observed}
 
     def boot_setup(self, default_setup, args):
         with self.locked() as lock:

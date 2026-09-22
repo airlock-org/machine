@@ -1,10 +1,14 @@
 {
+  callPackage,
   coreutils,
   jq,
   lib,
   python3,
   writeShellApplication,
 }:
+let
+  startQubeReady = callPackage ../airlock-start-qube-ready { };
+in
 writeShellApplication {
   name = "airlock-start-network-providers";
 
@@ -12,6 +16,7 @@ writeShellApplication {
     coreutils
     jq
     python3.pkgs.qubes-core-admin-client
+    startQubeReady
   ];
 
   text = builtins.readFile ../../scripts/start-network-providers.sh;

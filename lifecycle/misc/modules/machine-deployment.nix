@@ -8,14 +8,14 @@ let
   cfg = config.airlock.machineDeployment;
   engine = pkgs.callPackage ../../runtime/tools/pkgs/airlock-machine-deploy { };
   setup = pkgs.callPackage ../tools/pkgs/airlock-setup-config { };
+  supervisor = pkgs.callPackage ../../runtime/tools/pkgs/airlock-boot-supervisor { };
   guardedGui = config.airlock.guiGpu.enable && config.airlock.guiGpu.startOnBoot;
-  bootPrerequisites =
-    [ "airlock-setup-config.service" ]
-    ++ lib.optional guardedGui "airlock-start-gui-gpu.service"
-    ++ lib.optional config.airlock.qubes.startNetworkProvidersOnBoot.enable
-      "airlock-start-network-providers.service"
-    ++ lib.optional config.airlock.qubes.deferredSetupConfigOnBoot.enable
-      "airlock-setup-config-deferred.service";
+  bootPrerequisites = [
+    "airlock-setup-config.service"
+  ]
+  ++ lib.optional guardedGui "airlock-start-gui-gpu.service"
+  ++ lib.optional config.airlock.qubes.startNetworkProvidersOnBoot.enable "airlock-start-network-providers.service"
+  ++ lib.optional config.airlock.qubes.deferredSetupConfigOnBoot.enable "airlock-setup-config-deferred.service";
 in
 {
   options.airlock.machineDeployment = {
@@ -41,7 +41,10 @@ in
             Type = "oneshot";
             RemainAfterExit = true;
             ExecStart = "${engine}/bin/airlock-machine-deploy boot-start${lib.optionalString guardedGui " --require-running sys-gui"}";
-            ExecStartPost = "${pkgs.systemd}/bin/journalctl --sync";
+            ExecStartPost = [
+              "${supervisor}/bin/airlock-boot-supervisor complete 'all declared autostart guests are qrexec-ready'"
+              "${pkgs.systemd}/bin/journalctl --sync"
+            ];
           };
         };
         airlock-setup-config.serviceConfig.ExecStart = lib.mkForce "${engine}/bin/airlock-machine-deploy boot-setup ${setup}/bin/airlock-setup-config --apply${

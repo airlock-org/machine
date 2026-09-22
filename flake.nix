@@ -640,6 +640,8 @@
             pkgs.callPackage ./lifecycle/runtime/tools/pkgs/airlock-nix-domain-storage
               { };
           airlock-machine-deploy = pkgs.callPackage ./lifecycle/runtime/tools/pkgs/airlock-machine-deploy { };
+          airlock-boot-supervisor =
+            pkgs.callPackage ./lifecycle/runtime/tools/pkgs/airlock-boot-supervisor { };
           airlock-nix-closure-domain-smoke =
             pkgs.callPackage ./lifecycle/misc/tools/pkgs/airlock-nix-closure-domain-smoke
               { };
@@ -657,6 +659,8 @@
           airlock-start-network-providers =
             pkgs.callPackage ./lifecycle/misc/tools/pkgs/airlock-start-network-providers
               { };
+          airlock-start-qube-ready =
+            pkgs.callPackage ./lifecycle/misc/tools/pkgs/airlock-start-qube-ready { };
           airlock-qubes-smoke = pkgs.callPackage ./lifecycle/misc/tools/pkgs/airlock-qubes-smoke { };
           airlock-observe-dom0 = pkgs.callPackage ./lifecycle/runtime/tools/pkgs/airlock-observe { };
           airlock-gpu-probe = pkgs.callPackage ./lifecycle/misc/tools/pkgs/airlock-gpu-probe { };

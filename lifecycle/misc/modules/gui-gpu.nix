@@ -8,6 +8,8 @@ let
   cfg = config.airlock.guiGpu;
   gpu = cfg.device;
   checker = pkgs.callPackage ../tools/pkgs/airlock-gui-gpu-check { };
+  startQubeReady = pkgs.callPackage ../tools/pkgs/airlock-start-qube-ready { };
+  supervisor = pkgs.callPackage ../../runtime/tools/pkgs/airlock-boot-supervisor { };
 in
 {
   options.airlock.guiGpu = {
@@ -126,7 +128,10 @@ in
           systemd.services.airlock-start-gui-gpu = lib.mkIf cfg.startOnBoot {
             description = "Validate and start the physical sys-gui GPU once";
             wantedBy = [ "multi-user.target" ];
-            requires = [ "airlock-setup-config.service" ];
+            requires = [
+              "airlock-setup-config.service"
+            ]
+            ++ lib.optional config.airlock.qubes.startNetworkProvidersOnBoot.enable "airlock-start-network-providers.service";
             # Bootstrap restarts qubesd after adopting VM storage. Requires
             # would propagate that stop and cancel our still-pending start.
             # Keep ordering/pull-in, then check daemon readiness after setup.
@@ -134,13 +139,15 @@ in
             after = [
               "airlock-setup-config.service"
               "qubesd.service"
-            ];
+            ]
+            ++ lib.optional config.airlock.qubes.startNetworkProvidersOnBoot.enable "airlock-start-network-providers.service";
             restartIfChanged = false;
             stopIfChanged = false;
             serviceConfig = {
               Type = "oneshot";
               RemainAfterExit = true;
               ExecStartPre = [
+                "${supervisor}/bin/airlock-boot-supervisor stage gui 'starting and verifying sys-gui'"
                 "${pkgs.systemd}/bin/systemctl is-active --quiet qubesd.service"
                 "${checker}/bin/airlock-gui-gpu-check --phase start"
               ]
@@ -148,7 +155,7 @@ in
               # Preserve the last visible bootstrap milestone before qvm-start
               # takes over the physical GPU and the console stops updating.
               ++ [ "${pkgs.systemd}/bin/journalctl --sync" ];
-              ExecStart = "${pkgs.python3.pkgs.qubes-core-admin-client}/bin/qvm-start sys-gui";
+              ExecStart = "${startQubeReady}/bin/airlock-start-qube-ready sys-gui /var/lib/airlock/system/current-topology.json";
               ExecStartPost = "${pkgs.systemd}/bin/journalctl --sync";
               # Never loop over GPU resets, restart the VM on exit, or hide failure.
               Restart = "no";

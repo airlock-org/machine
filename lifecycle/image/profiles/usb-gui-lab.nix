@@ -1,6 +1,7 @@
 { ... }:
 {
   imports = [ ./usb-headless.nix ];
+  airlock.bootSupervisor.enable = true;
   # GUI-only hardware validation profile. It deliberately contains no general
   # work, browser, network-provider, or remote-development Qubes.
   airlock.inputProxy.sender.enable = true;
