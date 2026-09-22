@@ -7,8 +7,10 @@
     autostart = true;
     guivm = null;
     include_in_backups = true;
-    memory = 2048;
-    maxmem = 4096;
+    # The PCI-backed network driver domain cannot balloon above its startup
+    # allocation, and whole-machine Nix evaluation exceeds 4 GiB RSS.
+    memory = 8192;
+    maxmem = 8192;
     provides_network = true;
     vcpus = 2;
     virt_mode = "hvm";
