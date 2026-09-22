@@ -213,12 +213,13 @@ def test_transfer_exports_only_paths_missing_from_dom0(tmp_path, monkeypatch):
     assert arguments.read_text().splitlines() == ["--export", added]
     transfer_command, timeout = session.commands[-1]
     assert "qrexec-client -d sys-dev" in transfer_command
+    assert "gzip -dc" in transfer_command
     assert "nix-store --import" in transfer_command
     assert timeout == 3600
     assert list((tmp_path / "state" / "incoming").iterdir()) == []
 
 
-def test_transfer_uses_actual_compressed_archive_for_dom0_space(tmp_path, monkeypatch):
+def test_transfer_requires_only_import_space_and_reserve(tmp_path, monkeypatch):
     added = "/nix/store/added"
     nar_size = 1024
     monkeypatch.setattr(
@@ -226,18 +227,12 @@ def test_transfer_uses_actual_compressed_archive_for_dom0_space(tmp_path, monkey
         "closure_metadata",
         lambda _release: {added: {"path": added, "narSize": nar_size}},
     )
-    binaries = tmp_path / "bin"
-    binaries.mkdir()
-    exporter = binaries / "airlock-config-nix-store"
-    exporter.write_text("#!/bin/sh\nprintf payload\n")
-    exporter.chmod(0o755)
-    monkeypatch.setenv("PATH", f"{binaries}:{os.environ['PATH']}")
-    session = TransferSession([], free=2 * 1024**3 + nar_size)
+    session = TransferSession([], free=2 * 1024**3 + nar_size - 1)
 
-    with pytest.raises(RuntimeError, match="dom0 needs approximately"):
+    with pytest.raises(RuntimeError, match="free to import this release"):
         DEPLOY.transfer("/nix/store/release", session, tmp_path / "state")
 
-    assert list((tmp_path / "state" / "incoming").iterdir()) == []
+    assert not (tmp_path / "state").exists()
 
 
 class PlanSession:
