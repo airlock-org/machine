@@ -2,14 +2,16 @@
 """Persistent boot-attempt state and post-freeze diagnostic capture."""
 
 import argparse
+from contextlib import contextmanager
 import datetime as dt
+import fcntl
 import glob
 import json
 import os
 from pathlib import Path
 import shutil
 import subprocess
-
+import tempfile
 
 STATE_ROOT = Path(
     os.environ.get("AIRLOCK_BOOT_STATE_ROOT", "/var/lib/airlock/boot-attempts")
@@ -34,8 +36,14 @@ def boot_id():
 
 def atomic_json(path, value):
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(path.name + ".tmp")
-    with temporary.open("w", encoding="utf-8") as stream:
+    with tempfile.NamedTemporaryFile(
+        mode="w",
+        encoding="utf-8",
+        dir=path.parent,
+        prefix=path.name + ".",
+        delete=False,
+    ) as stream:
+        temporary = Path(stream.name)
         json.dump(value, stream, sort_keys=True, indent=2)
         stream.write("\n")
         stream.flush()
@@ -46,6 +54,14 @@ def atomic_json(path, value):
         os.fsync(directory)
     finally:
         os.close(directory)
+
+
+@contextmanager
+def state_lock():
+    STATE_ROOT.mkdir(parents=True, exist_ok=True)
+    with (STATE_ROOT / "state.lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        yield
 
 
 def append_event(identifier, stage, status, detail=""):
@@ -199,25 +215,31 @@ def update_marker(value):
 
 def stage(args):
     identifier = boot_id()
-    value = write_state(identifier, args.name, "working", args.detail)
-    update_marker(value)
+    with state_lock():
+        value = write_state(identifier, args.name, "working", args.detail)
+        update_marker(value)
     return 0
 
 
 def fail(args):
     identifier = boot_id()
-    value = write_state(identifier, args.name, "failed", args.detail)
-    update_marker(value)
+    with state_lock():
+        value = write_state(identifier, args.name, "failed", args.detail)
+        update_marker(value)
     snapshot(identifier, "failure-" + args.name.replace("/", "_"))
     return 0
 
 
 def complete(args):
     identifier = boot_id()
-    write_state(identifier, "ready", "complete", args.detail)
-    marker = STATE_ROOT / "in-progress.json"
-    if marker.exists() and json.loads(marker.read_text()).get("boot_id") == identifier:
-        marker.unlink()
+    with state_lock():
+        write_state(identifier, "ready", "complete", args.detail)
+        marker = STATE_ROOT / "in-progress.json"
+        if (
+            marker.exists()
+            and json.loads(marker.read_text()).get("boot_id") == identifier
+        ):
+            marker.unlink()
     snapshot(identifier, "ready")
     return 0
 

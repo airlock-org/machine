@@ -1,4 +1,5 @@
 {
+  callPackage,
   coreutils,
   jq,
   lib,
@@ -9,6 +10,7 @@ writeShellApplication {
   name = "airlock-start-qube-ready";
   runtimeInputs = [
     coreutils
+    (callPackage ../../../../runtime/tools/pkgs/airlock-boot-supervisor { })
     jq
     python3.pkgs.qubes-core-admin-client
     python3.pkgs.qubes-core-qrexec.dom0

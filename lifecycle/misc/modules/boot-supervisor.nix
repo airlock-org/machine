@@ -51,6 +51,10 @@ in
 
   config = lib.mkIf cfg.enable {
     environment.systemPackages = [ supervisor ];
+    # logind starts autovt@tty1 independently of getty@tty1. Reserve both
+    # names so bootstrap and its diagnostic console have exclusive tty1 use.
+    systemd.services."getty@tty1".enable = false;
+    systemd.services."autovt@tty1".enable = false;
 
     systemd.services.airlock-boot-attempt-prepare = {
       description = "Recover an interrupted Airlock boot before VM logs are reopened";
@@ -80,16 +84,20 @@ in
       description = "Capture Airlock boot failure for %i";
       serviceConfig = {
         Type = "oneshot";
-        ExecStart = [
-          "${supervisor}/bin/airlock-boot-supervisor fail unit:%i 'systemd boot stage failed'"
-          "${pkgs.systemd}/bin/systemctl --no-block start airlock-boot-failure-console.service"
-        ];
+        ExecStart = "${supervisor}/bin/airlock-boot-supervisor fail unit:%i 'systemd boot stage failed'";
+        # A diagnostic capture error must not suppress the login console.
+        ExecStopPost = "${pkgs.systemd}/bin/systemctl --no-block start airlock-boot-failure-console.service";
         TimeoutStartSec = 90;
       };
     };
 
     systemd.services.airlock-boot-failure-console = {
       description = "Show an actionable console after a supervised boot failure";
+      conflicts = [ "airlock-boot-recovery-console.service" ];
+      after = [
+        "airlock-setup-config.service"
+        "airlock-boot-recovery-console.service"
+      ];
       serviceConfig = {
         Type = "idle";
         ExecStart = failureConsole;

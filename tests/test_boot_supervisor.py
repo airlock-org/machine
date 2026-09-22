@@ -4,6 +4,9 @@ import json
 import os
 from pathlib import Path
 import subprocess
+from concurrent.futures import ThreadPoolExecutor
+
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 SUPERVISOR = ROOT / "lifecycle/runtime/tools/boot-supervisor.py"
@@ -94,6 +97,86 @@ def test_completion_is_the_only_normal_path_that_clears_marker(tmp_path):
     result = json.loads((state / "normal-boot/state.json").read_text())
     assert result["stage"] == "ready"
     assert result["status"] == "complete"
+
+
+def test_concurrent_failure_handlers_preserve_every_event_and_snapshot(tmp_path):
+    env, boot_id, state, logs, _runtime, _diagnostic = supervisor_env(tmp_path)
+    boot_id.write_text("concurrent-boot\n")
+    run_supervisor(env, "prepare")
+    names = [f"unit:failed-{index}" for index in range(12)]
+    with ThreadPoolExecutor(max_workers=12) as workers:
+        list(
+            workers.map(lambda name: run_supervisor(env, "fail", name, "failed"), names)
+        )
+    current = json.loads((state / "concurrent-boot/state.json").read_text())
+    marker = json.loads((state / "in-progress.json").read_text())
+    assert current == marker
+    assert current["status"] == "failed"
+    events = [
+        json.loads(line)
+        for line in (logs / "concurrent-boot/events.jsonl").read_text().splitlines()
+    ]
+    assert {event["stage"] for event in events if event["status"] == "failed"} == set(
+        names
+    )
+    for name in names:
+        assert (
+            logs / "concurrent-boot/snapshots" / ("failure-" + name) / "journal.txt"
+        ).exists()
+
+
+@pytest.mark.nix
+def test_packaged_start_helper_finds_supervisor_with_minimal_path(tmp_path):
+    result = subprocess.run(
+        [
+            "nix",
+            "build",
+            "--no-link",
+            "--print-out-paths",
+            str(ROOT) + "#airlock-start-qube-ready",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    package = Path(result.stdout.strip())
+    env, boot_id, state, _logs, _runtime, _diagnostic = supervisor_env(tmp_path)
+    boot_id.write_text("packaged-boot\n")
+    topology = tmp_path / "topology.json"
+    topology.write_text(
+        '{"domains":{"sys-dev":{"backend":{"system":{"source":"/nix/store/expected"}}}}}'
+    )
+    for name in ("qvm-start", "qvm-check", "qvm-ls"):
+        executable(tmp_path / "bin" / name, "#!/bin/sh\nexit 0\n")
+        env["AIRLOCK_" + name.upper().replace("-", "_")] = str(tmp_path / "bin" / name)
+    executable(tmp_path / "bin/qrexec-client", "#!/bin/sh\necho /nix/store/expected\n")
+    env["AIRLOCK_QREXEC_CLIENT"] = str(tmp_path / "bin/qrexec-client")
+    env["AIRLOCK_BOOT_ATTEMPT_LOG_DIR"] = str(tmp_path / "start-logs")
+    env.pop("AIRLOCK_BOOT_SUPERVISOR", None)
+    subprocess.run(
+        [
+            "nix",
+            "shell",
+            str(ROOT) + "#airlock-start-qube-ready",
+            "-c",
+            "/bin/sh",
+            "-c",
+            'export PATH=/nonexistent; exec "$@"',
+            "sh",
+            str(package / "bin/airlock-start-qube-ready"),
+            "sys-dev",
+            str(topology),
+        ],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=15,
+    )
+    assert (
+        "qrexec-ready"
+        in json.loads((state / "packaged-boot/state.json").read_text())["detail"]
+    )
 
 
 def test_qube_start_requires_qrexec_and_exact_generation(tmp_path):
