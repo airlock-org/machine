@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import gzip
 import importlib.util
 import json
 import os
 from pathlib import Path
 import subprocess
 from io import BytesIO
+import time
 
 import pytest
 
@@ -184,6 +186,7 @@ class TransferSession:
         return ""
 
 
+@pytest.mark.timeout(10)
 def test_transfer_exports_only_paths_missing_from_dom0(tmp_path, monkeypatch):
     base = "/nix/store/base"
     added = "/nix/store/added"
@@ -205,12 +208,27 @@ def test_transfer_exports_only_paths_missing_from_dom0(tmp_path, monkeypatch):
     exporter.chmod(0o755)
     monkeypatch.setenv("EXPORT_ARGUMENTS", str(arguments))
     monkeypatch.setenv("PATH", f"{binaries}:{os.environ['PATH']}")
-    session = TransferSession([base])
+
+    class ReadingTransferSession(TransferSession):
+        def run(self, script, timeout=60):
+            if "qrexec-client -d sys-dev" in script:
+                self.commands.append((script, timeout))
+                # Reproduce a fast, one-path export that finishes before qrexec
+                # starts opening the FIFO. The writer must wait for this reader.
+                time.sleep(0.1)
+                fifo = next((tmp_path / "state" / "incoming").iterdir())
+                with fifo.open("rb") as stream:
+                    self.payload = gzip.decompress(stream.read())
+                return ""
+            return super().run(script, timeout)
+
+    session = ReadingTransferSession([base])
 
     result = DEPLOY.transfer("/nix/store/release", session, tmp_path / "state")
 
     assert result == {"paths_total": 2, "paths_transferred": 1, "nar_bytes": 20}
     assert arguments.read_text().splitlines() == ["--export", added]
+    assert session.payload == b"payload"
     transfer_command, timeout = session.commands[-1]
     assert "qrexec-client -d sys-dev" in transfer_command
     assert "gzip -dc" in transfer_command

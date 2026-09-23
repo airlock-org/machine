@@ -254,14 +254,18 @@ def transfer(release, session, state=DEFAULT_STATE):
     incoming.mkdir(parents=True, exist_ok=True)
     fifo = incoming / f"{uuid.uuid4().hex}.nar.gz.fifo"
     os.mkfifo(fifo, mode=0o600)
-    fifo_fd = os.open(fifo, os.O_RDWR)
     export = subprocess.Popen(
         ["airlock-config-nix-store", "--export", *missing],
         stdout=subprocess.PIPE,
     )
-    gzip = subprocess.Popen(["gzip", "-1c"], stdin=export.stdout, stdout=fifo_fd)
+    # Open the FIFO only in the writer child. Its blocking open rendezvous with
+    # qrexec's reader; an O_RDWR parent descriptor could let a tiny export
+    # finish before the reader opens, discarding the buffered stream.
+    gzip = subprocess.Popen(
+        ["bash", "-c", 'exec gzip -1c > "$1"', "fifo-writer", str(fifo)],
+        stdin=export.stdout,
+    )
     export.stdout.close()
-    os.close(fifo_fd)
     fetch = shlex.join(["qrexec-client", "-d", "sys-dev", "user:cat " + str(fifo)])
     print(f"Streaming {len(missing)} missing Nix paths to dom0…", flush=True)
     try:
