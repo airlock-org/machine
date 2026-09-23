@@ -17,6 +17,7 @@
       "sys-dev"
       "usr-home"
       "usr-browser"
+      "trash-probe"
     ];
   };
   networking.networkmanager.enable = lib.mkForce false;
