@@ -58,7 +58,7 @@ let
         echo "physical input device is unavailable: ${device.path}" >&2
         exit 1
       }
-    '') (builtins.attrValues cfg.sender.devices)}
+    '') (builtins.attrValues (lib.filterAttrs (_: device: device.required) cfg.sender.devices))}
 
     ${adminClient}/bin/qvm-check --running ${lib.escapeShellArg cfg.sender.target}
     xid_before="$(${adminClient}/bin/qvm-ls --raw-data --fields XID ${lib.escapeShellArg cfg.sender.target})"
@@ -88,9 +88,13 @@ let
     trap cleanup ERR
     ${pkgs.systemd}/bin/systemctl restart airlock-gui-input.target
     started=true
-    ${lib.concatMapStringsSep "\n" (name: ''
-      ${pkgs.systemd}/bin/systemctl is-active --quiet ${unitName name}.service
-    '') (builtins.attrNames cfg.sender.devices)}
+    ${lib.concatMapStringsSep "\n" (name:
+      let device = cfg.sender.devices.${name};
+      in ''
+        if ${if device.required then "true" else "[ -e ${lib.escapeShellArg device.path} ]"}; then
+          ${pkgs.systemd}/bin/systemctl is-active --quiet ${unitName name}.service
+        fi
+      '') (builtins.attrNames cfg.sender.devices)}
     trap - ERR
   '';
 in
@@ -113,6 +117,11 @@ in
               path = lib.mkOption {
                 type = lib.types.strMatching "/dev/input/by-(id|path)/[a-zA-Z0-9_.:+-]+";
                 description = "Stable evdev symlink; never a boot-dependent event number.";
+              };
+              required = lib.mkOption {
+                type = lib.types.bool;
+                default = true;
+                description = "Block input connection when this device is unavailable.";
               };
               type = lib.mkOption {
                 type = lib.types.enum (builtins.attrNames services);

@@ -32,9 +32,11 @@ controller assignment, guest startup or retry loop.
 
 Device selection belongs to the machine configuration. The ThinkPad profile
 declares its keyboard, TrackPoint and Synaptics touchpad; its touchscreen is
-not selected. Only the AMD lab enables this sender. Normal hybrid USB,
-console and VM profiles do not start it. Another machine supplies its own
-stable device paths without modifying the shared implementation.
+not selected. The TrackPoint is optional because its PS/2 mouse path can be
+absent on a boot. The keyboard and touchpad remain required. Only the AMD lab
+enables this sender. Normal hybrid USB, console and VM profiles do not start it.
+Another machine supplies its own stable device paths without modifying the
+shared implementation.
 
 In the receiving guest, enable `airlock.inputProxy.receiver.enable`. The
 physical GUI lab does this by default; the hybrid guest does not. This loads
@@ -58,8 +60,9 @@ sudo systemctl status 'airlock-gui-input-*.service'
 ```
 
 Inspect individual services: the target being active alone does not prove
-that every device connected. Missing paths skip their sender; they do not
-cause selection of another device. Stopping the target releases the grabs:
+that every device connected. A missing required path fails the connection;
+a missing optional path skips its sender without selecting another device.
+Stopping the target releases the grabs:
 
 ```sh
 sudo systemctl stop airlock-gui-input.target
