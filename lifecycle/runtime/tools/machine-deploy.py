@@ -178,6 +178,9 @@ def plan(old, new, running, retire_removed=(), trashed=(), retain_removed=False)
     """Conservative lifecycle plan; never silently ignore destructive changes."""
     before, after = old["domains"], new["domains"]
     removed = before.keys() - after.keys()
+    # A trashed VM is still registered with Qubes, so setup-config's ordinary
+    # "domain exists" validation cannot distinguish it from an active target.
+    unavailable = removed | (set(trashed) - after.keys())
     authorized = set(retire_removed)
     if authorized - removed:
         raise DeploymentError(
@@ -191,13 +194,13 @@ def plan(old, new, running, retire_removed=(), trashed=(), retain_removed=False)
             + ", ".join(sorted(unauthorized))
         )
     for name, refs in domain_references(new).items():
-        blocked = refs & removed
+        blocked = refs & unavailable
         if blocked:
             raise DeploymentError(
                 f"{name}: still depends on retired VM(s): " + ", ".join(sorted(blocked))
             )
     for field, target in topology_references(new).items():
-        if target in removed:
+        if target in unavailable:
             raise DeploymentError(f"{field}: still references retired VM {target}")
     for name, domain in after.items():
         backend = domain.get("backend", {})
@@ -1232,6 +1235,13 @@ class Coordinator:
             else:
                 topology = read_json(default_topology)
             trash = self.enforce_trash()
+            active_trash = {entry["domain"]: entry for entry in trash}
+            declared_trash = set(topology["domains"]) & set(active_trash)
+            if declared_trash:
+                raise DeploymentError(
+                    "selected topology still declares trashed VM(s): "
+                    + ", ".join(sorted(declared_trash))
+                )
             running = self.running()
             missing = set(require_running) - running
             if missing:
@@ -1239,7 +1249,7 @@ class Coordinator:
                     "guarded VMs are not running: " + ", ".join(sorted(missing))
                 )
             # No previous-session running set: cold boot follows autostart only.
-            starts = plan(topology, topology, set())["start"]
+            starts = plan(topology, topology, set(), trashed=active_trash)["start"]
             started = []
             for name in starts:
                 if name not in running:

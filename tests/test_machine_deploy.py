@@ -119,8 +119,14 @@ def test_removal_requires_exact_authorization_and_no_surviving_dependencies(topo
 @pytest.mark.parametrize(
     "field",
     [
-        "clockvm", "default_dispvm", "default_netvm", "default_guivm",
-        "default_audiovm", "default_template", "management_dispvm", "updatevm",
+        "clockvm",
+        "default_dispvm",
+        "default_netvm",
+        "default_guivm",
+        "default_audiovm",
+        "default_template",
+        "management_dispvm",
+        "updatevm",
     ],
 )
 def test_retirement_rejects_machine_default_reference(topology, field):
@@ -147,6 +153,57 @@ def test_retirement_rejects_domain_dispvm_reference(topology):
     new["domains"]["sys-dev"]["prefs"]["default_dispvm"] = "usr-home"
     with pytest.raises(deploy.DeploymentError, match="still depends"):
         deploy.plan(topology, new, set(), retire_removed=["usr-home"])
+
+
+@pytest.mark.parametrize("reference", ["netvm", "default_netvm", "qrexec_target"])
+def test_later_release_cannot_reference_already_trashed_vm(topology, reference):
+    retired = deepcopy(topology)
+    del retired["domains"]["usr-home"]
+    later = deepcopy(retired)
+    if reference == "netvm":
+        later["domains"]["sys-dev"]["netvm"] = "usr-home"
+    elif reference == "default_netvm":
+        later["prefs"]["default_netvm"] = "usr-home"
+    else:
+        later["qrexec_policy"] = {
+            "rules": [{"source": "sys-dev", "target": "usr-home"}]
+        }
+    with pytest.raises(deploy.DeploymentError, match="retired VM"):
+        deploy.plan(retired, later, set(), trashed={"usr-home": {}})
+
+
+def test_restored_vm_can_be_referenced_after_identity_validation(topology):
+    retired = deepcopy(topology)
+    del retired["domains"]["usr-home"]
+    restored = deepcopy(topology)
+    restored["domains"]["sys-dev"]["netvm"] = "usr-home"
+    result = deploy.plan(retired, restored, set(), trashed={"usr-home": {}})
+    assert result["restore"] == ["usr-home"]
+
+
+def test_later_apply_rejects_reference_to_trash_before_disruption(
+    machine, tmp_path, topology
+):
+    machine.apply(retirement_release(tmp_path, topology))
+    later = deepcopy(topology)
+    del later["domains"]["usr-home"]
+    later["domains"]["sys-dev"]["netvm"] = "usr-home"
+    release = write_release(tmp_path / "later", later)
+    machine.calls.clear()
+    with pytest.raises(deploy.DeploymentError, match="retired VM"):
+        machine.apply(release)
+    assert not any(call[0] == "qvm-shutdown" for call in machine.calls)
+    assert machine.active_trash()["usr-home"]["status"] == "trashed"
+
+
+def test_boot_rejects_selected_topology_referencing_trash(machine, tmp_path, topology):
+    release = retirement_release(tmp_path, topology)
+    machine.apply(release)
+    inconsistent = deploy.read_json(release / "topology.json")
+    inconsistent["domains"]["sys-dev"]["netvm"] = "usr-home"
+    deploy.atomic_json(release / "topology.json", inconsistent)
+    with pytest.raises(deploy.DeploymentError, match="retired VM"):
+        machine.boot_start("/missing-image")
 
 
 def test_dependencies_started_even_without_autostart(topology):
