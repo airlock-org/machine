@@ -2,6 +2,9 @@
 {
   imports = [ ./usb-gui-lab.nix ];
 
+  # Shortest supported retention for the disposable purge acceptance trial.
+  airlock.machineDeployment.trashRetentionDays = 1;
+
   # First general physical-machine lab stage: sys-dev owns the NIC and is the
   # intentionally privileged Tailnet entry point. A later profile will replace
   # its direct PCI networking with sys-dev -> sys-firewall -> sys-net.
