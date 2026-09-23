@@ -482,7 +482,7 @@
               airlock.machineDeployment.profile = lib.mkForce "usb-lab";
               airlock.machineDeployment.retireDomains = [ ];
               imports = [ ./lifecycle/image/profiles/usb-lab.nix ];
-              airlock.qubes.domains = lib.mapAttrs (_: lib.mkForce) {
+              airlock.qubes.domains = lib.mapAttrs (_: lib.mkForce) ({
                 # Keep this explicit physical assignment in the forced prepared
                 # descriptor. Without it, the descriptor's device defaults can
                 # win during specialisation merging and sys-gui starts headless.
@@ -500,6 +500,9 @@
                 sys-dev = machineDomain "sys-dev";
                 usr-home = machineDomain "usr-home";
                 usr-browser = (machineDomain "usr-browser") // { netvm = "sys-dev"; };
+              } // lib.optionalAttrs includeRelease {
+                # Keep the disposable VM out of the USB image and its recovery
+                # topology. A committed machine release introduces it later.
                 lab-retire =
                   let browser = machineDomain "usr-browser";
                   in browser // {
@@ -518,7 +521,7 @@
                       };
                     };
                   };
-              };
+              });
             };
           })
         ]
