@@ -10,17 +10,9 @@ check-eval:
 
 test-quick:
 	@mkdir -p "$(AIRLOCK_LOG_DIR)"
-	uv run pytest \
-		tests/test_machine_deploy.py \
-		tests/test_pool_artifact.py \
-		tests/test_pool_admission_module.py \
-		tests/test_sys_dev_machine_build.py \
-		tests/test_sys_dev_machine_deploy.py \
-		tests/test_qubes_guest_session.py \
-		tests/test_amd_vbios_runtime.py \
-		tests/test_input_events.py \
+	uv run pytest $(if $(TESTS),$(foreach test,$(TESTS),'tests/test_machine_local.py::test_local_check[$(test)]'),tests) \
 		--junitxml "$(AIRLOCK_LOG_DIR)/pytest-junit.xml" \
-		--json-report --json-report-file "$(AIRLOCK_LOG_DIR)/pytest-report.json"
+		--json-report --json-report-file "$(AIRLOCK_LOG_DIR)/pytest-report.json" $(PYTEST_ARGS)
 
 machine-build:
 	$(AIRLOCK_NIX) build .#airlock-machine-release-usb-lab --print-build-logs
