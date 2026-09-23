@@ -480,6 +480,7 @@
             };
             specialisation.usb-lab.configuration = {
               airlock.machineDeployment.profile = lib.mkForce "usb-lab";
+              airlock.machineDeployment.retireDomains = [ "lab-retire" ];
               imports = [ ./lifecycle/image/profiles/usb-lab.nix ];
               airlock.qubes.domains = lib.mapAttrs (_: lib.mkForce) {
                 # Keep this explicit physical assignment in the forced prepared
@@ -499,27 +500,6 @@
                 sys-dev = machineDomain "sys-dev";
                 usr-home = machineDomain "usr-home";
                 usr-browser = (machineDomain "usr-browser") // { netvm = "sys-dev"; };
-                # Temporary retirement exercise: share the browser's immutable
-                # software, but give this VM an independent Qubes identity and
-                # private volume. It is never started automatically.
-                lab-retire =
-                  let browser = machineDomain "usr-browser";
-                  in browser // {
-                    netvm = null;
-                    prefs = browser.prefs // {
-                      autostart = false;
-                      memory = 512;
-                      maxmem = 1024;
-                      vcpus = 1;
-                    };
-                    features = browser.features // { "airlock-role" = "lab-retire"; };
-                    backend = browser.backend // {
-                      state = browser.backend.state // {
-                        persistent = "lab-retire-private";
-                        persistentSize = 1073741824;
-                      };
-                    };
-                  };
               };
             };
           })
