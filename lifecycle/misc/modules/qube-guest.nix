@@ -322,93 +322,21 @@ let
     configInputsImportService
     ;
 
-  nixStoreRuntimeCheckService = pkgs.writeShellScript "airlock-nix-store-runtime-check-qrexec" ''
-    set -eu
-
-    export PATH=${
+  nixStoreRuntimeCheckService = pkgs.writeShellScript "airlock-nix-store-runtime-check-qrexec" (
+    pkgs.lib.replaceStrings
+      [ "@NIX_0@" ]
+      [
+      "${
       lib.makeBinPath [
         pkgs.coreutils
         pkgs.gnugrep
         pkgs.gnused
         pkgs.util-linux
       ]
-    }
-
-    system_path="$(
-      tr ' ' '\n' < /proc/cmdline |
-        sed -n 's|^airlock.system=||p' |
-        head -n 1
-    )"
-    store_device="$(
-      tr ' ' '\n' < /proc/cmdline |
-        sed -n 's|^airlock.storedev=||p' |
-        head -n 1
-    )"
-    store_format="$(
-      tr ' ' '\n' < /proc/cmdline |
-        sed -n 's|^airlock.storefmt=||p' |
-        head -n 1
-    )"
-    store_blob_device="$(
-      tr ' ' '\n' < /proc/cmdline |
-        sed -n 's|^airlock.storeblobdev=||p' |
-        head -n 1
-    )"
-    [ -n "$store_format" ] || store_format="erofs"
-
-    [ -n "$system_path" ] || {
-      echo "missing airlock.system kernel option" >&2
-      exit 1
-    }
-    [ -n "$store_device" ] || {
-      echo "missing airlock.storedev kernel option" >&2
-      exit 1
-    }
-    [ -x "$system_path/init" ] || {
-      echo "system init is not executable: $system_path/init" >&2
-      exit 1
-    }
-
-    current_system="$(readlink -f /run/current-system)"
-    [ "$current_system" = "$system_path" ] || {
-      echo "current system mismatch: $current_system != $system_path" >&2
-      exit 1
-    }
-
-    mount_source="$(findmnt -rn -T /nix/store -o SOURCE)"
-    mount_options="$(findmnt -rn -T /nix/store -o OPTIONS)"
-
-    [ "$mount_source" = "$store_device" ] || {
-      echo "/nix/store source mismatch: $mount_source != $store_device" >&2
-      exit 1
-    }
-    if [ "$store_format" = "erofs" ] && [ -n "$store_blob_device" ]; then
-      [ -b "$store_blob_device" ] || {
-        echo "store blob device is missing: $store_blob_device" >&2
-        exit 1
-      }
-    fi
-    case ",$mount_options," in
-      *,ro,*) ;;
-      *)
-        echo "/nix/store is not mounted read-only: $mount_options" >&2
-        exit 1
-        ;;
-    esac
-
-    write_probe="/nix/store/.airlock-runtime-write-probe-$$"
-    if touch "$write_probe" 2>/tmp/airlock-runtime-write-probe.err; then
-      rm -f "$write_probe"
-      echo "/nix/store accepted a write probe" >&2
-      exit 1
-    fi
-
-    printf 'system=%s\n' "$system_path"
-    printf 'store_device=%s\n' "$store_device"
-    printf 'store_format=%s\n' "$store_format"
-    printf 'store_blob_device=%s\n' "$store_blob_device"
-    printf 'store_options=%s\n' "$mount_options"
-  '';
+    }"
+      ]
+      (builtins.readFile ./qube-guest/scripts/airlock-nix-store-runtime-check-qrexec.sh)
+  );
 
   policyProbeService = pkgs.writeShellScript "airlock-policy-probe-qrexec" ''
     set -eu
@@ -438,14 +366,11 @@ let
     exec ${pkgs.runtimeShell}
   '';
 
-  getAppmenusService = pkgs.writeShellScript "airlock-qubes-get-appmenus" ''
-    # Keep this close to upstream qubes.GetAppmenus, but use NixOS paths.
-    if [ -r /etc/profile ]; then
-      # shellcheck disable=SC1091
-      . /etc/profile
-    fi
-
-    export PATH=${
+  getAppmenusService = pkgs.writeShellScript "airlock-qubes-get-appmenus" (
+    pkgs.lib.replaceStrings
+      [ "@NIX_0@" "@NIX_1@" ]
+      [
+      "${
       lib.makeBinPath [
         pkgs.coreutils
         pkgs.findutils
@@ -453,77 +378,11 @@ let
         pkgs.glibc.bin
         pkgs.qubes-core-qubesdb
       ]
-    }:$PATH
-
-    if [ -z "''${XDG_DATA_HOME:-}" ]; then
-      qrexec_user="$(whoami)"
-      if [ "$qrexec_user" = root ]; then
-        qrexec_user="$(qubesdb-read /default-user 2>/dev/null || printf '%s\n' ${lib.escapeShellArg cfg.user})"
-      fi
-
-      home="$(getent passwd "$qrexec_user" | cut -d: -f6)"
-      if [ -z "$home" ]; then
-        home="/home/$qrexec_user"
-      fi
-      XDG_DATA_HOME="$home/.local/share"
-    fi
-
-    if [ -z "''${XDG_DATA_DIRS:-}" ]; then
-      XDG_DATA_DIRS="/run/current-system/sw/share:/usr/local/share:/usr/share"
-    fi
-
-    persistence="$(qubesdb-read /qubes-vm-persistence 2>/dev/null || printf 'full\n')"
-    rw_devno=""
-    if [ -e /rw ]; then
-      rw_devno="$(stat -c %D /rw 2>/dev/null || true)"
-    fi
-
-    apps_dirs_to_consider=( "$XDG_DATA_HOME" )
-    old_IFS="$IFS"
-    IFS=:
-    # shellcheck disable=SC2206
-    apps_dirs_to_consider+=( $XDG_DATA_DIRS )
-    IFS="$old_IFS"
-
-    apps_dirs=()
-    for dir in "''${apps_dirs_to_consider[@]}"; do
-      case "$dir" in
-        /*) ;;
-        *) continue ;;
-      esac
-
-      if [ "$persistence" = full ]; then
-        apps_dirs+=( "$dir/applications" )
-      elif [ "$persistence" = rw-only ] &&
-        [ -n "$rw_devno" ] &&
-        [ -e "$dir" ] &&
-        [ "$(stat -c %D "$dir" 2>/dev/null || true)" = "$rw_devno" ]; then
-        apps_dirs+=( "$dir/applications" )
-      fi
-    done
-
-    for app_dir in "''${apps_dirs[@]}"; do
-      case "$app_dir" in
-        /*) ;;
-        *) continue ;;
-      esac
-
-      [ -d "$app_dir" ] || continue
-
-      (
-        cd "$app_dir"
-        find . -name '*.desktop' -exec awk -b '
-          BEGINFILE { if (ERRNO) nextfile; entry=""; file = substr(FILENAME, 3); gsub(/\//, "-", file) }
-          /^\[/ { if (tolower($0) != "\[desktop entry\]") nextfile }
-          /^Exec *=/ { entry = entry file ":Exec=qubes-desktop-run " file "\n"; next }
-          /^NoDisplay *= *true$/ { entry=""; nextfile }
-          /^Categories *= *Screensaver;$/ { entry=""; nextfile }
-          /=/ { entry = entry file ":" $0 "\n" }
-          ENDFILE { print entry }
-        ' 2>/dev/null '{}' +
-      )
-    done
-  '';
+    }"
+      "${lib.escapeShellArg cfg.user}"
+      ]
+      (builtins.readFile ./qube-guest/scripts/airlock-qubes-get-appmenus.sh)
+  );
 
 in
 {
@@ -816,40 +675,13 @@ in
         "qubes-qrexec-agent.service"
       ];
       path = qubesGuestPath;
-      script = ''
-        set -eu
-
-        mkdir -p /rw /home /usr/local
-        mkdir -p /var/lib/qubes
-
-        if [ ! -e /dev/xvdb ]; then
-          echo "Qubes private device /dev/xvdb is not present" >&2
-          exit 1
-        fi
-
-        ${qubesAgentLinux}/lib/qubes/init/setup-rwdev.sh
-
-        if ! mountpoint -q /rw; then
-          mount -t auto -o defaults,discard,nosuid,nodev /dev/xvdb /rw
-        fi
-
-        ${qubesAgentLinux}/lib/qubes/init/setup-rw.sh
-
-        . ${qubesAgentLinux}/lib/qubes/init/functions
-        initialize_home /rw/home ifneeded
-
-        if ! mountpoint -q /home; then
-          mount --bind /rw/home /home
-          mount -o remount,bind,nosuid,nodev /home
-        fi
-
-        install -d -m 0700 -o ${cfg.user} -g users /home/${cfg.user}
-
-        mkdir -p /rw/usrlocal
-        if ! mountpoint -q /usr/local; then
-          mount --bind /rw/usrlocal /usr/local
-        fi
-      '';
+      script = pkgs.lib.replaceStrings
+        [ "@NIX_0@" "@NIX_1@" ]
+        [
+          "${qubesAgentLinux}"
+          "${cfg.user}"
+        ]
+        (builtins.readFile ./qube-guest/scripts/airlock-qubes-rw-init.sh);
       serviceConfig = {
         Type = "oneshot";
         RemainAfterExit = true;
@@ -873,44 +705,14 @@ in
         pkgs.jq
         pkgs.util-linux
       ];
-      script = ''
-        set -eu
-
-        target_root=${lib.escapeShellArg cfg.configInputsPath}
-        store_root=${lib.escapeShellArg cfg.configNixStoreRoot}
-        public_root=${lib.escapeShellArg configInputsPublicPath}
-        manifest="$target_root/manifest.json"
-
-        mkdir -p "$target_root" "$public_root"
-        [ -f "$manifest" ] || exit 0
-
-        jq -r '.inputs | to_entries[] | [.key, .value] | @tsv' "$manifest" |
-          while IFS="$(printf '\t')" read -r name input_path; do
-            case "$name" in
-              nixpkgs|nixpkgs-libvirt_10_5|nixos-qubes|airlock-support) ;;
-              *)
-                printf 'invalid config input name: %s\n' "$name" >&2
-                exit 1
-                ;;
-            esac
-            input_store_path="$(printf '%s\n' "$input_path" | sed 's|^\(/nix/store/[^/]*\).*|\1|')"
-            input_relative_path="''${input_path#"$input_store_path"}"
-            physical_path="$store_root$input_store_path$input_relative_path"
-            [ -d "$physical_path" ] || {
-              printf 'imported config input path is missing from private Nix store: %s\n' "$physical_path" >&2
-              exit 1
-            }
-            mountpoint_path="$public_root/$name"
-            if mountpoint -q "$mountpoint_path"; then
-              continue
-            fi
-            if [ -e "$mountpoint_path" ] && [ ! -d "$mountpoint_path" ]; then
-              rm -rf "$mountpoint_path"
-            fi
-            mkdir -p "$mountpoint_path"
-            mount --bind "$physical_path" "$mountpoint_path"
-          done
-      '';
+      script = pkgs.lib.replaceStrings
+        [ "@NIX_0@" "@NIX_1@" "@NIX_2@" ]
+        [
+          "${lib.escapeShellArg cfg.configInputsPath}"
+          "${lib.escapeShellArg cfg.configNixStoreRoot}"
+          "${lib.escapeShellArg configInputsPublicPath}"
+        ]
+        (builtins.readFile ./qube-guest/scripts/airlock-config-inputs-mount.sh);
       serviceConfig = {
         Type = "oneshot";
         RemainAfterExit = true;
@@ -963,48 +765,17 @@ in
         pkgs.qubes-core-qubesdb
         pkgs.util-linux
       ];
-      script = ''
-        set -eu
-
-        expected_role=${lib.escapeShellArg cfg.role}
-        vm_name="$(qubesdb-read /name 2>/dev/null || true)"
-        qdb_role="$(qubesdb-read /features/airlock-role 2>/dev/null || true)"
-
-        case "$qdb_role" in
-          "") ;;
-          "$expected_role") ;;
-          sys-config-vault|sys-config-staging|sys-config-validator)
-            echo "airlock config guest init: QubesDB role mismatch: expected=$expected_role actual=$qdb_role vm=$vm_name" >&2
-            exit 1
-            ;;
-          *)
-            echo "airlock config guest init: unsupported QubesDB role: expected=$expected_role actual=$qdb_role vm=$vm_name" >&2
-            exit 1
-            ;;
-        esac
-
-        case "$vm_name" in
-          ""|"$expected_role") ;;
-          sys-config-vault|sys-config-staging|sys-config-validator)
-            echo "airlock config guest init: VM name mismatch: expected=$expected_role actual=$vm_name qdb_role=$qdb_role" >&2
-            exit 1
-            ;;
-          *) ;;
-        esac
-
-        run_as_user() {
-          ${pkgs.util-linux}/bin/runuser -u ${lib.escapeShellArg cfg.user} -- \
-            ${pkgs.coreutils}/bin/env \
-              HOME=/home/${lib.escapeShellArg cfg.user} \
-              USER=${lib.escapeShellArg cfg.user} \
-              LOGNAME=${lib.escapeShellArg cfg.user} \
-              XDG_CACHE_HOME=/home/${lib.escapeShellArg cfg.user}/.cache \
-              PATH=${lib.escapeShellArg (roleInitPathFor cfg.role)} \
-              "$@"
-        }
-
-        run_as_user ${configGuestInitCommand}
-      '';
+      script = pkgs.lib.replaceStrings
+        [ "@NIX_0@" "@NIX_1@" "@NIX_2@" "@NIX_3@" "@NIX_4@" "@NIX_5@" ]
+        [
+          "${lib.escapeShellArg cfg.role}"
+          "${pkgs.util-linux}"
+          "${lib.escapeShellArg cfg.user}"
+          "${pkgs.coreutils}"
+          "${lib.escapeShellArg (roleInitPathFor cfg.role)}"
+          "${configGuestInitCommand}"
+        ]
+        (builtins.readFile ./qube-guest/scripts/airlock-config-guest-init.sh);
       serviceConfig = {
         Type = "oneshot";
         RemainAfterExit = true;
