@@ -354,6 +354,9 @@ class Machine(deploy.Coordinator):
 @pytest.fixture
 def machine(tmp_path, topology, monkeypatch):
     monkeypatch.setattr(deploy, "active_profile", lambda: "usb-lab")
+    policy = tmp_path / "05-airlock-retired.policy"
+    policy.write_text("* * @anyvm @tag:airlock-retired deny\n")
+    monkeypatch.setattr(deploy, "RETIRED_POLICY", str(policy))
     baseline = write_release(tmp_path / "baseline", topology, "old")
     return Machine(tmp_path / "state", baseline, topology)
 
@@ -754,6 +757,19 @@ def retirement_release(tmp_path, topology, name="usr-home"):
     retired = deepcopy(topology)
     del retired["domains"][name]
     return write_release(tmp_path / "retired", retired, "retired", retire=[name])
+
+
+def test_retirement_policy_preflight_does_not_invoke_shell_builtin(
+    machine, tmp_path, topology
+):
+    machine.inspect(retirement_release(tmp_path, topology))
+    assert not any(call[0] == "test" for call in machine.calls)
+
+
+def test_retirement_rejects_missing_policy(machine, tmp_path, topology):
+    Path(deploy.RETIRED_POLICY).unlink()
+    with pytest.raises(deploy.DeploymentError, match="policy is not installed"):
+        machine.inspect(retirement_release(tmp_path, topology))
 
 
 def test_retirement_is_recoverable_and_rollback_restores_identity(

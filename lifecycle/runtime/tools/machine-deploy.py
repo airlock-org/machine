@@ -331,7 +331,8 @@ class Coordinator:
     def retirement_details(self, topology, names, retention_days):
         if not names:
             return []
-        self.command("test", "-r", RETIRED_POLICY)
+        if not Path(RETIRED_POLICY).is_file():
+            raise DeploymentError("retired-domain qrexec policy is not installed")
         details = []
         for name in names:
             domain = topology["domains"][name]
