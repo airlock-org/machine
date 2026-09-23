@@ -118,14 +118,39 @@ def domain_references(topology):
         refs = [domain.get("netvm"), domain.get("template")]
         refs += [
             prefs.get(key, defaults.get("default_" + key))
-            for key in ("guivm", "audiovm")
+            for key in ("guivm", "audiovm", "dispvm")
         ]
+        refs.append(prefs.get("default_dispvm", defaults.get("default_dispvm")))
         devices = domain.get("devices", {})
         if isinstance(devices, dict):
             for assignments in devices.values():
                 refs += [device.get("backend") for device in assignments]
         result[name] = {ref for ref in refs if ref and ref != name}
     return result
+
+
+def topology_references(topology):
+    """Explicit machine-wide references that must be removed before retirement."""
+    defaults = topology.get("prefs", {})
+    vm_prefs = (
+        "clockvm",
+        "default_dispvm",
+        "default_netvm",
+        "default_guivm",
+        "default_audiovm",
+        "default_template",
+        "management_dispvm",
+        "updatevm",
+    )
+    refs = {
+        f"prefs.{key}": defaults[key]
+        for key in vm_prefs
+        if isinstance(defaults.get(key), str)
+    }
+    for index, rule in enumerate(topology.get("qrexec_policy", {}).get("rules", [])):
+        for endpoint in ("source", "target"):
+            refs[f"qrexec_policy.rules[{index}].{endpoint}"] = rule.get(endpoint)
+    return refs
 
 
 def dependencies(topology):
@@ -171,6 +196,9 @@ def plan(old, new, running, retire_removed=(), trashed=(), retain_removed=False)
             raise DeploymentError(
                 f"{name}: still depends on retired VM(s): " + ", ".join(sorted(blocked))
             )
+    for field, target in topology_references(new).items():
+        if target in removed:
+            raise DeploymentError(f"{field}: still references retired VM {target}")
     for name, domain in after.items():
         backend = domain.get("backend", {})
         if backend.get("type") != "nix-closure":
@@ -481,6 +509,21 @@ class Coordinator:
                     raise DeploymentError(
                         f"{name}: retained {key} deployment still references VM"
                     )
+            # Every transaction release remains GC-rooted. An older release is
+            # still a possible rollback source even after it leaves the
+            # current/previous selection pair.
+            roots = self.state / "roots"
+            if roots.exists():
+                for root in roots.iterdir():
+                    if not root.is_symlink():
+                        continue
+                    release = root.resolve()
+                    if (release / "release.json").exists() and name in load_release(
+                        release
+                    )[1]["domains"]:
+                        raise DeploymentError(
+                            f"{name}: retained deployment root {root.name} still references VM"
+                        )
             if name in self.running():
                 raise DeploymentError(f"{name}: cannot purge a running VM")
             record["status"] = "purging"

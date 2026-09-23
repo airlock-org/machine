@@ -12,6 +12,7 @@ let
   retiredPolicy = pkgs.writeTextDir "etc/qubes/policy.d/05-airlock-retired.policy" ''
     # A retired domain remains registered while its data is recoverable.  Its
     # tag is applied before the deployment changes the active topology.
+    * * @tag:airlock-retired @anyvm deny
     * * @anyvm @tag:airlock-retired deny
   '';
   guardedGui = config.airlock.guiGpu.enable && config.airlock.guiGpu.startOnBoot;

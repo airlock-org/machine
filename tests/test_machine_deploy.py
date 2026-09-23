@@ -116,6 +116,39 @@ def test_removal_requires_exact_authorization_and_no_surviving_dependencies(topo
         deploy.plan(topology, dependent, set(), retire_removed=["sys-dev"])
 
 
+@pytest.mark.parametrize(
+    "field",
+    [
+        "clockvm", "default_dispvm", "default_netvm", "default_guivm",
+        "default_audiovm", "default_template", "management_dispvm", "updatevm",
+    ],
+)
+def test_retirement_rejects_machine_default_reference(topology, field):
+    new = deepcopy(topology)
+    del new["domains"]["usr-home"]
+    new["prefs"][field] = "usr-home"
+    with pytest.raises(deploy.DeploymentError, match="still depends|still references"):
+        deploy.plan(topology, new, set(), retire_removed=["usr-home"])
+
+
+@pytest.mark.parametrize("endpoint", ["source", "target"])
+def test_retirement_rejects_policy_reference(topology, endpoint):
+    new = deepcopy(topology)
+    del new["domains"]["usr-home"]
+    new["qrexec_policy"] = {"rules": [{"source": "sys-dev", "target": "sys-gui"}]}
+    new["qrexec_policy"]["rules"][0][endpoint] = "usr-home"
+    with pytest.raises(deploy.DeploymentError, match=f"rules\\[0\\].{endpoint}"):
+        deploy.plan(topology, new, set(), retire_removed=["usr-home"])
+
+
+def test_retirement_rejects_domain_dispvm_reference(topology):
+    new = deepcopy(topology)
+    del new["domains"]["usr-home"]
+    new["domains"]["sys-dev"]["prefs"]["default_dispvm"] = "usr-home"
+    with pytest.raises(deploy.DeploymentError, match="still depends"):
+        deploy.plan(topology, new, set(), retire_removed=["usr-home"])
+
+
 def test_dependencies_started_even_without_autostart(topology):
     for vm in topology["domains"].values():
         vm["prefs"]["autostart"] = False
@@ -653,7 +686,10 @@ def test_rollback_after_vm_addition_keeps_new_vm_halted(machine, tmp_path, topol
     machine.calls.clear()
     result = machine.apply(machine.initial, recover=True)
     assert "usr-extra" not in machine.live
+    assert result["plan"]["retire"] == ["usr-extra"]
     assert result["plan"]["retained_undeclared"] == ["usr-extra"]
+    assert machine.active_trash()["usr-extra"]["status"] == "trashed"
+    assert machine.tags["usr-extra"] == {"airlock-retired"}
     assert all(call[0] != "qvm-remove" for call in machine.calls)
 
 
@@ -759,6 +795,13 @@ def test_purge_requires_expiry_and_no_rollback_reference(machine, tmp_path, topo
     selection = machine.pointer()
     selection["previous"] = str(release)
     deploy.atomic_json(machine.state / "selection.json", selection)
+    # A release older than the selection pair is still recoverable if rooted.
+    roots = machine.state / "roots"
+    roots.mkdir(exist_ok=True)
+    (roots / "old-release").symlink_to(machine.initial)
+    with pytest.raises(deploy.DeploymentError, match="retained deployment root"):
+        machine.purge_trash(record["id"], record["id"])
+    (roots / "old-release").unlink()
     result = machine.purge_trash(record["id"], record["id"])
     assert result["status"] == "purged"
     assert "usr-home" not in machine.selected
