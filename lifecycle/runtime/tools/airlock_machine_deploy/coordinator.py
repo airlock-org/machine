@@ -25,6 +25,7 @@ from .common import (
     DeploymentError,
 )
 from .planning import plan
+from .diagnostics import DeploymentDiagnostics
 from .releases import ReleaseManager
 from .retirement import RetirementManager
 from .state import read_json, atomic_json, load_release
@@ -592,16 +593,30 @@ class Coordinator:
                 "phase": "preflight",
             }
 
+            original_command = self.command
+            diagnostics = (
+                DeploymentDiagnostics(
+                    directory, sorted(set(topology["domains"]) | set(old["domains"]))
+                )
+                if original_command is run
+                else None
+            )
+
             def phase(value: DeploymentPhase, **extra) -> None:
                 record.update(phase=value, **extra)
                 atomic_json(directory / "status.json", record)
                 atomic_json(latest, record)
+                if diagnostics:
+                    diagnostics.event("phase", phase=value)
                 print(
                     json.dumps({"transaction": transaction, "phase": value}), flush=True
                 )
 
             phase("staging")
             try:
+                if diagnostics:
+                    self.command = diagnostics.execute
+                    diagnostics.start()
                 if str(release).startswith("/nix/store/"):
                     self.pin(transaction, release)
                 else:
@@ -633,6 +648,27 @@ class Coordinator:
                 )
                 phase("stopping")
                 for name in changes["stop"]:
+                    if diagnostics:
+                        diagnostics.event(
+                            "vm-stop",
+                            domain=name,
+                            directly_changed=name in changes["changed"],
+                            plan=changes,
+                        )
+                        diagnostics.capture(
+                            name + "-pci-before-stop.txt",
+                            ["qvm-device", "pci", "list", "--assignments", name],
+                        )
+                        diagnostics.capture(
+                            name + "-state-before-stop.txt",
+                            [
+                                "qvm-ls",
+                                "--raw-data",
+                                "--fields",
+                                "NAME,STATE,XID",
+                                name,
+                            ],
+                        )
                     self.command(
                         "qvm-shutdown", "--wait", "--timeout", "120", name, timeout=150
                     )
@@ -641,7 +677,8 @@ class Coordinator:
                 phase("configuring")
                 self.setup(release, directory)
                 restored = [
-                    self.retirement.restore(entry, release, transaction) for entry in restore_plan
+                    self.retirement.restore(entry, release, transaction)
+                    for entry in restore_plan
                 ]
                 phase("host-boot-selection")
                 self.command(
@@ -659,6 +696,12 @@ class Coordinator:
                 phase("starting")
                 for name in changes["start"]:
                     if name not in self.running():
+                        if diagnostics:
+                            diagnostics.event("vm-start", domain=name)
+                            diagnostics.capture(
+                                name + "-pci-before-start.txt",
+                                ["qvm-device", "pci", "list", "--assignments", name],
+                            )
                         self.command("qvm-start", name, timeout=240)
                 phase("verifying")
                 observed = self.verify(topology, set(changes["start"]))
@@ -682,6 +725,10 @@ class Coordinator:
             except Exception as exc:
                 phase("failed", error=str(exc), failed_phase=record["phase"])
                 raise
+            finally:
+                self.command = original_command
+                if diagnostics:
+                    diagnostics.close()
         return record
 
     def status(self):
@@ -705,7 +752,9 @@ class Coordinator:
                 raise DeploymentError("unfinished deployment; resume or rollback first")
             manifest, topology = load_release(selected["release"])
             record["observed"] = self.verify(topology, set(record["plan"]["start"]))
-            record["trash_active"] = [entry["id"] for entry in self.retirement.enforce_trash()]
+            record["trash_active"] = [
+                entry["id"] for entry in self.retirement.enforce_trash()
+            ]
             record["host_running"] = str(Path("/run/current-system").resolve())
             record["phase"] = (
                 "complete"
