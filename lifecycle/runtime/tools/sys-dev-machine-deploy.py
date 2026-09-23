@@ -317,12 +317,43 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "action",
-        choices=["build", "plan", "apply", "status", "verify", "resume", "rollback"],
+        choices=[
+            "build",
+            "plan",
+            "apply",
+            "status",
+            "verify",
+            "resume",
+            "rollback",
+            "trash-list",
+            "trash-purge",
+            "release-prune-plan",
+            "release-list",
+            "release-prune",
+            "release-retain",
+        ],
     )
     parser.add_argument("--profile", default="usb-lab", choices=["usb-lab"])
     parser.add_argument("--repo", type=Path, default=DEFAULT_REPO)
     parser.add_argument("--state", type=Path, default=DEFAULT_STATE)
+    parser.add_argument("--release")
+    parser.add_argument("--identity")
+    parser.add_argument("--confirm")
+    parser.add_argument("--retain", choices=("true", "false"))
     args = parser.parse_args(argv)
+    if (
+        args.action in ("release-prune-plan", "release-prune", "release-retain")
+        and not args.release
+    ):
+        parser.error("--release is required")
+    if args.action == "release-retain" and args.retain is None:
+        parser.error("--retain is required")
+    if args.action == "trash-purge" and not args.identity:
+        parser.error("--identity is required")
+    if args.action in ("release-prune", "trash-purge"):
+        target = args.release if args.action == "release-prune" else args.identity
+        if args.confirm != target:
+            parser.error("--confirm must match the exact target")
     session = None
     try:
         receipt = None
@@ -359,11 +390,35 @@ def main(argv=None):
             action = [engine, "apply", receipt["release"]]
         else:
             action = [deployed_engine(session), args.action]
-        if args.action in ("status", "verify"):
+            if args.action in ("release-prune-plan", "release-prune", "release-retain"):
+                action += [args.release]
+            if args.action == "trash-purge":
+                action += [args.identity]
+            if args.action in ("release-prune", "trash-purge"):
+                action += ["--confirm", args.confirm]
+            if args.action == "release-retain":
+                action += ["--retain", args.retain]
+        if args.action in (
+            "status",
+            "verify",
+            "trash-list",
+            "release-prune-plan",
+            "release-list",
+            "release-retain",
+        ):
             print(session.run(shlex.join(action), timeout=900))
         else:
             unit = run_detached(session, action)
-            print(f"Started {unit} in dom0; use the status command to follow it.")
+            follow = (
+                "release-prune-plan --release " + shlex.quote(args.release)
+                if args.action == "release-prune"
+                else "trash-list"
+                if args.action == "trash-purge"
+                else "status"
+            )
+            print(
+                f"Started {unit} in dom0; use {follow} to inspect its record and the unit journal for errors."
+            )
         return 0
     except (RuntimeError, OSError, subprocess.SubprocessError, ValueError) as exc:
         print(f"airlock-sys-dev-machine-deploy: {exc}", file=sys.stderr)

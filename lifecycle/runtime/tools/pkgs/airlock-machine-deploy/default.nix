@@ -8,11 +8,12 @@
 }:
 let
   storage = python3.pkgs.callPackage ../airlock-qubes-storage { };
+  python = python3.withPackages (ps: [ ps.qubes-core-admin-client ]);
 in
 writeShellApplication {
   name = "airlock-machine-deploy";
   runtimeInputs = [
-    python3
+    python
     nix
     systemd
     storage
@@ -21,7 +22,7 @@ writeShellApplication {
   ];
   text = ''
     export AIRLOCK_MACHINE_COORDINATOR=${builtins.placeholder "out"}/bin/airlock-machine-deploy
-    exec ${python3}/bin/python3 ${../../machine-deploy.py} "$@"
+    exec ${python}/bin/python3 ${../../machine-deploy.py} "$@"
   '';
   meta.description = "Repository-owned whole-machine Airlock deployment coordinator";
   meta.license = lib.licenses.mit;

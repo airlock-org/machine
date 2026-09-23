@@ -248,12 +248,40 @@ class Machine(deploy.Coordinator):
         self.generations = {name: 1 for name in topology["domains"]}
         self.tags = {name: set() for name in topology["domains"]}
         self.uuids = {name: "uuid-" + name for name in topology["domains"]}
+        self.volumes = {
+            name: {
+                "private": {
+                    "pool": "private-pool",
+                    "vid": name + "/private",
+                    "source": "",
+                    "rw": True,
+                    "save_on_stop": True,
+                    "snap_on_start": False,
+                }
+            }
+            for name in topology["domains"]
+        }
         super().__init__(state, self.execute)
+        self.profiles = state / "test-profiles"
+        self.hosts = set()
+
+    def volume_inventory(self):
+        return deepcopy(self.volumes)
+
+    def running_hosts(self):
+        return self.hosts
 
     def execute(self, *args, **kwargs):
         self.calls.append(args)
         if self.fail and args[0] == self.fail:
             raise deploy.DeploymentError("simulated failure")
+        if args[0] == "nix-store" and "--add-root" in args:
+            root = Path(args[args.index("--add-root") + 1])
+            root.unlink(missing_ok=True)
+            root.symlink_to(args[-1])
+        if args[0] == "nix-env" and "--delete-generations" in args:
+            for number in args[args.index("--delete-generations") + 1 :]:
+                (self.profiles / f"system-{number}-link").unlink()
         if args[0] == "qvm-ls":
             if "--raw-list" in args:
                 return "\n".join(sorted(self.selected))
@@ -307,6 +335,7 @@ class Machine(deploy.Coordinator):
             self.live.discard(name)
             self.selected.pop(name, None)
             self.tags.pop(name, None)
+            self.volumes.pop(name, None)
             return ""
         if args[0].endswith("/airlock-setup-config"):
             target = deploy.read_json(args[-1])
@@ -314,6 +343,19 @@ class Machine(deploy.Coordinator):
                 self.generations.setdefault(name, 1)
                 self.tags.setdefault(name, set())
                 self.uuids.setdefault(name, "uuid-" + name)
+                self.volumes.setdefault(
+                    name,
+                    {
+                        "private": {
+                            "pool": "private-pool",
+                            "vid": name + "/private",
+                            "source": "",
+                            "rw": True,
+                            "save_on_stop": True,
+                            "snap_on_start": False,
+                        }
+                    },
+                )
             for vm in target["domains"].values():
                 for token in vm.get("prefs", {}).get("kernelopts", "").split():
                     if token.startswith("airlock.system="):
@@ -859,11 +901,9 @@ def test_purge_requires_expiry_and_no_rollback_reference(machine, tmp_path, topo
     with pytest.raises(deploy.DeploymentError, match="retention window"):
         machine.purge_trash(record["id"], record["id"])
 
-    path = machine.trash_path(record["id"])
-    record["purge_after"] = 0
-    deploy.atomic_json(path, record)
+    now = record["purge_after"] + 1
     with pytest.raises(deploy.DeploymentError, match="previous deployment"):
-        machine.purge_trash(record["id"], record["id"])
+        machine.purge_trash(record["id"], record["id"], now=now)
 
     selection = machine.pointer()
     selection["previous"] = str(release)
@@ -872,10 +912,14 @@ def test_purge_requires_expiry_and_no_rollback_reference(machine, tmp_path, topo
     roots = machine.state / "roots"
     roots.mkdir(exist_ok=True)
     (roots / "old-release").symlink_to(machine.initial)
-    with pytest.raises(deploy.DeploymentError, match="retained deployment root"):
-        machine.purge_trash(record["id"], record["id"])
-    (roots / "old-release").unlink()
-    result = machine.purge_trash(record["id"], record["id"])
+    with pytest.raises(deploy.DeploymentError, match="retained deployment"):
+        machine.purge_trash(record["id"], record["id"], now=now)
+    # Pruning uses the same controlled clock as purge, without editing expiry.
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(deploy.time, "time", lambda: now)
+        machine.prune_release(machine.initial, str(machine.initial))
+    machine.calls.clear()
+    result = machine.purge_trash(record["id"], record["id"], now=now)
     assert result["status"] == "purged"
     assert "usr-home" not in machine.selected
     assert any(call[0] == "qvm-remove" for call in machine.calls)
@@ -889,20 +933,32 @@ def test_interrupted_purge_is_retryable(machine, tmp_path, topology):
     release = retirement_release(tmp_path, topology)
     machine.apply(release)
     record = machine.active_trash()["usr-home"]
-    record["purge_after"] = 0
-    deploy.atomic_json(machine.trash_path(record["id"]), record)
+    now = record["purge_after"] + 1
     selection = machine.pointer()
     selection["previous"] = str(release)
     deploy.atomic_json(machine.state / "selection.json", selection)
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(deploy.time, "time", lambda: now)
+        machine.prune_release(machine.initial, str(machine.initial))
 
-    machine.fail = "airlock-closure-store"
+    original = machine.execute
+
+    def fail_retire(*args, **kwargs):
+        if args[:2] == ("airlock-closure-store", "retire-generation"):
+            raise deploy.DeploymentError("simulated failure")
+        return original(*args, **kwargs)
+
+    machine.command = fail_retire
+    machine.calls.clear()
     with pytest.raises(deploy.DeploymentError, match="simulated failure"):
-        machine.purge_trash(record["id"], record["id"])
+        machine.purge_trash(record["id"], record["id"], now=now)
     assert machine.trash_records()[0]["status"] == "purging"
     assert "usr-home" not in machine.selected
 
-    machine.fail = None
-    assert machine.purge_trash(record["id"], record["id"])["status"] == "purged"
+    machine.command = machine.execute
+    assert (
+        machine.purge_trash(record["id"], record["id"], now=now)["status"] == "purged"
+    )
 
 
 def test_reapplying_same_release_does_not_lose_rollback(machine, tmp_path, topology):
@@ -913,3 +969,260 @@ def test_reapplying_same_release_does_not_lose_rollback(machine, tmp_path, topol
     assert second["id"] == first["id"]
     assert second["previous"] == str(machine.initial)
     assert not any(call[0] == "qvm-shutdown" for call in machine.calls)
+
+
+@pytest.fixture
+def obsolete_release(machine, tmp_path, topology):
+    releases = [
+        write_release(tmp_path / f"history-{i}", topology, f"history-{i}")
+        for i in range(3)
+    ]
+    for release in releases:
+        machine.apply(release)
+    machine.calls.clear()
+    return releases[0]
+
+
+def test_pruning_plan_is_read_only_and_preserves_current_and_rollback(
+    machine, obsolete_release
+):
+    preview = machine.prune_plan(obsolete_release)
+    assert not preview["blockers"]
+    assert preview["roots"]
+    assert not machine.prune_record_path(obsolete_release).exists()
+    for key in ("release", "previous"):
+        target = machine.pointer()[key]
+        assert "selected " + key in machine.prune_plan(target)["blockers"]
+        with pytest.raises(deploy.DeploymentError, match="selected"):
+            machine.prune_release(target, target)
+    assert not machine.calls
+
+
+@pytest.mark.parametrize(
+    "guard", ["running", "profile", "recovery", "retained", "unfinished"]
+)
+def test_pruning_protection(machine, obsolete_release, guard):
+    host = deploy.load_release(obsolete_release)[0]["host"]
+    machine.profiles.mkdir(parents=True)
+    if guard == "running":
+        machine.hosts.add(host)
+    elif guard == "profile":
+        (machine.profiles / "system").symlink_to(host)
+    elif guard == "recovery":
+        path = machine.profiles / "system-profiles/airlock-recovery"
+        path.parent.mkdir()
+        path.symlink_to(host)
+    elif guard == "retained":
+        machine.retain_release(obsolete_release, True)
+    else:
+        deploy.atomic_json(
+            machine.state / "transactions/999/status.json",
+            {"id": "999", "phase": "failed", "release": str(obsolete_release)},
+        )
+    assert machine.prune_plan(obsolete_release)["blockers"]
+    with pytest.raises(deploy.DeploymentError, match="cannot prune"):
+        machine.prune_release(obsolete_release, str(obsolete_release))
+
+
+def test_explicit_retention_can_be_released(machine, obsolete_release):
+    machine.retain_release(obsolete_release, True)
+    machine.retain_release(obsolete_release, False)
+    assert (
+        machine.prune_release(obsolete_release, str(obsolete_release))["status"]
+        == "pruned"
+    )
+
+
+def test_prune_resumes_after_profile_deletion_without_touching_other_generations(
+    machine, obsolete_release
+):
+    machine.profiles.mkdir(parents=True)
+    host = deploy.load_release(obsolete_release)[0]["host"]
+    selected_host = deploy.load_release(machine.pointer()["release"])[0]["host"]
+    (machine.profiles / "system-1-link").symlink_to(host)
+    (machine.profiles / "system-2-link").symlink_to(selected_host)
+    machine.fail = selected_host + "/bin/switch-to-configuration"
+    with pytest.raises(deploy.DeploymentError, match="simulated"):
+        machine.prune_release(obsolete_release, str(obsolete_release))
+    assert not (machine.profiles / "system-1-link").is_symlink()
+    assert (machine.profiles / "system-2-link").is_symlink()
+    assert machine.prune_plan(obsolete_release)["status"] == "pruning"
+    with pytest.raises(deploy.DeploymentError, match="unfinished release pruning"):
+        machine.apply(machine.pointer()["release"])
+    machine.fail = None
+    result = machine.prune_release(obsolete_release, str(obsolete_release))
+    assert result["status"] == "pruned"
+    assert all(
+        not (machine.state / "roots" / name).is_symlink() for name in result["roots"]
+    )
+    assert len([c for c in machine.calls if "--delete-generations" in c]) == 1
+    machine.calls.clear()
+    assert machine.prune_release(obsolete_release, str(obsolete_release)) == result
+    assert not machine.calls
+    with pytest.raises(deploy.DeploymentError, match="pruned"):
+        machine.apply(obsolete_release)
+
+
+def test_prune_rechecks_targets_and_blockers_on_retry(
+    machine, obsolete_release, monkeypatch
+):
+    real_unlink = Path.unlink
+
+    def interrupted(path, *args, **kwargs):
+        if path.parent == machine.state / "roots":
+            raise OSError("simulated interruption")
+        return real_unlink(path, *args, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, "unlink", interrupted)
+        with pytest.raises(OSError, match="interruption"):
+            machine.prune_release(obsolete_release, str(obsolete_release))
+    record = machine.prune_plan(obsolete_release)
+    root = machine.state / "roots" / next(iter(record["roots"]))
+    root.unlink()
+    root.symlink_to("/nix/store/unrelated")
+    with pytest.raises(deploy.DeploymentError, match="root changed"):
+        machine.prune_release(obsolete_release, str(obsolete_release))
+    assert root.is_symlink()
+
+
+def test_prune_retry_survives_collection_of_release_artifact(
+    machine, obsolete_release, monkeypatch
+):
+    original = deploy.atomic_json
+
+    def crash(path, data):
+        if data.get("status") == "pruned":
+            raise OSError("completion record interrupted")
+        original(path, data)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(deploy, "atomic_json", crash)
+        with pytest.raises(OSError, match="interrupted"):
+            machine.prune_release(obsolete_release, str(obsolete_release))
+    # Simulate collection of this test artifact after its last root is gone.
+    for artifact in obsolete_release.iterdir():
+        artifact.unlink()
+    obsolete_release.rmdir()
+    result = machine.prune_release(obsolete_release, str(obsolete_release))
+    assert result["status"] == "pruned"
+    assert any(r.get("status") == "pruned" for r in machine.list_releases()["releases"])
+    with pytest.raises(deploy.DeploymentError, match="pruned"):
+        machine.apply(obsolete_release)
+
+
+def test_prune_refuses_journal_targets_outside_roots(machine, obsolete_release):
+    preview = machine.prune_plan(obsolete_release)
+    preview.update(status="pruning", roots={"../selection.json": "/nix/store/other"})
+    deploy.atomic_json(machine.prune_record_path(obsolete_release), preview)
+    before = machine.pointer()
+    with pytest.raises(deploy.DeploymentError, match="invalid release pruning journal"):
+        machine.prune_release(obsolete_release, str(obsolete_release))
+    assert machine.pointer() == before
+
+
+@pytest.fixture
+def purgeable(machine, tmp_path, topology, monkeypatch):
+    retired = retirement_release(tmp_path, topology)
+    machine.apply(retired)
+    record = machine.active_trash()["usr-home"]
+    # Advance the rollback choice through an ordinary committed release.
+    follow = write_release(
+        tmp_path / "after-retirement", deploy.load_release(retired)[1], "follow"
+    )
+    machine.calls.clear()
+    machine.apply(follow)
+    assert (
+        "unexpired trash " + record["id"]
+        in machine.prune_plan(machine.initial)["blockers"]
+    )
+    monkeypatch.setattr(deploy.time, "time", lambda: record["purge_after"] + 1)
+    machine.prune_release(machine.initial, str(machine.initial))
+    machine.calls.clear()
+    return record
+
+
+@pytest.mark.parametrize(
+    "conflict",
+    [
+        "uuid",
+        "volume",
+        "shared",
+        "source",
+        "tag",
+        "generation",
+        "legacy",
+        "missing",
+        "running",
+    ],
+)
+def test_purge_checks_identity_and_ownership_before_mutation(
+    machine, purgeable, conflict
+):
+    name = purgeable["domain"]
+    if conflict == "uuid":
+        machine.uuids[name] = "replacement"
+    elif conflict == "volume":
+        machine.volumes[name]["private"]["vid"] = "replacement/private"
+    elif conflict in ("shared", "source"):
+        volume = deepcopy(machine.volumes[name]["private"])
+        if conflict == "source":
+            volume["source"], volume["vid"] = volume["vid"], "other/private"
+        machine.volumes["sys-dev"]["private"] = volume
+    elif conflict == "tag":
+        machine.tags[name].clear()
+    elif conflict == "generation":
+        machine.generations[name] = 2
+    elif conflict == "legacy":
+        del purgeable["storage"]["volumes"]
+        deploy.atomic_json(machine.trash_path(purgeable["id"]), purgeable)
+    elif conflict == "missing":
+        del machine.selected[name]
+    else:
+        machine.live.add(name)
+    with pytest.raises(deploy.DeploymentError):
+        machine.purge_trash(purgeable["id"], purgeable["id"])
+    assert machine.trash_records()[0]["status"] == "trashed"
+    assert not any(c[0] == "qvm-remove" for c in machine.calls)
+
+
+def test_purge_is_exact_and_idempotent(machine, purgeable):
+    with pytest.raises(deploy.DeploymentError, match="confirmation"):
+        machine.purge_trash(purgeable["id"], "another-record")
+    survivors = set(machine.selected) - {purgeable["domain"]}
+    result = machine.purge_trash(purgeable["id"], purgeable["id"])
+    assert result["status"] == "purged"
+    assert set(machine.selected) == survivors
+    assert [c for c in machine.calls if c[0] == "qvm-remove"] == [
+        ("qvm-remove", "--force", "usr-home")
+    ]
+    assert not any(
+        c[0] in ("rm", "nix-collect-garbage") or "gc" in c for c in machine.calls
+    )
+    machine.calls.clear()
+    assert machine.purge_trash(purgeable["id"], purgeable["id"]) == result
+    assert not machine.calls
+
+
+def test_purge_protects_unmanaged_boot_profile(machine, purgeable, tmp_path):
+    host = tmp_path / "recovery-host"
+    deploy.atomic_json(
+        host / "etc/airlock/qubes-topology.json",
+        deploy.load_release(machine.initial)[1],
+    )
+    machine.profiles.mkdir(parents=True)
+    (machine.profiles / "system-77-link").symlink_to(host)
+    with pytest.raises(deploy.DeploymentError, match="retained host profile"):
+        machine.purge_trash(purgeable["id"], purgeable["id"])
+
+
+def test_retention_starts_when_retirement_finishes(
+    machine, tmp_path, topology, monkeypatch
+):
+    monkeypatch.setattr(deploy.time, "time", lambda: 100)
+    record = machine.prepare_retirement(
+        "usr-home", topology["domains"]["usr-home"], machine.initial, "123", 30
+    )
+    monkeypatch.setattr(deploy.time, "time", lambda: 1000)
+    result = machine.retire(record)
+    assert result["purge_after"] == 1000 + 30 * 86400

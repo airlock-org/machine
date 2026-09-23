@@ -212,7 +212,14 @@ def run(argv=None):
     args = parser.parse_args(argv)
     # Negotiated transfers hold this lock from inventory selection through
     # publication; maintenance must not remove or relocate reusable objects.
-    if args.command in ("admit", "gc", "compact", "recover"):
+    if args.command in (
+        "admit",
+        "gc",
+        "compact",
+        "recover",
+        "retire-generation",
+        "set-retention",
+    ):
         with admission_lock(args.pool_root):
             return args.func(args)
     return args.func(args)

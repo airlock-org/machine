@@ -271,6 +271,109 @@ def test_retire_generation_clears_selection_only_without_running_refs(
     assert generations.describe_generation(args)["retention"]["retain"] is False
 
 
+def test_pool_retirement_retry_after_gc_does_not_reuse_generation(artifact_input):
+    result = receive(artifact_input)
+    args = SimpleNamespace(
+        pool_root=artifact_input["pool"],
+        domain="usr-home",
+        generation=result["generation"],
+    )
+    generations.switch(args)
+    retired = generations.retire_generation(args)
+    maintenance.gc(SimpleNamespace(pool_root=args.pool_root, keep_generations=0))
+    assert not Path(result["manifest"]).exists()
+    assert generations.retire_generation(args) == retired
+    new = receive(artifact_input)
+    assert new["generation"] > result["generation"]
+    generations.switch(
+        SimpleNamespace(**{**vars(args), "generation": new["generation"]})
+    )
+    with pytest.raises(core.EngineError):
+        generations.retire_generation(args)
+
+
+def test_pool_retirement_interruption_preserves_current_until_retry(
+    artifact_input, monkeypatch
+):
+    result = receive(artifact_input)
+    args = SimpleNamespace(
+        pool_root=artifact_input["pool"],
+        domain="usr-home",
+        generation=result["generation"],
+    )
+    generations.switch(args)
+
+    def crash(*_args):
+        raise OSError("power loss")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(generations, "clear_current", crash)
+        with pytest.raises(OSError, match="power loss"):
+            generations.retire_generation(args)
+    maintenance.gc(SimpleNamespace(pool_root=args.pool_root, keep_generations=0))
+    assert Path(result["manifest"]).exists()
+    assert generations.retire_generation(args)["status"] == "retired"
+
+
+@pytest.mark.parametrize("consumer", ["usr-browser", "sys-dev-builder"])
+def test_purged_generation_gc_preserves_shared_consumer_objects(
+    artifact_input, consumer, tmp_path
+):
+    first = receive(artifact_input)
+    kwargs = dict(artifact_input["kwargs"])
+    other_system = "/nix/store/" + "d" * 32 + "-other-system"
+    physical = kwargs["physical_store_root"] / Path(other_system).name
+    physical.mkdir()
+    (physical / "payload").write_text("other-system-content")
+    closure = tmp_path / "other-closure"
+    closure.mkdir()
+    (closure / "store-paths").write_text(
+        artifact_input["common"] + "\n" + other_system + "\n"
+    )
+    kwargs.update(
+        domain=consumer,
+        system=other_system,
+        closure_source=closure,
+        path_info={
+            artifact_input["common"]: kwargs["path_info"][artifact_input["common"]],
+            other_system: {
+                "references": [artifact_input["common"]],
+                "narHash": "sha256-other",
+                "narSize": 2,
+            },
+        },
+    )
+    artifact = io.BytesIO()
+    artifacts.write_artifact(artifact, **kwargs)
+    second = artifacts.receive_artifact(
+        io.BytesIO(artifact.getvalue()),
+        pool_root=artifact_input["pool"],
+        expected_domain=consumer,
+        approved_by="sys-dev",
+    )
+    assert second["objects_reused"] == 1
+    args = SimpleNamespace(
+        pool_root=artifact_input["pool"],
+        domain="usr-home",
+        generation=first["generation"],
+    )
+    generations.switch(args)
+    # The retirement retention pin protects restoration through GC first.
+    maintenance.gc(SimpleNamespace(pool_root=args.pool_root, keep_generations=0))
+    assert Path(first["manifest"]).exists()
+    generations.retire_generation(args)
+    result = maintenance.gc(
+        SimpleNamespace(pool_root=args.pool_root, keep_generations=0)
+    )
+    assert not Path(first["manifest"]).exists()
+    assert Path(second["manifest"]).exists()
+    metadata = args.pool_root / "objects/metadata"
+    assert (metadata / (Path(artifact_input["common"]).name + ".json")).exists()
+    assert (metadata / (Path(other_system).name + ".json")).exists()
+    assert not (metadata / (Path(artifact_input["system"]).name + ".json")).exists()
+    assert result["retained_generations"]
+
+
 @pytest.mark.parametrize(
     "damage", ["payload", "missing", "unsafe", "incomplete", "truncated"]
 )

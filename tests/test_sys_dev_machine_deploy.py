@@ -321,3 +321,43 @@ def test_apply_uses_release_coordinator_in_a_detached_worker(tmp_path, monkeypat
             receipt["release"],
         ]
     ]
+
+
+@pytest.mark.parametrize(
+    "action,arguments",
+    [
+        (
+            "release-prune",
+            [
+                "--release",
+                "/nix/store/old-release",
+                "--confirm",
+                "/nix/store/old-release",
+            ],
+        ),
+        (
+            "trash-purge",
+            ["--identity", "123-lab-retire", "--confirm", "123-lab-retire"],
+        ),
+    ],
+)
+def test_maintenance_is_detached_and_does_not_build(action, arguments, monkeypatch):
+    started = []
+    monkeypatch.setattr(DEPLOY, "Dom0", PlanSession)
+    monkeypatch.setattr(DEPLOY, "deployed_engine", lambda _session: "/controller")
+    monkeypatch.setattr(
+        DEPLOY, "build", lambda *_args: pytest.fail("maintenance must not build")
+    )
+    monkeypatch.setattr(
+        DEPLOY,
+        "run_detached",
+        lambda _session, command: started.append(command) or "unit",
+    )
+    assert DEPLOY.main([action, *arguments]) == 0
+    assert started == [["/controller", action, arguments[1], "--confirm", arguments[3]]]
+
+
+def test_maintenance_refuses_wrong_confirmation_before_connecting(monkeypatch):
+    monkeypatch.setattr(DEPLOY, "Dom0", lambda: pytest.fail("unexpected connection"))
+    with pytest.raises(SystemExit):
+        DEPLOY.main(["trash-purge", "--identity", "123-vm", "--confirm", "456-vm"])

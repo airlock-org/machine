@@ -368,9 +368,9 @@ def retire_generation(args):
     domain = safe_domain_name(args.domain)
     generation = int(args.generation)
     manifest_path = generation_manifest_path(root, domain, generation)
-    manifest = read_json(manifest_path)
-    if not generation_is_committed(root, manifest):
-        fail(f"generation is not committed for {domain}: {generation}")
+    tombstone = root / "domains" / domain / "retired-generations" / f"{generation}.json"
+    prior = read_json(tombstone) if tombstone.exists() else None
+    manifest = read_json(manifest_path) if manifest_path.exists() else None
     running = [
         str(path)
         for ref_domain, ref_generation, path, _ in iter_running_generation_refs(root)
@@ -378,24 +378,44 @@ def retire_generation(args):
     ]
     if running:
         fail(f"generation still has running references for {domain}: {generation}")
+    if manifest is None:
+        if prior and current_generation(root, domain) is None:
+            # GC may finish between pool retirement and the coordinator's
+            # durable purge completion record. Preserve an idempotent receipt.
+            prior["status"] = "retired"
+            atomic_json(tombstone, prior)
+            return prior
+        fail(f"generation is missing for {domain}: {generation}")
+    if not generation_is_committed(root, manifest):
+        fail(f"generation is not committed for {domain}: {generation}")
     retention = manifest.setdefault("retention", {})
     current = current_generation(root, domain)
-    if current == generation:
-        clear_current(root, domain, generation)
-    elif current is not None or retention.get("retain", False):
+    if current != generation and (
+        current is not None
+        or (
+            retention.get("retain", False)
+            and (not prior or prior.get("status") != "retiring")
+        )
+    ):
         fail(f"generation is not current for {domain}: {generation}")
-    retention["retain"] = False
-    retention["updated_at"] = utc_now()
-    retention["retired_at"] = utc_now()
-    atomic_json(manifest_path, manifest)
-    return {
+    result = {
         "schema": SCHEMA_GENERATION_RETIREMENT,
-        "status": "retired",
+        "status": "retiring",
         "pool_root": str(root),
         "domain": domain,
         "generation": generation,
         "manifest": str(manifest_path),
     }
+    atomic_json(tombstone, result)
+    retention["retain"] = False
+    retention["updated_at"] = utc_now()
+    retention["retired_at"] = utc_now()
+    atomic_json(manifest_path, manifest)
+    if current == generation:
+        clear_current(root, domain, generation)
+    result["status"] = "retired"
+    atomic_json(tombstone, result)
+    return result
 
 
 def switch(args):

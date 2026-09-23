@@ -388,6 +388,11 @@ def next_generation(domain_dir):
     for child in generations.iterdir():
         if child.is_dir() and child.name.isdigit():
             numbers.append(int(child.name))
+    # Purge receipts outlive GC. Never reuse their identities, even when a
+    # newly created VM later reuses the same domain name.
+    for receipt in (domain_dir / "retired-generations").glob("*.json"):
+        if receipt.stem.isdigit():
+            numbers.append(int(receipt.stem))
     return max(numbers, default=0) + 1
 
 

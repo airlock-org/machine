@@ -228,7 +228,7 @@ def plan(old, new, running, retire_removed=(), trashed=(), retain_removed=False)
                     f"{name}: removing {key} requires explicit reset values"
                 )
     # setup-config is a converger, not a garbage collector.
-    for key in (("prefs",) if retain_removed else ("kernels", "templates", "prefs")):
+    for key in ("prefs",) if retain_removed else ("kernels", "templates", "prefs"):
         if old.get(key, {}).keys() - new.get(key, {}).keys():
             raise DeploymentError(f"removing topology {key} requires a migration")
     changed = {name for name in after if before.get(name) != after[name]}
@@ -272,6 +272,302 @@ class Coordinator:
     def __init__(self, state=STATE, command=run):
         self.state = Path(state)
         self.command = command
+        self.profiles = Path("/nix/var/nix/profiles")
+
+    def running_hosts(self):
+        return {
+            str(Path(p).resolve())
+            for p in ("/run/current-system", "/run/booted-system")
+        }
+
+    def volume_inventory(self):
+        import qubesadmin
+
+        app = qubesadmin.Qubes()
+        return {
+            vm.name: {
+                name: {
+                    key: getattr(volume, key)
+                    for key in (
+                        "pool",
+                        "vid",
+                        "source",
+                        "rw",
+                        "save_on_stop",
+                        "snap_on_start",
+                    )
+                }
+                for name, volume in vm.volumes.items()
+            }
+            for vm in app.domains
+            if vm.name != "dom0"
+        }
+
+    def release_key(self, release):
+        return hashlib.sha256(str(Path(release).resolve()).encode()).hexdigest()
+
+    def prune_record_path(self, release):
+        return self.state / "pruned-releases" / (self.release_key(release) + ".json")
+
+    def require_available_release(self, release):
+        if self.prune_record_path(release).exists():
+            raise DeploymentError(
+                "release was pruned or is being pruned; deploy a new committed release"
+            )
+
+    def read_prune_record(self, path):
+        record = read_json(path)
+        if (
+            record.get("schema") != "airlock.machine-release-prune.v1"
+            or not isinstance(record.get("release"), str)
+            or self.prune_record_path(record["release"]) != path
+            or record.get("status") not in ("pruning", "pruned")
+            or not isinstance(record.get("roots"), dict)
+            or any(
+                not re.fullmatch(r"[A-Za-z0-9_-][A-Za-z0-9_.-]*", name)
+                or not isinstance(target, str)
+                or not Path(target).is_absolute()
+                for name, target in record["roots"].items()
+            )
+            or not isinstance(record.get("profile_generations"), list)
+            or any(
+                type(number) is not int or number < 1
+                for number in record["profile_generations"]
+            )
+            or record.get("host") != record.get("manifest", {}).get("host")
+        ):
+            raise DeploymentError("invalid release pruning journal")
+        return record
+
+    def require_no_pruning(self):
+        for path in (self.state / "pruned-releases").glob("*.json"):
+            if self.read_prune_record(path)["status"] != "pruned":
+                raise DeploymentError(
+                    "unfinished release pruning; resume release-prune first"
+                )
+
+    def host_profiles(self):
+        result = {}
+        selected = self.profiles / "system"
+        if selected.is_symlink():
+            result[str(selected)] = str(selected.resolve())
+        for path in self.profiles.glob("system-*-link"):
+            if re.fullmatch(r"system-[0-9]+-link", path.name) and path.is_symlink():
+                result[str(path)] = str(path.resolve())
+        recovery = self.profiles / "system-profiles"
+        for path in recovery.rglob("*") if recovery.exists() else ():
+            if path.is_symlink():
+                result[str(path)] = str(path.resolve())
+        return result
+
+    def release_inventory(self):
+        """Audit records survive pruning; only unpruned releases are recovery choices."""
+        releases = {}
+        for path in (self.state / "transactions").glob("*/status.json"):
+            record = read_json(path)
+            for key in ("release", "previous"):
+                if record.get(key):
+                    releases.setdefault(record[key], [])
+        for record in self.trash_records():
+            releases.setdefault(record["source_release"], [])
+        baseline = self.state / "baseline"
+        if (baseline / "release.json").exists():
+            releases.setdefault(str(baseline), [])
+        for root in (self.state / "roots").glob("*"):
+            if root.is_symlink() and (root.resolve() / "release.json").is_file():
+                releases.setdefault(str(root.resolve()), []).append(root.name)
+        return releases
+
+    def _prune_plan(self, release, now=None, manifest=None):
+        release = Path(release).resolve()
+        now = time.time() if now is None else now
+        manifest = manifest or load_release(release)[0]
+        inventory = self.release_inventory()
+        if (
+            str(release) not in inventory
+            and not self.prune_record_path(release).exists()
+        ):
+            raise DeploymentError("release is not a recorded machine deployment")
+        blockers = []
+        selected = self.pointer() or {}
+        for key in ("release", "previous"):
+            if selected.get(key) == str(release):
+                blockers.append("selected " + key)
+        host = manifest["host"]
+        if host in self.running_hosts():
+            blockers.append("running or booted host")
+        if (self.profiles / "system").is_symlink() and str(
+            (self.profiles / "system").resolve()
+        ) == host:
+            blockers.append("selected Nix system profile")
+        profiles = self.host_profiles()
+        generations = []
+        for path, target in profiles.items():
+            if target != host:
+                continue
+            if Path(path).parent == self.profiles:
+                if Path(path).name != "system":
+                    generations.append(int(Path(path).name.split("-")[1]))
+            else:
+                blockers.append("recovery profile " + path)
+        keep_path = self.state / "retained-releases.json"
+        kept = read_json(keep_path) if keep_path.exists() else []
+        if str(release) in kept:
+            blockers.append("explicitly retained rollback choice")
+        for path in (self.state / "transactions").glob("*/status.json"):
+            record = read_json(path)
+            if record.get("phase") not in (
+                "complete",
+                "reboot-required",
+            ) and not record.get("recovered_by"):
+                if str(release) in (record.get("release"), record.get("previous")):
+                    blockers.append("unfinished transaction " + record["id"])
+        for record in self.active_trash().values():
+            if record["source_release"] == str(release):
+                if now < record["purge_after"]:
+                    blockers.append("unexpired trash " + record["id"])
+                if record["status"] == "purging":
+                    blockers.append("unfinished purge " + record["id"])
+        # A host can be shared by several releases (e.g. guest-only candidates).
+        # Its boot generations remain until the last such release is pruned.
+        shared_host = any(
+            other != str(release)
+            and not self.prune_record_path(other).exists()
+            and load_release(other)[0]["host"] == host
+            for other in inventory
+        )
+        roots = list(inventory.get(str(release), []))
+        for root in (self.state / "roots").glob("host-*"):
+            status = self.state / "transactions" / root.name[5:] / "status.json"
+            if status.exists() and read_json(status).get("release") == str(release):
+                roots.append(root.name)
+        if (
+            release == self.state / "baseline"
+            and (self.state / "roots/baseline-host").is_symlink()
+        ):
+            roots.append("baseline-host")
+        return {
+            "schema": "airlock.machine-release-prune.v1",
+            "release": str(release),
+            "host": host,
+            "manifest": manifest,
+            "roots": {
+                name: str((self.state / "roots" / name).resolve())
+                for name in sorted(set(roots))
+            },
+            "profile_generations": [] if shared_host else sorted(generations),
+            "blockers": sorted(set(blockers)),
+        }
+
+    def prune_plan(self, release):
+        with self.locked():
+            path = self.prune_record_path(release)
+            if path.exists():
+                record = self.read_prune_record(path)
+                if record["status"] != "pruned":
+                    record["blockers"] = self._prune_plan(
+                        release, manifest=record["manifest"]
+                    )["blockers"]
+                return record
+            return self._prune_plan(release)
+
+    def list_releases(self):
+        with self.locked():
+            records = []
+            for release in sorted(self.release_inventory()):
+                path = self.prune_record_path(release)
+                records.append(
+                    self.read_prune_record(path)
+                    if path.exists()
+                    else self._prune_plan(release)
+                )
+            return {
+                "schema": "airlock.machine-release-inventory.v1",
+                "releases": records,
+            }
+
+    def retain_release(self, release, retain):
+        with self.locked():
+            self.require_no_pruning()
+            self.require_available_release(release)
+            release = str(Path(release).resolve())
+            if release not in self.release_inventory():
+                raise DeploymentError("release is not a recorded machine deployment")
+            path = self.state / "retained-releases.json"
+            kept = set(read_json(path) if path.exists() else [])
+            if retain:
+                kept.add(release)
+            else:
+                kept.discard(release)
+            atomic_json(path, sorted(kept))
+            return {"release": release, "retain": retain}
+
+    def prune_release(self, release, confirmation):
+        release = str(Path(release).resolve())
+        if confirmation != release:
+            raise DeploymentError(
+                "release pruning confirmation must match the full release path"
+            )
+        with self.locked():
+            path = self.prune_record_path(release)
+            record = self.read_prune_record(path) if path.exists() else None
+            if record and record["status"] == "pruned":
+                return record
+            preview = self._prune_plan(
+                release, manifest=record["manifest"] if record else None
+            )
+            if preview["blockers"]:
+                raise DeploymentError(
+                    "cannot prune release: " + "; ".join(preview["blockers"])
+                )
+            if record is None:
+                self.require_no_pruning()
+                record = dict(preview, status="pruning", started_at=time.time())
+                atomic_json(path, record)
+            # Verify exact targets on retry. Keep journalled targets even if a
+            # previous attempt already removed some profile links or roots.
+            for name, target in record["roots"].items():
+                root = self.state / "roots" / name
+                if root.is_symlink() and str(root.resolve()) != target:
+                    raise DeploymentError(
+                        "release root changed during pruning: " + name
+                    )
+                if root.exists() and not root.is_symlink():
+                    raise DeploymentError("release root is not a symlink: " + name)
+            generations = []
+            for number in record["profile_generations"]:
+                link = self.profiles / f"system-{number}-link"
+                if link.is_symlink():
+                    if str(link.resolve()) != record["host"]:
+                        raise DeploymentError(
+                            "Nix profile generation changed during pruning"
+                        )
+                    generations.append(str(number))
+            if generations:
+                self.command(
+                    "nix-env",
+                    "-p",
+                    str(self.profiles / "system"),
+                    "--delete-generations",
+                    *generations,
+                )
+            # Refresh the boot menu even on retry after profile deletion.
+            selected = self.pointer()
+            if selected and record["profile_generations"]:
+                host = load_release(selected["release"])[0]["host"]
+                self.command(host + "/bin/switch-to-configuration", "boot", timeout=600)
+            for name in record["roots"]:
+                (self.state / "roots" / name).unlink(missing_ok=True)
+            roots = self.state / "roots"
+            if roots.exists():
+                fd = os.open(roots, os.O_RDONLY | os.O_DIRECTORY)
+                try:
+                    os.fsync(fd)
+                finally:
+                    os.close(fd)
+            record.update(status="pruned", finished_at=time.time())
+            atomic_json(path, record)
+            return record
 
     @contextlib.contextmanager
     def locked(self):
@@ -403,6 +699,7 @@ class Coordinator:
                 "disposition": "registered-stopped",
                 "private": domain.get("backend", {}).get("state", {}).get("persistent"),
                 "pool_manifest": info.get("manifest"),
+                "volumes": self.volume_inventory()[name],
             },
         }
         atomic_json(
@@ -437,7 +734,9 @@ class Coordinator:
             "true",
         )
         if record.get("retired_at") is None:
-            record["retired_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+            now = time.time()
+            record["retired_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now))
+            record["purge_after"] = now + record["retention_days"] * 86400
         record["status"] = "trashed"
         atomic_json(path, record)
         return record
@@ -494,12 +793,21 @@ class Coordinator:
         if confirmation != identity:
             raise DeploymentError("trash purge confirmation does not match record id")
         with self.locked():
+            self.require_no_pruning()
+            latest = self.state / "latest.json"
+            if latest.exists() and read_json(latest)["phase"] not in (
+                "complete",
+                "reboot-required",
+            ):
+                raise DeploymentError("unfinished deployment; resume or rollback first")
             path = self.trash_path(identity)
             if not path.exists():
                 raise DeploymentError("trash record does not exist")
             record = read_json(path)
             if record.get("schema") != TRASH_SCHEMA or record.get("id") != identity:
                 raise DeploymentError("invalid trash record")
+            if record.get("status") == "purged":
+                return record
             if record.get("status") not in ("trashed", "purging"):
                 raise DeploymentError("trash record is not eligible for purge")
             now = time.time() if now is None else now
@@ -513,32 +821,93 @@ class Coordinator:
                     raise DeploymentError(
                         f"{name}: retained {key} deployment still references VM"
                     )
-            # Every transaction release remains GC-rooted. An older release is
-            # still a possible rollback source even after it leaves the
-            # current/previous selection pair.
-            roots = self.state / "roots"
-            if roots.exists():
-                for root in roots.iterdir():
-                    if not root.is_symlink():
-                        continue
-                    release = root.resolve()
-                    if (release / "release.json").exists() and name in load_release(
-                        release
-                    )[1]["domains"]:
-                        raise DeploymentError(
-                            f"{name}: retained deployment root {root.name} still references VM"
-                        )
+            for release in self.release_inventory():
+                if self.prune_record_path(release).exists():
+                    continue
+                topology = load_release(release)[1]
+                if (
+                    name in topology["domains"]
+                    or any(
+                        name in refs for refs in domain_references(topology).values()
+                    )
+                    or name in topology_references(topology).values()
+                ):
+                    raise DeploymentError(
+                        f"{name}: retained deployment {release} still references VM"
+                    )
+            # Bootable system profiles are also recovery choices, including
+            # profiles not created by this coordinator.
+            hosts = set(self.host_profiles().values()) | self.running_hosts()
+            for host in hosts:
+                topology_path = Path(host) / "etc/airlock/qubes-topology.json"
+                if not topology_path.is_file():
+                    raise DeploymentError(
+                        "cannot inspect retained host topology: " + host
+                    )
+                topology = read_json(topology_path)
+                if (
+                    name in topology["domains"]
+                    or any(
+                        name in refs for refs in domain_references(topology).values()
+                    )
+                    or name in topology_references(topology).values()
+                ):
+                    raise DeploymentError(
+                        f"{name}: retained host profile still references VM: {host}"
+                    )
             if name in self.running():
                 raise DeploymentError(f"{name}: cannot purge a running VM")
-            record["status"] = "purging"
-            atomic_json(path, record)
             domains = set(self.command("qvm-ls", "--raw-list").splitlines())
             if name in domains:
                 if self.command("qvm-prefs", name, "uuid") != record.get("uuid"):
                     raise DeploymentError(
                         f"{name}: registered VM identity differs from trash"
                     )
+                inventory = self.volume_inventory()
+                expected = record["storage"].get("volumes")
+                if not expected:
+                    raise DeploymentError(
+                        "trash lacks a volume ownership snapshot; restore and retire again"
+                    )
+                if inventory.get(name) != expected:
+                    raise DeploymentError(f"{name}: volume identity differs from trash")
+                owned = {
+                    (v["pool"], v["vid"])
+                    for v in expected.values()
+                    if v["rw"] or v["save_on_stop"]
+                }
+                for other, volumes in inventory.items():
+                    if other == name:
+                        continue
+                    for volume in volumes.values():
+                        if (volume["pool"], volume["vid"]) in owned or (
+                            volume["pool"],
+                            volume["source"],
+                        ) in owned:
+                            raise DeploymentError(
+                                f"{name}: private storage is referenced by {other}"
+                            )
+                if (
+                    "airlock-retired"
+                    not in self.command("qvm-tags", name, "list").splitlines()
+                ):
+                    raise DeploymentError(f"{name}: retirement tag is missing")
+                if self.command(
+                    "qvm-features", name, "airlock-store-generation"
+                ) != str(record["pool_generation"]):
+                    raise DeploymentError(f"{name}: pool generation differs from trash")
+                info = self.generation_info(name, record["pool_generation"])
+                if (
+                    info.get("manifest") != record["storage"]["pool_manifest"]
+                    or info.get("system")
+                    != record["domain_config"]["backend"]["system"]["source"]
+                ):
+                    raise DeploymentError(f"{name}: pool identity differs from trash")
+                record["status"] = "purging"
+                atomic_json(path, record)
                 self.command("qvm-remove", "--force", name)
+            elif record["status"] != "purging":
+                raise DeploymentError(f"{name}: VM disappeared before purge began")
             self.command(
                 "airlock-closure-store",
                 "retire-generation",
@@ -589,6 +958,7 @@ class Coordinator:
         return baseline
 
     def inspect(self, release):
+        self.require_available_release(release)
         desired, new = load_release(release)
         current = self.pointer()
         if current:
@@ -1028,8 +1398,11 @@ class Coordinator:
 
     def apply(self, release, recover=False):
         release = Path(release).resolve()
+        self.require_available_release(release)
         manifest, topology = load_release(release)
         with self.locked():
+            self.require_no_pruning()
+            self.require_available_release(release)
             latest = self.state / "latest.json"
             if latest.exists() and not recover:
                 existing = read_json(latest)
@@ -1108,6 +1481,8 @@ class Coordinator:
             try:
                 if str(release).startswith("/nix/store/"):
                     self.pin(transaction, release)
+                else:
+                    self.pin("host-" + transaction, manifest["host"])
                 self.install_boot_hook(release, baseline)
                 self.stage(release, topology, changes["stage"], directory)
                 trash_plan = [
@@ -1175,6 +1550,12 @@ class Coordinator:
                     host_running=str(Path("/run/current-system").resolve()),
                     host_selected=manifest["host"],
                 )
+                if interrupted:
+                    interrupted["recovered_by"] = transaction
+                    atomic_json(
+                        self.state / "transactions" / interrupted["id"] / "status.json",
+                        interrupted,
+                    )
             except Exception as exc:
                 phase("failed", error=str(exc), failed_phase=record["phase"])
                 raise
@@ -1316,11 +1697,27 @@ def main(argv=None):
         sub.add_parser(action).add_argument("release", type=Path)
     for action in ("guest-plan", "guest-apply"):
         sub.add_parser(action).add_argument("receipt")
-    for action in ("status", "verify", "resume", "rollback", "trash-list"):
+    for action in (
+        "status",
+        "verify",
+        "resume",
+        "rollback",
+        "trash-list",
+        "release-list",
+    ):
         sub.add_parser(action)
     purge = sub.add_parser("trash-purge")
     purge.add_argument("identity")
     purge.add_argument("--confirm", required=True)
+    for action in ("release-prune-plan", "release-prune", "release-retain"):
+        command_parser = sub.add_parser(action)
+        command_parser.add_argument("release", type=Path)
+        if action == "release-prune":
+            command_parser.add_argument("--confirm", required=True)
+        if action == "release-retain":
+            command_parser.add_argument(
+                "--retain", required=True, choices=("true", "false")
+            )
     boot = sub.add_parser("boot-setup")
     boot.add_argument("setup")
     boot.add_argument("args", nargs=argparse.REMAINDER)
@@ -1364,6 +1761,14 @@ def main(argv=None):
             result = {"schema": TRASH_SCHEMA, "records": coordinator.trash_records()}
         elif args.action == "trash-purge":
             result = coordinator.purge_trash(args.identity, args.confirm)
+        elif args.action == "release-prune-plan":
+            result = coordinator.prune_plan(args.release)
+        elif args.action == "release-list":
+            result = coordinator.list_releases()
+        elif args.action == "release-prune":
+            result = coordinator.prune_release(args.release, args.confirm)
+        elif args.action == "release-retain":
+            result = coordinator.retain_release(args.release, args.retain == "true")
         else:
             result = coordinator.status()
         print(json.dumps(result, sort_keys=True, indent=2))
