@@ -89,7 +89,7 @@ class DeploymentDiagnostics:
                 "show",
                 "qubesd.service",
                 "airlock-gui-input-connect.service",
-                "airlock-gui-input-keyboard.service",
+                "airlock-gui-input-discovery.service",
                 "-p",
                 "ActiveState",
                 "-p",

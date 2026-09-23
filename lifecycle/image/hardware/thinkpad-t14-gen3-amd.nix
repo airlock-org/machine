@@ -21,29 +21,4 @@
     driver = "amdgpu";
   };
   environment.systemPackages = [ pkgs.pciutils pkgs.usbutils ];
-  # The Synaptics HID exposes both a relative compatibility mouse and the real
-  # absolute touchpad below the same platform path.  systemd's stock
-  # `*-event-mouse` link selects the former, so give the touchpad interface an
-  # unambiguous stable name of its own.
-  services.udev.extraRules = ''
-    SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="SYNA8018:00 06CB:CE67 Touchpad", SYMLINK+="input/by-path/platform-AMDI0010:01-event-touchpad"
-  '';
-  # Observed stable evdev links on this machine. This declaration is inert
-  # unless a physical-GUI profile opts into the sender. Do not copy eventN
-  # numbers, touchscreen devices, or this selection into generic modules.
-  airlock.inputProxy.sender.devices = {
-    keyboard = {
-      path = "/dev/input/by-path/platform-i8042-serio-0-event-kbd";
-      type = "keyboard";
-    };
-    pointingstick = {
-      path = "/dev/input/by-path/platform-i8042-serio-1-event-mouse";
-      required = false;
-      type = "mouse";
-    };
-    touchpad = {
-      path = "/dev/input/by-path/platform-AMDI0010:01-event-touchpad";
-      type = "tablet";
-    };
-  };
 }
