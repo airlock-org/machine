@@ -9,6 +9,13 @@
 let
   storage = python3.pkgs.callPackage ../airlock-qubes-storage { };
   python = python3.withPackages (ps: [ ps.qubes-core-admin-client ]);
+  source = lib.fileset.toSource {
+    root = ../..;
+    fileset = lib.fileset.unions [
+      ../../machine-deploy.py
+      (lib.fileset.fileFilter (file: file.hasExt "py") ../../airlock_machine_deploy)
+    ];
+  };
 in
 writeShellApplication {
   name = "airlock-machine-deploy";
@@ -22,7 +29,7 @@ writeShellApplication {
   ];
   text = ''
     export AIRLOCK_MACHINE_COORDINATOR=${builtins.placeholder "out"}/bin/airlock-machine-deploy
-    exec ${python}/bin/python3 ${../../machine-deploy.py} "$@"
+    exec ${python}/bin/python3 ${source}/machine-deploy.py "$@"
   '';
   meta.description = "Repository-owned whole-machine Airlock deployment coordinator";
   meta.license = lib.licenses.mit;
