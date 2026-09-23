@@ -306,13 +306,11 @@ let
       pkgs.gzip
       pkgs.jq
       pkgs.less
-      pkgs.nixfmt
       pkgs.openssh
       pkgs.procps
       pkgs.python3
       pkgs.ripgrep
       pkgs.rustc
-      pkgs.rustfmt
       pkgs.uv
       pkgs.vim
       pkgs.which

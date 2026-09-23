@@ -758,7 +758,6 @@
         observe-package = self.packages.${system}.airlock-observe-dom0;
       });
 
-      formatter = forAllSystems (system: (pkgsFor system).nixfmt);
 
       nixosModules.dom0 =
         { lib, ... }:
