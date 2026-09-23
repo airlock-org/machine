@@ -17,7 +17,6 @@
       "sys-dev"
       "usr-home"
       "usr-browser"
-      "lab-retire"
     ];
   };
   networking.networkmanager.enable = lib.mkForce false;

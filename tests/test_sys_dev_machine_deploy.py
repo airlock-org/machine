@@ -337,7 +337,7 @@ def test_apply_uses_release_coordinator_in_a_detached_worker(tmp_path, monkeypat
         ),
         (
             "trash-purge",
-            ["--identity", "123-lab-retire", "--confirm", "123-lab-retire"],
+            ["--identity", "123-disposable", "--confirm", "123-disposable"],
         ),
     ],
 )
