@@ -545,6 +545,30 @@ def test_boot_start_image_autostart_and_dependencies(machine, tmp_path, topology
     assert "usr-browser" not in machine.live
 
 
+@pytest.mark.parametrize("concurrent_start", [True, False])
+def test_boot_start_handles_race_without_hiding_start_failure(machine, monkeypatch, concurrent_start):
+    machine.live.remove("sys-dev")
+    command = machine.command
+
+    def racing_command(*args, **kwargs):
+        if args[0] == "qvm-start":
+            assert args == ("qvm-start", "--skip-if-running", "sys-dev")
+            if concurrent_start:
+                machine.live.add("sys-dev")
+            raise subprocess.CalledProcessError(1, args)
+        return command(*args, **kwargs)
+
+    monkeypatch.setattr(machine, "command", racing_command)
+    if concurrent_start:
+        result = machine.boot_start(machine.initial / "topology.json", ["sys-gui"])
+        assert "sys-dev" in result["autostart"]
+        assert "sys-dev" not in result["started"]
+        assert any(call[0] == "qrexec-client" for call in machine.calls)
+    else:
+        with pytest.raises(subprocess.CalledProcessError):
+            machine.boot_start(machine.initial / "topology.json", ["sys-gui"])
+
+
 def test_boot_start_uses_selected_release_not_image(machine, tmp_path, topology):
     topology["domains"]["usr-browser"]["prefs"]["autostart"] = False
     machine.apply(new_release(tmp_path, topology))

@@ -858,9 +858,17 @@ class Coordinator:
             starts = plan(topology, topology, set(), trashed=active_trash)["start"]
             started = []
             for name in starts:
-                if name not in running:
-                    self.command("qvm-start", name, timeout=180)
-                    started.append(name)
+                if name not in self.running():
+                    try:
+                        self.command("qvm-start", "--skip-if-running", name, timeout=180)
+                    except subprocess.CalledProcessError:
+                        # A desktop/qrexec request can start the VM between the
+                        # state check and Qubes' start call. Still verify its
+                        # generation/readiness below; a stopped VM is a failure.
+                        if name not in self.running():
+                            raise
+                    else:
+                        started.append(name)
             observed = self.verify(topology, set(starts) | set(require_running))
             return {
                 "autostart": starts,
