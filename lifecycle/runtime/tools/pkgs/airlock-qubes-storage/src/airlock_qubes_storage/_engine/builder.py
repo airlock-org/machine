@@ -43,6 +43,25 @@ def registration_paths(text):
     return paths
 
 
+def offline_source_root(source):
+    """Return the store object containing a canonical offline source path."""
+    match = (
+        re.fullmatch(
+            r"(/nix/store/[0-9abcdfghijklmnpqrsvwxyz]{32}-[^/]+)(/.*)?",
+            source,
+        )
+        if isinstance(source, str)
+        else None
+    )
+    if (
+        match is None
+        or "\x00" in source
+        or any(part in ("", ".", "..") for part in source.split("/")[4:])
+    ):
+        core.fail(f"invalid offline flake source path: {source!r}")
+    return match.group(1)
+
+
 def prepare_builder(root, admission, registration, offline_inputs_source=None):
     """Build metadata only; package bytes are shared with guest pool views."""
     root = Path(root)
@@ -62,9 +81,16 @@ def prepare_builder(root, admission, registration, offline_inputs_source=None):
             offline.get("schema") != "airlock.sys-dev-offline-inputs.v1"
             or not isinstance(offline.get("inputs"), dict)
             or not offline["inputs"]
-            or not set(offline["inputs"].values()) <= paths
         ):
             core.fail("offline flake inputs do not match frozen builder view")
+        # Local path inputs can live inside another archived source object.
+        # The frozen view registers whole store objects, not their subdirectories.
+        for name, source in offline["inputs"].items():
+            if offline_source_root(source) not in paths:
+                core.fail(
+                    "offline flake inputs do not match frozen builder view: "
+                    f"{name}: {source}"
+                )
     identity = {
         "schema": "airlock.sys-dev-builder.v1",
         "domain": manifest["domain"],
