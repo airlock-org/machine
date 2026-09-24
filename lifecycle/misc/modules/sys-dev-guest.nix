@@ -3,8 +3,7 @@
   imports = [ ./sys-dev-machine-build.nix ./sys-dev-build-store.nix ./machine-source-seed.nix ];
 
   # sys-dev is an intentionally privileged USB-lab development domain. It
-  # owns the NIC during the first networking stage and is the Tailnet entry
-  # point for the development-only dom0 qrexec shell.
+  # remains the Tailnet entry point for the development-only dom0 qrexec shell.
   services.tailscale = {
     enable = true;
     extraUpFlags = [ "--ssh" ];

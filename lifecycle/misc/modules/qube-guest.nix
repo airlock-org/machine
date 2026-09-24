@@ -15,9 +15,9 @@ let
   hasSysNetRole = cfg.role == "sys-net";
   hasSysDevRole = cfg.role == "sys-dev";
   hasSysCtrlRole = cfg.role == "sys-ctrl";
-  hasNetworkDriverRole = hasSysNetRole || hasSysDevRole;
+  hasNetworkDriverRole = hasSysNetRole;
   hasSysGuiRole = cfg.role == "sys-gui";
-  hasNetworkProviderRole = hasSysNetRole || hasSysDevRole || cfg.role == "sys-firewall";
+  hasNetworkProviderRole = hasSysNetRole || cfg.role == "sys-firewall";
   hasConfigRole = hasConfigVaultRole || hasConfigStagingRole || hasConfigValidatorRole;
   hasPrivateNixRole =
     hasConfigVaultRole

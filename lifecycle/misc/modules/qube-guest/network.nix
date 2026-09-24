@@ -1,7 +1,7 @@
 { config, lib, pkgs, qubesGuestPath, qubesPython, networkProviderPackages }:
 let
   cfg = config.airlock.qubeGuest;
-  hasNetworkDriverRole = builtins.elem cfg.role [ "sys-net" "sys-dev" ];
+  hasNetworkDriverRole = cfg.role == "sys-net";
   hasNetworkProviderRole = hasNetworkDriverRole || cfg.role == "sys-firewall";
   qubesAgentLinux = pkgs.qubes-core-agent-linux;
   systemdPackage = config.systemd.package;

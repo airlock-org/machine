@@ -4,6 +4,25 @@ from .common import DeploymentError
 from .models import DeploymentPlan, Topology
 
 
+def automatic_network_pci_owner(topology):
+    """The USB lab's sole root provider that discovers physical network PCI."""
+    owners = [
+        name
+        for name in ("sys-dev", "sys-net")
+        if (domain := topology.get("domains", {}).get(name))
+        and domain.get("prefs", {}).get("provides_network") is True
+        and not domain.get("netvm")
+        and (
+            domain.get("features", {}).get("airlock-auto-network-pci") == "1"
+            or name == "sys-net"
+        )
+        and not domain.get("devices", {}).get("pci")
+    ]
+    if len(owners) > 1:
+        raise DeploymentError("multiple automatic network PCI owners: " + ", ".join(owners))
+    return owners[0] if owners else None
+
+
 def domain_references(topology):
     domains = topology["domains"]
     result = {}
@@ -146,6 +165,8 @@ def plan(
     before, after = old["domains"], new["domains"]
     removed = before.keys() - after.keys()
     validate_transition(old, new, retire_removed, trashed, retain_removed)
+    old_pci_owner = automatic_network_pci_owner(old)
+    new_pci_owner = automatic_network_pci_owner(new)
     changed = {name for name in after if before.get(name) != after[name]}
     if old.get("kernels") != new.get("kernels") or old.get("prefs") != new.get("prefs"):
         changed.update(after)
@@ -167,7 +188,7 @@ def plan(
         if expanded == start:
             break
         start = expanded
-    return {
+    result = {
         "changed": sorted(changed),
         "stage": sorted(
             name
@@ -181,6 +202,9 @@ def plan(
         "restore": sorted(set(after) & set(trashed)),
         "retained_undeclared": sorted(removed),
     }
+    if old_pci_owner and new_pci_owner and old_pci_owner != new_pci_owner:
+        result["pci_handoff"] = {"from": old_pci_owner, "to": new_pci_owner}
+    return result
 
 
 def references_domain(topology: Topology, name: str) -> bool:

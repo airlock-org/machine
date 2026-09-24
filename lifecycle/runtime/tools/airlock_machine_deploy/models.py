@@ -34,6 +34,7 @@ class DeploymentPlan(TypedDict):
     retire: list[str]
     restore: list[str]
     retained_undeclared: list[str]
+    pci_handoff: NotRequired[dict[str, str]]
     retirement: NotRequired[list[RetirementDetail]]
     host_reboot_required: NotRequired[bool]
     revision: NotRequired[str]

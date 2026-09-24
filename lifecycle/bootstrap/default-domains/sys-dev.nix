@@ -2,31 +2,29 @@
   guestHostName = "sys-dev";
   label = "red";
   rootImageSizeMiB = 1024;
-  netvm = null;
+  netvm = "sys-firewall";
   prefs = {
     autostart = true;
     guivm = null;
     include_in_backups = true;
-    # The PCI-backed network driver domain cannot balloon above its startup
-    # allocation, and whole-machine Nix evaluation exceeds 4 GiB RSS.
+    # Whole-machine Nix evaluation exceeds 4 GiB RSS.
     memory = 8192;
     maxmem = 8192;
-    provides_network = true;
+    provides_network = false;
     vcpus = 2;
     virt_mode = "hvm";
   };
   features = {
     "airlock-managed" = "1";
     "airlock-role" = "sys-dev";
-    # This development-only driver domain takes the physical NIC until the
-    # later sys-net/sys-firewall stage replaces it.
-    "airlock-auto-network-pci" = "1";
-    "airlock-network-provider" = "sys-dev";
+    # Explicitly clear the prior provider features on deployed Qubes domains.
+    "airlock-auto-network-pci" = "0";
+    "airlock-network-provider" = "0";
   };
   services = {
-    "network-manager" = true;
-    "qubes-firewall" = true;
-    "qubes-network" = true;
+    "network-manager" = false;
+    "qubes-firewall" = false;
+    "qubes-network" = false;
   };
   devices.pci = [ ];
   state.persistentSize = 17179869184;

@@ -7,6 +7,7 @@ import subprocess
 import sys
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -77,6 +78,69 @@ def test_app_change_does_not_restart_providers(topology):
     result = planning.plan(topology, new, set(topology["domains"]))
     assert result["stop"] == ["usr-home"]
     assert result["stage"] == []
+
+
+def test_network_pci_handoff_stops_old_provider_and_orders_new_chain(topology):
+    old_dev = topology["domains"]["sys-dev"]
+    old_dev["features"] = {"airlock-auto-network-pci": "1"}
+    old_dev["prefs"]["provides_network"] = True
+    new = deepcopy(topology)
+    new_dev = new["domains"]["sys-dev"]
+    new_dev["features"]["airlock-auto-network-pci"] = "0"
+    new_dev["prefs"]["provides_network"] = False
+    new_dev["netvm"] = "sys-firewall"
+    new["domains"]["sys-net"] = domain("sys-net")
+    new["domains"]["sys-net"]["prefs"]["provides_network"] = True
+    new["domains"]["sys-net"]["features"] = {"airlock-auto-network-pci": "1"}
+    new["domains"]["sys-firewall"] = domain("sys-firewall", netvm="sys-net")
+    new["domains"]["sys-firewall"]["prefs"]["provides_network"] = True
+    new["domains"]["usr-browser"]["netvm"] = "sys-firewall"
+
+    migration = planning.plan(topology, new, {"sys-dev", "usr-browser"})
+    assert migration["pci_handoff"] == {"from": "sys-dev", "to": "sys-net"}
+    assert migration["stop"].index("usr-browser") < migration["stop"].index("sys-dev")
+    assert migration["start"].index("sys-net") < migration["start"].index("sys-firewall")
+    assert migration["start"].index("sys-firewall") < migration["start"].index("sys-dev")
+
+    rollback = planning.plan(
+        new, topology, {"sys-dev", "sys-net", "sys-firewall"}, retain_removed=True
+    )
+    assert rollback["pci_handoff"] == {"from": "sys-net", "to": "sys-dev"}
+    assert rollback["stop"].index("sys-dev") < rollback["stop"].index("sys-firewall")
+    assert rollback["stop"].index("sys-firewall") < rollback["stop"].index("sys-net")
+
+
+def test_network_pci_handoff_releases_only_old_owners_network_nics(monkeypatch, tmp_path):
+    class FakeInterface:
+        def __init__(self, value):
+            self.value = value
+
+        def __repr__(self):
+            return self.value
+
+    class FakeDevice:
+        def __init__(self, port_id, interface):
+            self.port_id = port_id
+            self.interfaces = [FakeInterface(interface)]
+
+    network = FakeDevice("00_02.0", "p0200")
+    unrelated = FakeDevice("00_08.0", "p0300")
+    app = SimpleNamespace(domains={"dom0": SimpleNamespace(devices={"pci": [network, unrelated]})})
+    monkeypatch.setitem(sys.modules, "qubesadmin", SimpleNamespace(Qubes=lambda: app))
+    commands = []
+
+    def command(*args):
+        commands.append(args)
+        if args[:3] == ("qvm-device", "pci", "list"):
+            return "dom0:00_02.0  *sys-dev (required)\ndom0:00_08.0  *sys-dev (required)"
+        return ""
+
+    coordinator = deploy.Coordinator(state=tmp_path, command=command)
+    coordinator.handoff_network_pci({"from": "sys-dev", "to": "sys-net"})
+    assert commands == [
+        ("qvm-device", "pci", "list", "--assignments", "dom0"),
+        ("qvm-device", "pci", "unassign", "sys-dev", "dom0:00_02.0"),
+    ]
 
 
 def test_cycle_fails(topology):

@@ -410,6 +410,8 @@
           sys-gui-standalone = mkUsbAmdSysGuiDomainEntry system "gnome" false true;
           sys-gui = mkUsbAmdSysGuiDomainEntry system "gnome" true false;
           sys-dev = (bootstrapDomains.mkSysDevDomainEntryWith system { inherit extraSpecialArgs; }) // { preparedDomainName = "sys-dev"; };
+          sys-net = (bootstrapDomains.mkSysNetDomainEntry system) // { preparedDomainName = "sys-net"; };
+          sys-firewall = (bootstrapDomains.mkSysFirewallDomainEntry system) // { preparedDomainName = "sys-firewall"; };
           sys-ctrl = (bootstrapDomains.mkSysCtrlDomainEntryWith system { inherit extraSpecialArgs; }) // { preparedDomainName = "sys-ctrl"; };
           usr-home = (bootstrapDomains.mkHomeVmDomainEntry system) // { preparedDomainName = "usr-home"; };
           usr-browser = (bootstrapDomains.mkBrowserVmDomainEntry system) // { preparedDomainName = "usr-browser"; };
@@ -501,9 +503,11 @@
                   ];
                 };
                 sys-dev = machineDomain "sys-dev";
+                sys-net = machineDomain "sys-net";
+                sys-firewall = machineDomain "sys-firewall";
                 sys-ctrl = machineDomain "sys-ctrl";
                 usr-home = machineDomain "usr-home";
-                usr-browser = (machineDomain "usr-browser") // { netvm = "sys-dev"; };
+                usr-browser = machineDomain "usr-browser";
               };
             };
           })

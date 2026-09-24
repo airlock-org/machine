@@ -492,6 +492,49 @@ class Coordinator:
                 "setup left unsupported or deferred work; inspect setup-config.json"
             )
 
+    def handoff_network_pci(self, handoff, *, dry_run=False, allow_unassigned=False):
+        """Release the old driver's network NICs before setup assigns sys-net."""
+        import qubesadmin
+
+        previous = handoff["from"]
+        target = handoff["to"]
+        if {previous, target} != {"sys-dev", "sys-net"}:
+            raise DeploymentError("unsupported automatic network PCI handoff")
+        app = qubesadmin.Qubes()
+        network_ports = set()
+        for dev in app.domains["dom0"].devices["pci"]:
+            try:
+                if repr(dev.interfaces[0]).startswith("p02"):
+                    network_ports.add(dev.port_id)
+            except (AttributeError, IndexError, TypeError):
+                continue
+        if not network_ports:
+            raise DeploymentError("network PCI handoff found no dom0 network controllers")
+        assignments = self.command("qvm-device", "pci", "list", "--assignments", "dom0")
+        owned = set()
+        for line in assignments.splitlines():
+            fields = line.split()
+            if not fields or not fields[0].startswith("dom0:"):
+                continue
+            port = fields[0].split(":", 1)[1]
+            if port not in network_ports:
+                continue
+            owners = set(re.findall(r"\*([A-Za-z0-9_-]+) \(", line))
+            foreign = owners - {previous, target}
+            if foreign:
+                raise DeploymentError(
+                    f"network PCI controller {port} is assigned to "
+                    + ", ".join(sorted(foreign))
+                )
+            if previous in owners and target in owners:
+                raise DeploymentError(f"network PCI controller {port} has both owners")
+            owned.update(owners)
+            if f"*{previous} (" in line:
+                if not dry_run:
+                    self.command("qvm-device", "pci", "unassign", previous, f"dom0:{port}")
+        if not owned and not allow_unassigned:
+            raise DeploymentError("network PCI handoff found no assigned network controller")
+
     def verify(self, topology, expected_running):
         observed = {}
         running = self.running()
@@ -569,6 +612,11 @@ class Coordinator:
                 trashed=self.retirement.active_trash(),
                 retain_removed=rollback,
             )
+            if changes.get("pci_handoff"):
+                self.handoff_network_pci(
+                    changes["pci_handoff"], dry_run=True,
+                    allow_unassigned=bool(interrupted),
+                )
             changes["stop"] = [name for name in changes["stop"] if name in runtime]
             changes["retirement"] = self.retirement.retirement_details(
                 old,
@@ -675,6 +723,10 @@ class Coordinator:
                 phase("retiring")
                 retired = [self.retirement.retire(entry) for entry in trash_plan]
                 phase("configuring")
+                if changes.get("pci_handoff"):
+                    self.handoff_network_pci(
+                        changes["pci_handoff"], allow_unassigned=bool(interrupted)
+                    )
                 self.setup(release, directory)
                 restored = [
                     self.retirement.restore(entry, release, transaction)

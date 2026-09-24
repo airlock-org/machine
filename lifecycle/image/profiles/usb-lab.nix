@@ -2,9 +2,7 @@
 {
   imports = [ ./usb-gui-lab.nix ];
 
-  # First general physical-machine lab stage: sys-dev owns the NIC and is the
-  # intentionally privileged Tailnet entry point. A later profile will replace
-  # its direct PCI networking with sys-dev -> sys-firewall -> sys-net.
+  # sys-dev remains the intentionally privileged Tailnet entry point.
   airlock.devDom0Terminal = {
     host.enable = true;
     callers = lib.mkForce [ "sys-dev" ];
@@ -15,6 +13,8 @@
     targets = [
       "sys-gui"
       "sys-dev"
+      "sys-net"
+      "sys-firewall"
       "usr-home"
       "usr-browser"
     ];
@@ -32,12 +32,12 @@
 
   airlock.qubes = {
     startNetworkProvidersOnBoot.enable = lib.mkForce true;
-    prefs.default_netvm = lib.mkForce "sys-dev";
+    prefs.default_netvm = lib.mkForce "sys-firewall";
   };
 
   environment.etc."airlock/usb-lab".text = ''
     experimental general USB lab
-    sys-dev owns physical networking and provides Tailnet development access
+    sys-net owns physical networking; sys-dev provides Tailnet development access through sys-firewall
     run: tailscale ssh user@sys-dev; then airlock-dom0-shell
   '';
   environment.etc."airlock/boot-role".text = "normal\n";
