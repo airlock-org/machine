@@ -57,6 +57,9 @@ in
         enabled-extensions=${enabledExtensionsGVariant}
       '';
     };
+    # GNOME Shell offers gnome-tour on first login when its desktop entry is
+    # installed. AirlockOS Setup owns that first-run welcome flow instead.
+    environment.gnome.excludePackages = [ pkgs.gnome-tour ];
     # Where usr-home is part of the topology, applications belong in that
     # offline desktop-work VM. Minimal profiles without it retain GNOME's
     # regular core application set.
