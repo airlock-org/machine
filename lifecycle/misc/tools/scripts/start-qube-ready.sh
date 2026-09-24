@@ -49,10 +49,23 @@ trap 'fail "$DOMAIN readiness command failed at line $LINENO"' ERR
     actual="${actual%$'\n'}"
     printf 'qrexec current-system=%s\n' "$actual"
     [ "$actual" = "$expected" ] || fail "$DOMAIN reported $actual; expected $expected"
+    if jq -e --arg domain "$DOMAIN" '.domains[$domain].prefs.provides_network == true' "$TOPOLOGY" >/dev/null; then
+      # A responding qrexec agent does not imply that forwarding policy is
+      # installed. Check every service separately: is-active with several
+      # units succeeds when only one of them is active.
+      # Expand the service variable inside the guest, not in dom0.
+      # shellcheck disable=SC2016
+      if ! timeout --foreground --signal=TERM --kill-after=2s 15s \
+        "$QREXEC_CLIENT" -d "$DOMAIN" 'root:for unit in qubes-antispoof qubes-iptables qubes-firewall qubes-network; do systemctl is-active --quiet "$unit.service" || { echo "Network provider unhealthy: $unit.service" >&2; exit 1; }; done; if test -e /run/qubes-service/network-manager; then systemctl is-active --quiet NetworkManager.service; fi'; then
+        printf 'Network provider firewall or forwarding services are not ready.\n'
+        sleep 3
+        continue
+      fi
+    fi
     "$QVM_CHECK" --running "$DOMAIN"
     "$SUPERVISOR" stage "qube:$DOMAIN" "$DOMAIN is qrexec-ready on $expected"
     trap - ERR
     exit 0
   done
-  fail "$DOMAIN did not become qrexec-ready within ${READY_TIMEOUT}s"
+  fail "$DOMAIN did not become qrexec-ready with required network services within ${READY_TIMEOUT}s"
 } >>"$LOG" 2>&1

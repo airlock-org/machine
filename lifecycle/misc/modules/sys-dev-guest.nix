@@ -11,10 +11,8 @@
   environment.systemPackages = [ pkgs.jq ];
   environment.etc."qubes-rpc/airlock.DevTailscaleUp" = {
     source = pkgs.writeShellScript "airlock-dev-tailscale-up" ''
-      set -eu
-      [ "''${QREXEC_REMOTE_DOMAIN:-}" = sys-gui ] || exit 1
-      [ -z "''${QREXEC_SERVICE_ARGUMENT:-}" ] || exit 1
-      exec ${pkgs.tailscale}/bin/tailscale up --ssh
+      export PATH=${pkgs.lib.makeBinPath [ pkgs.coreutils pkgs.glibc.bin pkgs.iproute2 pkgs.curl pkgs.tailscale ]}:$PATH
+      ${builtins.readFile ../tools/scripts/dev-tailscale-up.sh}
     '';
     mode = "0555";
   };

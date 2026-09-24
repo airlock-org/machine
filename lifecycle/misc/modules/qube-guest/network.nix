@@ -118,6 +118,10 @@ in
     # QubesDB supplies addressing for Xen frontend NICs; there is no DHCP
     # server on the link to the NetVM. Physical NICs use NetworkManager.
     networking.useDHCP = lib.mkDefault false;
+    # setup-ip owns resolver configuration in guests with a Qubes uplink.
+    # Running resolvconf too races its direct writes to /etc/resolv.conf.
+    networking.resolvconf.enable = lib.mkIf (!hasNetworkDriverRole) false;
+    hardware.enableRedistributableFirmware = lib.mkIf hasNetworkDriverRole true;
     networking.firewall.enable = lib.mkIf hasNetworkProviderRole false;
     networking.networkmanager.enable = lib.mkIf hasNetworkDriverRole true;
     networking.networkmanager.settings = lib.mkIf hasNetworkDriverRole {
@@ -248,6 +252,8 @@ in
       serviceConfig = {
         Type = "notify-reload";
         ExecStart = "${qubesAgentLinux}/bin/qubes-firewall";
+        Restart = "on-failure";
+        RestartSec = "5s";
       };
     };
 

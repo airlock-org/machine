@@ -9,8 +9,9 @@
     autostart = true;
     guivm = null;
     include_in_backups = true;
-    memory = 256;
-    maxmem = 512;
+    # PCI drivers and NetworkManager need room during concurrent startup.
+    memory = 1024;
+    maxmem = 1024;
     provides_network = true;
     vcpus = 2;
     virt_mode = "hvm";

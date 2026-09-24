@@ -8,8 +8,8 @@
     autostart = !networkDebug;
     guivm = null;
     include_in_backups = true;
-    memory = 256;
-    maxmem = 512;
+    memory = 512;
+    maxmem = 1024;
     provides_network = true;
     vcpus = 1;
   };

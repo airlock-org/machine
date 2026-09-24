@@ -9656,16 +9656,16 @@ def check_config_topology_eval(repo_root: Path, log_dir: Path) -> None:
     assert domains["sys-net"]["prefs"]["provides_network"] is True
     assert domains["sys-net"]["prefs"]["guivm"] is None
     assert domains["sys-net"]["prefs"]["virt_mode"] == "hvm"
-    assert domains["sys-net"]["prefs"]["memory"] == 256
-    assert domains["sys-net"]["prefs"]["maxmem"] == 512
+    assert domains["sys-net"]["prefs"]["memory"] == 1024
+    assert domains["sys-net"]["prefs"]["maxmem"] == 1024
     assert domains["sys-net"]["services"]["network-manager"] is True
     assert domains["sys-net"]["services"]["qubes-updates-proxy"] is True
     assert domains["sys-firewall"]["class"] == "StandaloneVM"
     assert domains["sys-firewall"]["netvm"] == "sys-net"
     assert domains["sys-firewall"]["label"] == "green"
     assert domains["sys-firewall"]["prefs"]["autostart"] is True
-    assert domains["sys-firewall"]["prefs"]["memory"] == 256
-    assert domains["sys-firewall"]["prefs"]["maxmem"] == 512
+    assert domains["sys-firewall"]["prefs"]["memory"] == 512
+    assert domains["sys-firewall"]["prefs"]["maxmem"] == 1024
     assert domains["sys-firewall"]["prefs"]["provides_network"] is True
     assert domains["sys-firewall"]["prefs"]["guivm"] is None
     assert domains["sys-firewall"]["features"]["airlock-role"] == "sys-firewall"
