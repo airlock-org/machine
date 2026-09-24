@@ -12,6 +12,7 @@ gi.require_version("Gtk", "4.0")
 from gi.repository import Adw, Gio, Gtk  # noqa: E402
 
 PREVIEW = os.environ.get("AIRLOCK_SETUP_PREVIEW") == "1"
+TOUR_EXEC = os.environ.get("AIRLOCK_GNOME_TOUR_EXEC", "")
 preview_complete = False
 
 
@@ -98,6 +99,10 @@ class Setup(Adw.Application):
         self.finish.add_css_class("suggested-action")
         self.finish.connect("clicked", self.on_finish)
         actions.append(self.finish)
+        self.tour = Gtk.Button(label="Take a desktop tour")
+        self.tour.add_css_class("suggested-action")
+        self.tour.connect("clicked", self.on_tour)
+        actions.append(self.tour)
         toolbar.add_bottom_bar(actions)
         self.window.set_content(toolbar)
         self.update(state, error)
@@ -106,14 +111,15 @@ class Setup(Adw.Application):
     def update(self, state, error):
         if state == "complete":
             self.page.set_title("Setup complete")
-            self.page.set_description("AirlockOS is ready. You can reopen Setup from the applications menu.")
+            self.page.set_description("AirlockOS is ready. You can explore the GNOME desktop now or close this window. Setup remains available from the applications menu.")
         else:
             self.page.set_title("Welcome to AirlockOS")
             self.page.set_description("Your desktop is ready. Finish setup to stop showing this welcome screen when you sign in. You can reopen Setup from the applications menu.")
-        self.message.set_text(error or ("Setup is already complete." if state == "complete" else ""))
+        self.message.set_text(error or "")
         self.retry.set_visible(error is not None)
         self.finish.set_sensitive(state == "incomplete")
         self.finish.set_visible(state != "complete")
+        self.tour.set_visible(state == "complete")
 
     def on_retry(self, _button):
         try:
@@ -130,6 +136,17 @@ class Setup(Adw.Application):
             self.update(None, str(exc))
             return
         self.update("complete", None)
+
+    def on_tour(self, _button):
+        try:
+            if not TOUR_EXEC:
+                raise FileNotFoundError("GNOME Tour is not packaged")
+            subprocess.Popen([TOUR_EXEC])
+        except OSError as exc:
+            print(f"Could not launch GNOME Tour: {exc}", file=sys.stderr)
+            self.message.set_text("Could not open GNOME Tour. Setup is still complete.")
+            return
+        self.window.close()
 
     def on_close(self, _window):
         self.dismissed = True
