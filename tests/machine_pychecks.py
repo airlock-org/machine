@@ -9836,6 +9836,10 @@ def check_config_topology_eval(repo_root: Path, log_dir: Path) -> None:
                     sysFirewall.systemd.services.qubes-updates-proxy.serviceConfig.ExecStart;
                   sys_firewall_network_uplink_exec =
                     sysFirewall.systemd.services."qubes-network-uplink@".serviceConfig.ExecStart;
+                  sys_firewall_network_uplink_packages = map (p: p.pname or p.name)
+                    sysFirewall.systemd.services."qubes-network-uplink@".path;
+                  sys_firewall_udev_rules = sysFirewall.services.udev.extraRules;
+                  sys_firewall_network_reconcile = sysFirewall.systemd.services.qubes-network-uplink.script;
                   sys_firewall_network_uplink_stop =
                     sysFirewall.systemd.services."qubes-network-uplink@".serviceConfig.ExecStop;
                   sys_firewall_qrexec_after =
@@ -10034,6 +10038,9 @@ def check_config_topology_eval(repo_root: Path, log_dir: Path) -> None:
     assert "tinyproxy -d -c" in proxy_eval["sys_firewall_updates_proxy_exec"]
     assert "/bin/setup-ip add %i" in proxy_eval["sys_firewall_network_uplink_exec"]
     assert "/bin/setup-ip remove %i" in proxy_eval["sys_firewall_network_uplink_stop"]
+    assert "nftables" in proxy_eval["sys_firewall_network_uplink_packages"]
+    assert 'KERNEL!="vif*"' in proxy_eval["sys_firewall_udev_rules"]
+    assert 'vif*) continue' in proxy_eval["sys_firewall_network_reconcile"]
     assert "xendriverdomain.service" in proxy_eval["sys_firewall_qrexec_after"]
     assert "airlock-qubes-rw-init.service" in proxy_eval["sys_firewall_qrexec_after"]
     assert (

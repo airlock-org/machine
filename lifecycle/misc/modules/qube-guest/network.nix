@@ -265,9 +265,11 @@ in
     };
 
     # Match the Xen frontend driver, including NixOS names such as enX0.
-    # A VM without a NetVM has no such device and starts no uplink service.
+    # Xen backend interfaces (vif<domid>.<index>) belong to vif-route-qubes,
+    # even though their driver can also match vif. Never configure them here.
+    # A VM without a NetVM has no frontend and starts no uplink service.
     services.udev.extraRules = ''
-      SUBSYSTEM=="net", ACTION=="add", DRIVERS=="vif", TAG+="systemd", ENV{SYSTEMD_WANTS}+="qubes-network-uplink@$name.service"
+      SUBSYSTEM=="net", ACTION=="add", DRIVERS=="vif", KERNEL!="vif*", TAG+="systemd", ENV{SYSTEMD_WANTS}+="qubes-network-uplink@$name.service"
     '';
 
     systemd.services."qubes-network-uplink@" = {
@@ -277,7 +279,7 @@ in
       bindsTo = [ "sys-subsystem-net-devices-%i.device" ];
       before = [ "network.target" ];
       wants = [ "network.target" ];
-      path = qubesGuestPath ++ [ pkgs.iproute2 pkgs.networkmanager ];
+      path = qubesGuestPath ++ [ pkgs.iproute2 pkgs.networkmanager pkgs.nftables ];
       serviceConfig = {
         Type = "oneshot";
         RemainAfterExit = true;
@@ -297,6 +299,7 @@ in
       # rule was available. Reconcile existing frontends as well as hotplug.
       script = ''
         for interface in /sys/class/net/*; do
+          case "$(basename "$interface")" in vif*) continue ;; esac
           [ -e "$interface/device/driver" ] || continue
           [ "$(basename "$(readlink -f "$interface/device/driver")")" = vif ] || continue
           systemctl start "qubes-network-uplink@$(basename "$interface").service"
