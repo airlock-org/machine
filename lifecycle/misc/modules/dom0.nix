@@ -201,6 +201,7 @@ let
 in
 {
   imports = [
+    ./setup-state.nix
     ./dev-dom0-terminal.nix
     ./pool-admission.nix
     ./qubes-input-proxy.nix

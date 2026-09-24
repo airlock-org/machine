@@ -35,6 +35,7 @@ let
   }]";
 in
 {
+  imports = [ ./setup.nix ];
   config = lib.mkIf (cfg.session == "gnome") {
     # GNOME's greeter and screen locking require GDM. Its NixOS module
     # disables the common sys-gui LightDM default.
