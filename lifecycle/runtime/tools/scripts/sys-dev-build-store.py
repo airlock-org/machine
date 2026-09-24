@@ -24,6 +24,10 @@ def read_identity(metadata):
         != identity.get("registration_sha256")
     ):
         raise RuntimeError("invalid pinned builder metadata")
+    if "flake_inputs_sha256" in identity:
+        flake_inputs = (metadata / "flake-inputs.json").read_bytes()
+        if hashlib.sha256(flake_inputs).hexdigest() != identity["flake_inputs_sha256"]:
+            raise RuntimeError("invalid pinned builder flake inputs")
     return identity, registration
 
 

@@ -33,9 +33,14 @@ def main(argv=None):
     purge = sub.add_parser("trash-purge")
     purge.add_argument("identity")
     purge.add_argument("--confirm", required=True)
+    purge.add_argument("--before-expiry", action="store_true")
     for action in ("release-prune-plan", "release-prune", "release-retain"):
         command_parser = sub.add_parser(action)
         command_parser.add_argument("release", type=Path)
+        if action in ("release-prune-plan", "release-prune"):
+            command_parser.add_argument(
+                "--allow-unexpired-trash", action="append", default=[]
+            )
         if action == "release-prune":
             command_parser.add_argument("--confirm", required=True)
         if action == "release-retain":
@@ -84,13 +89,20 @@ def main(argv=None):
         elif args.action == "trash-list":
             result = {"schema": TRASH_SCHEMA, "records": coordinator.retirement.trash_records()}
         elif args.action == "trash-purge":
-            result = coordinator.retirement.purge_trash(args.identity, args.confirm)
+            result = coordinator.retirement.purge_trash(
+                args.identity, args.confirm, before_expiry=args.before_expiry
+            )
         elif args.action == "release-prune-plan":
-            result = coordinator.releases.prune_plan(args.release)
+            result = coordinator.releases.prune_plan(
+                args.release, early_purge_trash=args.allow_unexpired_trash
+            )
         elif args.action == "release-list":
             result = coordinator.releases.list_releases()
         elif args.action == "release-prune":
-            result = coordinator.releases.prune_release(args.release, args.confirm)
+            result = coordinator.releases.prune_release(
+                args.release, args.confirm,
+                early_purge_trash=args.allow_unexpired_trash,
+            )
         elif args.action == "release-retain":
             result = coordinator.releases.retain_release(args.release, args.retain == "true")
         else:

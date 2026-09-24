@@ -337,7 +337,7 @@ def test_apply_uses_release_coordinator_in_a_detached_worker(tmp_path, monkeypat
         ),
         (
             "trash-purge",
-            ["--identity", "123-lab-retire", "--confirm", "123-lab-retire"],
+            ["--identity", "123-disposable", "--confirm", "123-disposable"],
         ),
     ],
 )
@@ -355,6 +355,50 @@ def test_maintenance_is_detached_and_does_not_build(action, arguments, monkeypat
     )
     assert DEPLOY.main([action, *arguments]) == 0
     assert started == [["/controller", action, arguments[1], "--confirm", arguments[3]]]
+
+
+@pytest.mark.parametrize(
+    "action,arguments,expected",
+    [
+        (
+            "release-prune",
+            [
+                "--release", "/nix/store/old-release",
+                "--confirm", "/nix/store/old-release",
+                "--allow-unexpired-trash", "123-disposable",
+            ],
+            [
+                "/controller", "release-prune", "/nix/store/old-release",
+                "--confirm", "/nix/store/old-release",
+                "--allow-unexpired-trash", "123-disposable",
+            ],
+        ),
+        (
+            "trash-purge",
+            [
+                "--identity", "123-disposable",
+                "--confirm", "123-disposable",
+                "--before-expiry",
+            ],
+            [
+                "/controller", "trash-purge", "123-disposable",
+                "--confirm", "123-disposable", "--before-expiry",
+            ],
+        ),
+    ],
+)
+def test_maintenance_forwards_early_purge_override(
+    action, arguments, expected, monkeypatch
+):
+    started = []
+    monkeypatch.setattr(DEPLOY, "Dom0", PlanSession)
+    monkeypatch.setattr(DEPLOY, "deployed_engine", lambda _session: "/controller")
+    monkeypatch.setattr(
+        DEPLOY, "run_detached",
+        lambda _session, command: started.append(command) or "unit",
+    )
+    assert DEPLOY.main([action, *arguments]) == 0
+    assert started == [expected]
 
 
 def test_maintenance_refuses_wrong_confirmation_before_connecting(monkeypatch):

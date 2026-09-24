@@ -16,13 +16,22 @@ let
     mouse = "qubes.InputMouse";
     tablet = "qubes.InputTablet";
   };
-  unitName = name: "airlock-gui-input-${name}";
+  discoveryPython = pkgs.python3.withPackages (ps: [ ps.pyudev ]);
+  discovery = ../../runtime/tools/scripts/input-discovery.py;
+  # Combine upstream filters for trusted devices, including composite devices.
+  # Keep the existing Qubes handlers available to older senders.
+  deviceReceiver = pkgs.writeShellScript "airlock-input-device" ''
+    [ "''${QREXEC_REMOTE_DOMAIN:-}" = dom0 ] || exit 1
+    [ -z "''${QREXEC_SERVICE_ARGUMENT:-}" ] || exit 1
+    exec ${proxy}/bin/input-proxy-receiver --keyboard --mouse --tablet
+  '';
   senderPolicyPackage = pkgs.runCommand "airlock-gui-input-policy" { } ''
     install -d -m 0755 "$out/etc/qubes/policy.d"
     cat > "$out/etc/qubes/policy.d/40-airlock-gui-input.policy" <<'EOF'
     ${lib.concatMapStringsSep "\n" (service: "${service} * @anyvm ${cfg.sender.target} deny") (
       builtins.attrValues services
     )}
+    airlock.InputDevice * @anyvm ${cfg.sender.target} deny
     airlock.InputReceiverReady * @anyvm ${cfg.sender.target} deny
     EOF
   '';
@@ -41,7 +50,7 @@ let
       echo "/dev/uinput is not ready" >&2
       exit 1
     }
-    for handler in ${lib.concatMapStringsSep " " (service: "/etc/qubes-rpc/${service}") (
+    for handler in /etc/qubes-rpc/airlock.InputDevice ${lib.concatMapStringsSep " " (service: "/etc/qubes-rpc/${service}") (
       builtins.attrValues services
     )}; do
       [ -x "$handler" ] || {
@@ -52,13 +61,6 @@ let
   '';
   connectInput = pkgs.writeShellScript "airlock-connect-gui-input" ''
     set -Eeuo pipefail
-
-    ${lib.concatMapStringsSep "\n" (device: ''
-      [ -e ${lib.escapeShellArg device.path} ] || {
-        echo "physical input device is unavailable: ${device.path}" >&2
-        exit 1
-      }
-    '') (builtins.attrValues cfg.sender.devices)}
 
     ${adminClient}/bin/qvm-check --running ${lib.escapeShellArg cfg.sender.target}
     xid_before="$(${adminClient}/bin/qvm-ls --raw-data --fields XID ${lib.escapeShellArg cfg.sender.target})"
@@ -79,48 +81,19 @@ let
       exit 1
     }
 
-    started=false
-    cleanup() {
-      if [ "$started" = true ]; then
-        ${pkgs.systemd}/bin/systemctl stop airlock-gui-input.target
-      fi
-    }
-    trap cleanup ERR
     ${pkgs.systemd}/bin/systemctl restart airlock-gui-input.target
-    started=true
-    ${lib.concatMapStringsSep "\n" (name: ''
-      ${pkgs.systemd}/bin/systemctl is-active --quiet ${unitName name}.service
-    '') (builtins.attrNames cfg.sender.devices)}
-    trap - ERR
+    ${pkgs.systemd}/bin/systemctl is-active --quiet airlock-gui-input-discovery.service
   '';
 in
 {
   options.airlock.inputProxy = {
     receiver.enable = lib.mkEnableOption "dom0 input reception in the physical GUI domain";
     sender = {
-      enable = lib.mkEnableOption "manual dom0 input forwarding to a physical GUI domain";
+      enable = lib.mkEnableOption "automatic dom0 input forwarding to a physical GUI domain";
       target = lib.mkOption {
         type = lib.types.strMatching "[a-zA-Z][a-zA-Z0-9_-]*";
         default = "sys-gui";
         description = "Already-running GUI domain that receives physical input.";
-      };
-      devices = lib.mkOption {
-        default = { };
-        description = "Explicit physical input selection, supplied by the machine configuration.";
-        type = lib.types.attrsOf (
-          lib.types.submodule {
-            options = {
-              path = lib.mkOption {
-                type = lib.types.strMatching "/dev/input/by-(id|path)/[a-zA-Z0-9_.:+-]+";
-                description = "Stable evdev symlink; never a boot-dependent event number.";
-              };
-              type = lib.mkOption {
-                type = lib.types.enum (builtins.attrNames services);
-                description = "Upstream receiver filter; touchpads use tablet (absolute events).";
-              };
-            };
-          }
-        );
       };
     };
   };
@@ -142,6 +115,11 @@ in
         }) services
         ++ [
           {
+            "qubes-rpc/airlock.InputDevice" = {
+              source = deviceReceiver;
+              mode = "0555";
+            };
+            "qubes/rpc-config/airlock.InputDevice".text = "force-user='root'\n";
             "qubes-rpc/airlock.InputReceiverReady" = {
               source = receiverReady;
               mode = "0555";
@@ -164,22 +142,6 @@ in
           assertion = cfg.sender.target != "dom0" && !cfg.receiver.enable;
           message = "Physical input forwarding must cross from dom0 to a separate GUI domain.";
         }
-        {
-          assertion =
-            cfg.sender.devices != { }
-            && lib.all (name: builtins.match "[a-zA-Z0-9_-]+" name != null) (
-              builtins.attrNames cfg.sender.devices
-            );
-          message = "Input forwarding requires named devices with simple systemd-safe names.";
-        }
-        {
-          assertion =
-            let
-              paths = map (device: device.path) (builtins.attrValues cfg.sender.devices);
-            in
-            builtins.length paths == builtins.length (lib.unique paths);
-          message = "An input device may only be forwarded once.";
-        }
       ];
       environment.systemPackages = [ proxy ];
       # Dom0's upstream qrexec-client administrative path does not consult
@@ -194,8 +156,8 @@ in
       # GUI domain explicitly confirms that all receiver prerequisites exist.
       # It never starts or retries the VM itself.
       systemd.targets.airlock-gui-input = {
-        description = "Forward selected physical input devices to the GUI domain";
-        wants = map (name: "${unitName name}.service") (builtins.attrNames cfg.sender.devices);
+        description = "Forward discovered physical input devices to the GUI domain";
+        wants = [ "airlock-gui-input-discovery.service" ];
       };
       systemd.services = {
         airlock-gui-input-connect = {
@@ -228,28 +190,29 @@ in
             RestartSec = 5;
           };
         };
-      }
-      // lib.mapAttrs' (
-        name: device:
-        lib.nameValuePair (unitName name) {
-          description = "Forward ${name} to ${cfg.sender.target} using Qubes input proxy";
+        airlock-gui-input-discovery = {
+          description = "Discover and forward trusted local input devices";
           partOf = [ "airlock-gui-input.target" ];
           after = [ "qubesd.service" ];
-          unitConfig.ConditionPathExists = device.path;
           serviceConfig = {
             Type = "exec";
             ExecStart =
-              "${qrexec}/bin/qrexec-client -d ${cfg.sender.target}"
-              + " -l '${proxy}/bin/input-proxy-sender ${device.path}'"
-              + " 'DEFAULT:QUBESRPC ${services.${device.type}} dom0'";
-            Restart = "no";
+              "${discoveryPython}/bin/python ${discovery}"
+              + " --target ${lib.escapeShellArg cfg.sender.target}"
+              + " --qrexec ${qrexec}/bin/qrexec-client"
+              + " --sender ${proxy}/bin/input-proxy-sender"
+              + " --inventory /var/lib/airlock/input/trusted-devices.json";
+            StateDirectory = "airlock/input";
+            StateDirectoryMode = "0700";
+            Restart = "on-failure";
+            RestartSec = 2;
             KillMode = "control-group";
             TimeoutStopSec = 5;
             UMask = "0077";
             PrivateTmp = true;
           };
-        }
-      ) cfg.sender.devices;
+        };
+      };
     })
   ];
 }

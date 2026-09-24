@@ -4,6 +4,7 @@ import copy
 import importlib.util
 import json
 import os
+import re
 from pathlib import Path
 import subprocess
 from types import SimpleNamespace as NS
@@ -280,7 +281,9 @@ def test_nix_selection_drives_reservation_assignment_and_start():
             (candidate: (candidate.name or "") == "airlock-gui-input-policy")
             lab.virtualisation.qubes.packages);
         in builtins.readFile "${{package}}/etc/qubes/policy.d/40-airlock-gui-input.policy";
-        senderRestarts = map (name: lab.systemd.services.${{"airlock-gui-input-" + name}}.serviceConfig.Restart) [ "keyboard" "pointingstick" "touchpad" ];
+        discovery = lab.systemd.services.airlock-gui-input-discovery.serviceConfig;
+        deviceReceiver = builtins.readFile guestBase.config.environment.etc."qubes-rpc/airlock.InputDevice".source;
+        deviceReceiverConfig = guestBase.config.environment.etc."qubes/rpc-config/airlock.InputDevice".text;
         noBypass = !lab.systemd.services."qubes-vm@sys-gui".enable;
         normalGuard = builtins.fromJSON normal.environment.etc."airlock/gui-gpu.json".text;
         framebuffer = {{
@@ -302,7 +305,6 @@ def test_nix_selection_drives_reservation_assignment_and_start():
         recoverySender = normal.specialisation.usb-text-recovery.configuration.airlock.inputProxy.sender.enable;
         inputTarget = lab.systemd.targets.airlock-gui-input.wantedBy;
         inputServices = lab.systemd.targets.airlock-gui-input.wants;
-        touchpadPath = lab.airlock.inputProxy.sender.devices.touchpad.path;
         udevRules = lab.services.udev.extraRules;
       }}
     """
@@ -325,7 +327,7 @@ def test_nix_selection_drives_reservation_assignment_and_start():
     for key in ("lab", "alternate"):
         cfg = report[key]
         assert cfg["failed"] == []
-        assert f'xen-pciback.hide=({cfg["device"]["bdf"]})' in cfg["params"]
+        assert f"xen-pciback.hide=({cfg['device']['bdf']})" in cfg["params"]
         assert cfg["pci"] == [
             dict(
                 backend="dom0",
@@ -394,9 +396,40 @@ def test_nix_selection_drives_reservation_assignment_and_start():
     assert connect_script.count("qvm-check --running sys-gui") == 2
     assert 'xid_after" = "$xid_before' in connect_script
     assert "systemctl restart airlock-gui-input.target" in connect_script
-    for name in ("keyboard", "pointingstick", "touchpad"):
-        assert f"is-active --quiet airlock-gui-input-{name}.service" in connect_script
-    assert report["senderRestarts"] == ["no", "no", "no"]
+    assert "is-active --quiet airlock-gui-input-discovery.service" in connect_script
+    assert "/dev/input/" not in connect_script
+    assert report["inputServices"] == ["airlock-gui-input-discovery.service"]
+    assert "input-discovery.py --target sys-gui" in report["discovery"]["ExecStart"]
+    assert report["discovery"]["StateDirectory"] == "airlock/input"
+    assert report["discovery"]["KillMode"] == "control-group"
+    assert "--keyboard --mouse --tablet" in report["deviceReceiver"]
+    assert 'QREXEC_REMOTE_DOMAIN:-}" = dom0' in report["deviceReceiver"]
+    assert report["deviceReceiverConfig"] == "force-user='root'\n"
+    # Execute the generated guard without opening uinput or forwarding real events.
+    guarded_handler = re.sub(
+        r"exec /nix/store/[^/]+/bin/input-proxy-receiver --keyboard --mouse --tablet",
+        "printf accepted",
+        report["deviceReceiver"],
+    )
+    for source, argument, allowed in (
+        ("dom0", "", True),
+        ("sys-dev", "", False),
+        ("", "", False),
+        ("dom0", "unexpected", False),
+    ):
+        result = subprocess.run(
+            ["bash", "-c", guarded_handler],
+            env={
+                **os.environ,
+                "QREXEC_REMOTE_DOMAIN": source,
+                "QREXEC_SERVICE_ARGUMENT": argument,
+            },
+            capture_output=True,
+            text=True,
+        )
+        assert (result.returncode == 0) is allowed
+        assert (result.stdout == "accepted") is allowed
+    assert "airlock.InputDevice * @anyvm sys-gui deny" in report["inputPolicy"]
     assert (
         "airlock.InputReceiverReady is restricted to dom0"
         in report["inputReceiverReady"]
@@ -410,14 +443,8 @@ def test_nix_selection_drives_reservation_assignment_and_start():
         assert f"/etc/qubes-rpc/{service_name}" in report["inputReceiverReady"]
     assert report["inputReceiverReadyConfig"] == "force-user='root'\n"
     assert "airlock.InputReceiverReady * @anyvm sys-gui deny" in report["inputPolicy"]
-    assert report["touchpadPath"] == (
-        "/dev/input/by-path/platform-AMDI0010:01-event-touchpad"
-    )
-    assert 'ATTRS{name}=="SYNA8018:00 06CB:CE67 Touchpad"' in report["udevRules"]
-    assert (
-        'SYMLINK+="input/by-path/platform-AMDI0010:01-event-touchpad"'
-        in report["udevRules"]
-    )
+    assert "SYNA8018" not in report["udevRules"]
+    assert "platform-AMDI0010:01-event-touchpad" not in report["udevRules"]
     assert report["normalSender"] is False
     assert report["recoverySender"] is False
     guest = report["guest"]

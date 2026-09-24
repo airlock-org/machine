@@ -43,7 +43,7 @@ def registration_paths(text):
     return paths
 
 
-def prepare_builder(root, admission, registration):
+def prepare_builder(root, admission, registration, offline_inputs_source=None):
     """Build metadata only; package bytes are shared with guest pool views."""
     root = Path(root)
     manifest_path = Path(admission["manifest"])
@@ -51,8 +51,20 @@ def prepare_builder(root, admission, registration):
     if manifest["domain"] != "sys-dev-builder":
         core.fail("builder preparation is restricted to sys-dev-builder")
     registration = Path(registration).read_bytes()
-    if registration_paths(registration.decode()) != set(manifest["store"]["paths"]):
+    paths = registration_paths(registration.decode())
+    if paths != set(manifest["store"]["paths"]):
         core.fail("builder registration does not match frozen view")
+    offline_bytes = None
+    if offline_inputs_source is not None and Path(offline_inputs_source).exists():
+        offline_bytes = Path(offline_inputs_source).read_bytes()
+        offline = core.read_json(offline_inputs_source)
+        if (
+            offline.get("schema") != "airlock.sys-dev-offline-inputs.v1"
+            or not isinstance(offline.get("inputs"), dict)
+            or not offline["inputs"]
+            or not set(offline["inputs"].values()) <= paths
+        ):
+            core.fail("offline flake inputs do not match frozen builder view")
     identity = {
         "schema": "airlock.sys-dev-builder.v1",
         "domain": manifest["domain"],
@@ -60,6 +72,8 @@ def prepare_builder(root, admission, registration):
         "closure_hash": manifest["store"]["closure_hash"],
         "registration_sha256": hashlib.sha256(registration).hexdigest(),
     }
+    if offline_bytes is not None:
+        identity["flake_inputs_sha256"] = hashlib.sha256(offline_bytes).hexdigest()
     # Copy only the small index, never the external package payload. Keep the
     # canonical guest index untouched: this image belongs to the frozen builder.
     metadata_image = manifest_path.parent / "builder-store.erofs"
@@ -71,6 +85,8 @@ def prepare_builder(root, admission, registration):
         metadata = source / ".airlock-builder"
         metadata.mkdir()
         (metadata / "registration").write_bytes(registration)
+        if offline_bytes is not None:
+            (metadata / "flake-inputs.json").write_bytes(offline_bytes)
         core.atomic_json(metadata / "identity.json", identity)
         (source / ".links").mkdir()
         views.run_checked(

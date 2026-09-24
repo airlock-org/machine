@@ -5,6 +5,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 
 
 def fail(message):
@@ -53,12 +54,46 @@ def qubesd_is_active():
 
 
 def run_systemctl(action):
-    subprocess.run(
-        ["systemctl", action, "qubesd.service"],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        check=True,
-        timeout=60,
+    started = time.monotonic()
+
+    def report(event, **fields):
+        print(
+            json.dumps(
+                {
+                    "event": event,
+                    "time": time.time(),
+                    "service": "qubesd.service",
+                    "action": action,
+                    **fields,
+                }
+            ),
+            file=sys.stderr,
+            flush=True,
+        )
+
+    report("service-command-start")
+    try:
+        subprocess.run(
+            ["systemctl", action, "qubesd.service"],
+            stdout=subprocess.DEVNULL,
+            check=True,
+            timeout=60,
+        )
+    except Exception as exc:
+        report(
+            "service-command-error", elapsed=time.monotonic() - started, error=str(exc)
+        )
+        raise
+    report(
+        "service-command-finish",
+        elapsed=time.monotonic() - started,
+        sockets={
+            path: os.path.exists(path)
+            for path in (
+                "/var/run/qubes/qubesd.sock",
+                "/var/run/qubes/qubesd.internal.sock",
+            )
+        },
     )
 
 

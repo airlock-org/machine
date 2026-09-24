@@ -218,7 +218,9 @@ class RetirementManager:
                 self.machine.command("qvm-tags", name, "add", "airlock-retired")
         return [records[name] for name in sorted(records)]
 
-    def purge_trash(self, identity, confirmation, now=None) -> TrashRecord:
+    def purge_trash(
+        self, identity, confirmation, now=None, before_expiry=False
+    ) -> TrashRecord:
         if confirmation != identity:
             raise DeploymentError("trash purge confirmation does not match record id")
         with self.machine.locked():
@@ -240,7 +242,8 @@ class RetirementManager:
             if record.get("status") not in ("trashed", "purging"):
                 raise DeploymentError("trash record is not eligible for purge")
             now = time.time() if now is None else now
-            if now < record["purge_after"]:
+            early = now < record["purge_after"]
+            if early and not (before_expiry or record.get("purged_before_expiry")):
                 raise DeploymentError("trash retention window has not expired")
             name = record["domain"]
             selected = self.machine.pointer() or {}
@@ -303,6 +306,8 @@ class RetirementManager:
                 ):
                     raise DeploymentError(f"{name}: pool identity differs from trash")
                 record["status"] = "purging"
+                if early:
+                    record["purged_before_expiry"] = True
                 atomic_json(path, record)
                 self.machine.command("qvm-remove", "--force", name)
             elif record["status"] != "purging":

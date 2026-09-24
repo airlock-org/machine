@@ -1,6 +1,7 @@
 { config, lib, pkgs, ... }@args:
 let
   airlockMachineSeedArchive = args.airlockMachineSeedArchive or null;
+  offlineInputs = args.airlockMachineOfflineInputs or null;
 in
 {
   imports = [ ./sys-dev-machine-build.nix ./sys-dev-build-store.nix ];
@@ -13,6 +14,12 @@ in
     extraUpFlags = [ "--ssh" ];
   };
   environment.systemPackages = [ pkgs.jq ];
+  # Flake path inputs must also be visible at their logical /nix/store paths.
+  # Nix's path fetcher reads that filesystem path even with an overlay store;
+  # resolving from the builder mount would copy the source into its upper layer.
+  system.extraDependencies = lib.optionals (offlineInputs != null) (
+    map builtins.storePath (lib.unique (lib.attrValues offlineInputs.inputs))
+  );
   environment.etc."qubes-rpc/airlock.DevTailscaleUp" = {
     source = pkgs.writeShellScript "airlock-dev-tailscale-up" ''
       set -eu

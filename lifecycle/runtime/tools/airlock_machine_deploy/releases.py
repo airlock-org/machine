@@ -98,7 +98,9 @@ class ReleaseManager:
                 releases.setdefault(str(root.resolve()), []).append(root.name)
         return releases
 
-    def _prune_plan(self, release, now=None, manifest=None) -> PrunePlan:
+    def _prune_plan(
+        self, release, now=None, manifest=None, early_purge_trash=()
+    ) -> PrunePlan:
         release = Path(release).resolve()
         now = time.time() if now is None else now
         manifest = manifest or load_release(release)[0]
@@ -108,7 +110,20 @@ class ReleaseManager:
             and not self.prune_record_path(release).exists()
         ):
             raise DeploymentError("release is not a recorded machine deployment")
+        overrides = set(early_purge_trash)
+        matching_trash = {
+            record["id"]: record
+            for record in self.machine.retirement.active_trash().values()
+            if record["source_release"] == str(release)
+        }
+        unknown = overrides - matching_trash.keys()
+        if unknown:
+            raise DeploymentError(
+                "early purge override does not match active trash from release: "
+                + ", ".join(sorted(unknown))
+            )
         blockers = []
+        waived_blockers = []
         selected = self.machine.pointer() or {}
         for key in ("release", "previous"):
             if selected.get(key) == str(release):
@@ -142,12 +157,13 @@ class ReleaseManager:
             ) and not record.get("recovered_by"):
                 if str(release) in (record.get("release"), record.get("previous")):
                     blockers.append("unfinished transaction " + record["id"])
-        for record in self.machine.retirement.active_trash().values():
-            if record["source_release"] == str(release):
-                if now < record["purge_after"]:
-                    blockers.append("unexpired trash " + record["id"])
-                if record["status"] == "purging":
-                    blockers.append("unfinished purge " + record["id"])
+        for record in matching_trash.values():
+            if now < record["purge_after"]:
+                blocker = "unexpired trash " + record["id"]
+                target = waived_blockers if record["id"] in overrides else blockers
+                target.append(blocker)
+            if record["status"] == "purging":
+                blockers.append("unfinished purge " + record["id"])
         # A host can be shared by several releases (e.g. guest-only candidates).
         # Its boot generations remain until the last such release is pruned.
         shared_host = any(
@@ -177,19 +193,23 @@ class ReleaseManager:
             },
             "profile_generations": [] if shared_host else sorted(generations),
             "blockers": sorted(set(blockers)),
+            "waived_blockers": sorted(set(waived_blockers)),
         }
 
-    def prune_plan(self, release) -> PrunePlan | PruneRecord:
+    def prune_plan(self, release, early_purge_trash=()) -> PrunePlan | PruneRecord:
         with self.machine.locked():
             path = self.prune_record_path(release)
             if path.exists():
                 record = self.read_prune_record(path)
                 if record["status"] != "pruned":
-                    record["blockers"] = self._prune_plan(
-                        release, manifest=record["manifest"]
-                    )["blockers"]
+                    preview = self._prune_plan(
+                        release, manifest=record["manifest"],
+                        early_purge_trash=early_purge_trash,
+                    )
+                    record["blockers"] = preview["blockers"]
+                    record["waived_blockers"] = preview["waived_blockers"]
                 return record
-            return self._prune_plan(release)
+            return self._prune_plan(release, early_purge_trash=early_purge_trash)
 
     def list_releases(self):
         with self.machine.locked():
@@ -222,7 +242,7 @@ class ReleaseManager:
             atomic_json(path, sorted(kept))
             return {"release": release, "retain": retain}
 
-    def prune_release(self, release, confirmation) -> PruneRecord:
+    def prune_release(self, release, confirmation, early_purge_trash=()) -> PruneRecord:
         release = str(Path(release).resolve())
         if confirmation != release:
             raise DeploymentError(
@@ -234,7 +254,8 @@ class ReleaseManager:
             if record and record["status"] == "pruned":
                 return record
             preview = self._prune_plan(
-                release, manifest=record["manifest"] if record else None
+                release, manifest=record["manifest"] if record else None,
+                early_purge_trash=early_purge_trash,
             )
             if preview["blockers"]:
                 raise DeploymentError(

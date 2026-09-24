@@ -989,6 +989,60 @@ def test_purge_requires_expiry_and_no_rollback_reference(machine, tmp_path, topo
     )
 
 
+def test_exact_early_purge_override_preserves_other_guards(machine, tmp_path, topology):
+    retired = retirement_release(tmp_path, topology)
+    machine.apply(retired)
+    record = machine.retirement.active_trash()["usr-home"]
+    identity = record["id"]
+    source = str(machine.initial)
+
+    with pytest.raises(deploy.DeploymentError, match="selected previous"):
+        machine.releases.prune_release(
+            source, source, early_purge_trash=[identity]
+        )
+    with pytest.raises(deploy.DeploymentError, match="previous deployment"):
+        machine.retirement.purge_trash(
+            identity, identity, before_expiry=True
+        )
+
+    follow = write_release(
+        tmp_path / "after-retirement", deploy.load_release(retired)[1], "follow"
+    )
+    machine.calls.clear()
+    machine.apply(follow)
+    with pytest.raises(deploy.DeploymentError, match="does not match active trash"):
+        machine.releases.prune_plan(
+            source, early_purge_trash=["999-other-vm"]
+        )
+    preview = machine.releases.prune_plan(source, early_purge_trash=[identity])
+    assert preview["blockers"] == []
+    assert preview["waived_blockers"] == ["unexpired trash " + identity]
+
+    machine.releases.retain_release(source, True)
+    with pytest.raises(deploy.DeploymentError, match="explicitly retained"):
+        machine.releases.prune_release(
+            source, source, early_purge_trash=[identity]
+        )
+    machine.releases.retain_release(source, False)
+    with pytest.raises(deploy.DeploymentError, match="retained deployment"):
+        machine.retirement.purge_trash(
+            identity, identity, before_expiry=True
+        )
+    pruned = machine.releases.prune_release(
+        source, source, early_purge_trash=[identity]
+    )
+    assert pruned["status"] == "pruned"
+    assert pruned["waived_blockers"] == ["unexpired trash " + identity]
+    with pytest.raises(deploy.DeploymentError, match="retention window"):
+        machine.retirement.purge_trash(identity, identity)
+    purged = machine.retirement.purge_trash(
+        identity, identity, before_expiry=True
+    )
+    assert purged["status"] == "purged"
+    assert purged["purged_before_expiry"] is True
+    assert machine.retirement.purge_trash(identity, identity) == purged
+
+
 def test_interrupted_purge_is_retryable(machine, tmp_path, topology):
     release = retirement_release(tmp_path, topology)
     machine.apply(release)
