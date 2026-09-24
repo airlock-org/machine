@@ -4370,7 +4370,7 @@ def check_setup_config_sys_net_order(repo_root: Path, log_dir: Path) -> None:
     assert "+ qvm-prefs sys-gui guivm dom0" in boot_command_lines
     assert "+ qvm-prefs sys-gui netvm none" in boot_command_lines
     completed_screen = status_device.read_text(encoding="utf-8")
-    assert "Airlock | Bootstrap" in completed_screen
+    assert "Airlock | Startup" in completed_screen
     assert "Topology configured; verifying required VMs next" in completed_screen
     assert "3 startup VMs prepared." in completed_screen
     assert completed_screen.count("[done]") == 4
