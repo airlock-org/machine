@@ -8156,6 +8156,27 @@ def check_setup_config_nix_native(repo_root: Path, log_dir: Path) -> None:
     )
 
 
+    # A prepared USB already has this root installed. Its import source is
+    # deliberately absent from dom0's store, so reconciliation must skip it.
+    root_image.unlink()
+    mutation_log.write_text("")
+    features_command = bin_dir / "qvm-features"
+    features_command.write_text(
+        features_command.read_text().replace(
+            'if [ "$#" = 2 ]; then',
+            'if [ "$#" = 2 ] && [ "$2" = airlock-root-source ]; then\n'
+            f"  printf '%s\\n' '{root_source}'\n  exit 0\nfi\n"
+            'if [ "$#" = 2 ]; then',
+        )
+    )
+    prepared_log = work_dir / "prepared-logs"
+    prepared_log.mkdir()
+    run_setup("apply", prepared_log, work_dir / "state-prepared")
+    prepared_report = json.loads((prepared_log / "setup-config.json").read_text())
+    assert prepared_report["root_images_changed"] == 0
+    assert "qvm-volume import" not in mutation_log.read_text()
+
+
 def check_config_status(repo_root: Path, log_dir: Path) -> None:
     work_dir = log_dir
     bin_dir = work_dir / "bin"
