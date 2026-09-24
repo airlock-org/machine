@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """First-run AirlockOS welcome window in sys-gui."""
 
+import os
 import subprocess
 import sys
 
@@ -10,8 +11,16 @@ gi.require_version("Adw", "1")
 gi.require_version("Gtk", "4.0")
 from gi.repository import Adw, Gio, Gtk  # noqa: E402
 
+PREVIEW = os.environ.get("AIRLOCK_SETUP_PREVIEW") == "1"
+preview_complete = False
+
 
 def rpc(operation):
+    global preview_complete
+    if PREVIEW:
+        if operation == "airlock.SetupComplete":
+            preview_complete = True
+        return "complete" if preview_complete else "incomplete"
     result = subprocess.run(
         ["qvm-run", "--pass-io", "--no-gui", "--service", "dom0", operation],
         capture_output=True,
@@ -20,7 +29,10 @@ def rpc(operation):
         check=False,
     )
     if result.returncode != 0:
-        raise RuntimeError(result.stderr.strip() or "Could not contact setup state service")
+        if result.stderr:
+            print(result.stderr, file=sys.stderr)
+        action = "save setup completion" if operation == "airlock.SetupComplete" else "read setup status"
+        raise RuntimeError(f"Could not {action}. Please try again.")
     state = result.stdout.strip()
     if state not in ("complete", "incomplete"):
         raise RuntimeError("Unexpected setup state response")
@@ -30,7 +42,7 @@ def rpc(operation):
 class Setup(Adw.Application):
     def __init__(self):
         super().__init__(
-            application_id="org.airlockos.Setup",
+            application_id="org.airlockos.SetupPreview" if PREVIEW else "org.airlockos.Setup",
             flags=Gio.ApplicationFlags.HANDLES_COMMAND_LINE,
         )
         self.window = None
@@ -58,7 +70,7 @@ class Setup(Adw.Application):
         if not self.held:
             self.hold()  # Keep dismissal in memory until the desktop session ends.
             self.held = True
-        self.window = Adw.ApplicationWindow(application=self, title="AirlockOS Setup")
+        self.window = Adw.ApplicationWindow(application=self, title="AirlockOS Setup Preview" if PREVIEW else "AirlockOS Setup")
         self.window.set_default_size(620, 440)
         self.window.connect("close-request", self.on_close)
 
