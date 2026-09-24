@@ -43,6 +43,14 @@ def test_gui_minimal_topology_and_desktop():
         personalLaunchers = guest.airlock.sysGuiGuest.personalLaunchers.enable;
         normalPersonalLaunchers = normal.airlock.sysGuiGuest.personalLaunchers.enable;
         normalPackages = map (p: p.pname or p.name) normal.environment.systemPackages;
+        supervised = let c = flake.nixosConfigurations.machine.config.specialisation.usb-lab.configuration; in {{
+          failure = c.systemd.services.airlock-machine-autostart.unitConfig.OnFailure;
+          beforeStart = c.systemd.services.airlock-machine-autostart.serviceConfig.ExecStartPre;
+          shutdown = c.systemd.services.airlock-boot-shutdown-record.serviceConfig.ExecStart;
+          criticalFailure = c.systemd.services.airlock-start-gui-gpu.unitConfig.OnFailure;
+          retry = toString c.environment.etc."qubes-rpc/airlock.BootRetry".source;
+        }};
+        bootNotification = gnome.environment.etc."xdg/autostart/airlock-boot-notification.desktop".text;
         setupAutostart = gnome.environment.etc."xdg/autostart/airlock-setup.desktop".text;
         gnomeOverrides = gnome.services.desktopManager.gnome.extraGSettingsOverrides;
         gnomeHostPoweroffExtensionSource = builtins.readFile
@@ -82,6 +90,14 @@ def test_gui_minimal_topology_and_desktop():
     assert gui["prefs"]["autostart"] is True
     assert "airlock-setup --auto" in report["setupAutostart"]
     assert "X-GNOME-Autostart-Phase" not in report["setupAutostart"]
+    assert "airlock-boot-notification" in report["bootNotification"]
+    assert "X-GNOME-Autostart-Phase" not in report["bootNotification"]
+    supervised = report["supervised"]
+    assert supervised["failure"] == ["airlock-boot-background-failure.service"]
+    assert any("desktop-ready" in command for command in supervised["beforeStart"])
+    assert "shutdown-requested" in supervised["shutdown"]
+    assert supervised["criticalFailure"] == ["airlock-boot-failure@%n.service"]
+    assert "retry-services" in supervised["retry"]
     assert gui["devices"]["pci"] == []
     assert report["setup"]["enable"] is True
     assert report["setup"]["scope"] == "all"

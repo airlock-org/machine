@@ -167,14 +167,25 @@ def prepare(_args):
     marker = STATE_ROOT / "in-progress.json"
     previous = json.loads(marker.read_text()) if marker.exists() else None
     recovered = None
+    # Requested shutdown is distinct from loss of power. A known critical
+    # failure still requires recovery; cancellation of startup does not.
+    if (
+        previous
+        and previous.get("shutdown_requested_at")
+        and previous.get("status") != "failed"
+    ):
+        marker.unlink(missing_ok=True)
+        previous = None
     if previous and previous.get("boot_id") != identifier:
         recovered = previous["boot_id"]
         snapshot(recovered, "recovered-on-" + identifier, journal_boot=recovered)
         write_state(
             recovered,
             previous.get("stage", "unknown"),
-            "interrupted",
-            "boot ended before readiness was confirmed",
+            "failed" if previous.get("status") == "failed" else "interrupted",
+            previous.get("detail", "")
+            if previous.get("status") == "failed"
+            else "boot ended before readiness was confirmed",
             recovered_by=identifier,
         )
         atomic_json(
@@ -244,6 +255,94 @@ def complete(args):
     return 0
 
 
+def clear_marker(identifier):
+    marker = STATE_ROOT / "in-progress.json"
+    if marker.exists() and json.loads(marker.read_text()).get("boot_id") == identifier:
+        marker.unlink()
+        directory = os.open(STATE_ROOT, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+
+
+def desktop_ready(_args):
+    with state_lock():
+        identifier = boot_id()
+        write_state(
+            identifier,
+            "services",
+            "working",
+            "desktop ready; starting background services",
+            desktop_ready=True,
+        )
+        clear_marker(identifier)
+    return 0
+
+
+def degraded(_args):
+    identifier = boot_id()
+    with state_lock():
+        write_state(
+            identifier, "services", "degraded", "background services could not start"
+        )
+    snapshot(identifier, "background-services-failed")
+    return 0
+
+
+def shutdown_requested(_args):
+    with state_lock():
+        identifier = boot_id()
+        path = STATE_ROOT / identifier / "state.json"
+        previous = json.loads(path.read_text()) if path.exists() else {}
+        value = write_state(
+            identifier,
+            previous.get("stage", "shutdown"),
+            previous.get("status", "working"),
+            previous.get("detail", ""),
+            shutdown_requested_at=now(),
+        )
+        update_marker(value)
+        append_event(identifier, "shutdown", "requested", "system shutdown requested")
+    return 0
+
+
+def desktop_status(_args):
+    path = STATE_ROOT / boot_id() / "state.json"
+    state = json.loads(path.read_text()) if path.exists() else {}
+    print(
+        json.dumps(
+            {
+                "status": state.get("status", "working"),
+                "desktop_ready": state.get("desktop_ready", False),
+            }
+        )
+    )
+    return 0
+
+
+def retry_services(_args):
+    with state_lock():
+        identifier = boot_id()
+        state = json.loads((STATE_ROOT / identifier / "state.json").read_text())
+        if (
+            not state.get("desktop_ready")
+            or state["status"] != "degraded"
+            or state.get("shutdown_requested_at")
+        ):
+            return 1
+        # Fixed unit only: no caller-supplied command, VM, or unit name.
+        result = subprocess.run(
+            ["systemctl", "--no-block", "restart", "airlock-machine-autostart.service"],
+            check=False,
+            timeout=10,
+        )
+        if result.returncode:
+            return result.returncode
+        write_state(identifier, "services", "working", "retrying background services")
+    return 0
+
+
 def recovery_ack(_args):
     identifier = boot_id()
     write_state(identifier, "recovery", "complete", "safe recovery console reached")
@@ -257,6 +356,15 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="action", required=True)
     sub.add_parser("prepare")
+    actions = {
+        "desktop-ready": desktop_ready,
+        "degraded": degraded,
+        "shutdown-requested": shutdown_requested,
+        "desktop-status": desktop_status,
+        "retry-services": retry_services,
+    }
+    for action in actions:
+        sub.add_parser(action)
     snapshot_parser = sub.add_parser("snapshot")
     snapshot_parser.add_argument("label")
     for action in ("stage", "fail"):
@@ -267,6 +375,8 @@ def main(argv=None):
     done.add_argument("detail", nargs="?", default="all required guests are ready")
     sub.add_parser("recovery-ack")
     args = parser.parse_args(argv)
+    if args.action in actions:
+        return actions[args.action](args)
     if args.action == "prepare":
         return prepare(args)
     if args.action == "snapshot":

@@ -274,3 +274,58 @@ def test_wrong_guest_generation_fails_and_is_recorded(tmp_path):
     )
     assert result.returncode != 0
     assert "fail qube:sys-gui" in calls.read_text()
+
+
+@pytest.mark.parametrize("shutdown", [True, False])
+def test_background_failure_keeps_next_boot_usable(tmp_path, shutdown):
+    env, boot_id, state, logs, runtime, _ = supervisor_env(tmp_path)
+    boot_id.write_text("desktop-boot")
+    run_supervisor(env, "prepare")
+    run_supervisor(env, "desktop-ready")
+    run_supervisor(env, "degraded")
+    assert not (state / "in-progress.json").exists()
+    result = json.loads(run_supervisor(env, "desktop-status").stdout)
+    assert result == {"status": "degraded", "desktop_ready": True}
+    if shutdown:
+        run_supervisor(env, "shutdown-requested")
+    boot_id.write_text("next-boot")
+    run_supervisor(env, "prepare")
+    assert not (runtime / "recovery-required.json").exists()
+    previous = json.loads((state / "desktop-boot/state.json").read_text())
+    assert previous["status"] == "degraded"
+    assert bool(previous.get("shutdown_requested_at")) == shutdown
+    assert (logs / "desktop-boot/snapshots/background-services-failed").is_dir()
+
+
+@pytest.mark.parametrize("failed", [True, False])
+def test_requested_shutdown_is_distinct_from_interruption(tmp_path, failed):
+    env, boot_id, state, _, runtime, _ = supervisor_env(tmp_path)
+    boot_id.write_text("first-boot")
+    run_supervisor(env, "prepare")
+    if failed:
+        run_supervisor(env, "fail", "gui", "GPU handoff failed")
+    run_supervisor(env, "shutdown-requested")
+    boot_id.write_text("next-boot")
+    run_supervisor(env, "prepare")
+    assert (runtime / "recovery-required.json").exists() == failed
+    previous = json.loads((state / "first-boot/state.json").read_text())
+    assert previous.get("shutdown_requested_at")
+    assert previous["status"] != "interrupted"
+    if failed:
+        assert previous["detail"] == "GPU handoff failed"
+
+
+def test_retry_is_limited_to_degraded_desktop(tmp_path):
+    env, boot_id, state, _, _, _ = supervisor_env(tmp_path)
+    boot_id.write_text("boot")
+    run_supervisor(env, "prepare")
+    with pytest.raises(subprocess.CalledProcessError):
+        run_supervisor(env, "retry-services")
+    run_supervisor(env, "desktop-ready")
+    run_supervisor(env, "degraded")
+    run_supervisor(env, "retry-services")
+    assert json.loads((state / "boot/state.json").read_text())["status"] == "working"
+    run_supervisor(env, "degraded")
+    run_supervisor(env, "shutdown-requested")
+    with pytest.raises(subprocess.CalledProcessError):
+        run_supervisor(env, "retry-services")

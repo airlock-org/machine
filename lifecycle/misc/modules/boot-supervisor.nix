@@ -14,7 +14,7 @@ let
     echo
     echo "  Airlock | Safe boot recovery"
     echo
-    echo "  The previous boot stopped before all required VMs became ready."
+    echo "  The previous boot did not finish hardware and desktop startup checks."
     echo "  PCI-backed VMs and GPU handoff are disabled for this boot."
     echo
     echo "  Persistent evidence: /var/log/airlock/boot-attempts"
@@ -43,6 +43,19 @@ let
     echo
     exec ${pkgs.util-linux}/bin/agetty --noclear tty1 linux
   '';
+  desktopGuarded = config.airlock.guiGpu.enable && config.airlock.guiGpu.startOnBoot;
+  desktopHandler = operation: pkgs.writeShellScript "airlock-boot-${operation}-rpc" ''
+    set -eu
+    [ "''${QREXEC_REMOTE_DOMAIN:-}" = sys-gui ] || exit 1
+    [ -z "''${QREXEC_SERVICE_ARGUMENT:-}" ] || exit 1
+    exec /run/wrappers/bin/sudo -n ${supervisor}/bin/airlock-boot-supervisor ${operation}
+  '';
+  desktopPolicy = pkgs.writeTextDir "etc/qubes/policy.d/40-airlock-boot-desktop.policy" ''
+    airlock.BootStatus + sys-gui dom0 allow
+    airlock.BootStatus * @anyvm @anyvm deny
+    airlock.BootRetry + sys-gui dom0 allow
+    airlock.BootRetry * @anyvm @anyvm deny
+  '';
   gate = "${pkgs.coreutils}/bin/test ! -e /run/airlock/boot-supervisor/recovery-required.json";
   failureTarget = [ "airlock-boot-failure@%n.service" ];
 in
@@ -51,6 +64,40 @@ in
 
   config = lib.mkIf cfg.enable {
     environment.systemPackages = [ supervisor ];
+    virtualisation.qubes.packages = lib.mkIf desktopGuarded [ desktopPolicy ];
+    environment.etc."qubes-rpc/airlock.BootStatus" = lib.mkIf desktopGuarded {
+      source = desktopHandler "desktop-status";
+      mode = "0555";
+    };
+    environment.etc."qubes-rpc/airlock.BootRetry" = lib.mkIf desktopGuarded {
+      source = desktopHandler "retry-services";
+      mode = "0555";
+    };
+    security.sudo.extraRules = lib.mkIf desktopGuarded [ {
+      users = [ config.airlock.dom0.user ];
+      commands = map (operation: {
+        command = "${supervisor}/bin/airlock-boot-supervisor ${operation}";
+        options = [ "NOPASSWD" ];
+      }) [ "desktop-status" "retry-services" ];
+    } ];
+
+    # Runs for GNOME/logind, console poweroff, and reboot alike. Record the
+    # request without declaring startup successful or erasing critical errors.
+    systemd.services.airlock-boot-shutdown-record = {
+      wantedBy = [ "shutdown.target" ];
+      before = [ "shutdown.target" ];
+      unitConfig.DefaultDependencies = false;
+      serviceConfig = {
+        Type = "oneshot";
+        ExecStart = "${supervisor}/bin/airlock-boot-supervisor shutdown-requested";
+      };
+    };
+    systemd.services.airlock-boot-background-failure = lib.mkIf desktopGuarded {
+      serviceConfig = {
+        Type = "oneshot";
+        ExecStart = "${supervisor}/bin/airlock-boot-supervisor degraded";
+      };
+    };
     # logind starts autovt@tty1 independently of getty@tty1. Reserve both
     # names so bootstrap and its diagnostic console have exclusive tty1 use.
     systemd.services."getty@tty1".enable = false;
@@ -150,9 +197,12 @@ in
       serviceConfig.TimeoutStartSec = 300;
     };
     systemd.services.airlock-machine-autostart = {
-      unitConfig.OnFailure = failureTarget;
+      # All hardware/GUI guards have succeeded before this service runs.
+      unitConfig.OnFailure = if desktopGuarded then [ "airlock-boot-background-failure.service" ] else failureTarget;
+      serviceConfig.ExecStartPre = lib.optional desktopGuarded
+        "${supervisor}/bin/airlock-boot-supervisor desktop-ready";
       serviceConfig.ExecCondition = [ gate ];
-      serviceConfig.TimeoutStartSec = 600;
+      serviceConfig.TimeoutStartSec = 1800;
     };
   };
 }

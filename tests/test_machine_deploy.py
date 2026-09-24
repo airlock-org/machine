@@ -99,8 +99,12 @@ def test_network_pci_handoff_stops_old_provider_and_orders_new_chain(topology):
     migration = planning.plan(topology, new, {"sys-dev", "usr-browser"})
     assert migration["pci_handoff"] == {"from": "sys-dev", "to": "sys-net"}
     assert migration["stop"].index("usr-browser") < migration["stop"].index("sys-dev")
-    assert migration["start"].index("sys-net") < migration["start"].index("sys-firewall")
-    assert migration["start"].index("sys-firewall") < migration["start"].index("sys-dev")
+    assert migration["start"].index("sys-net") < migration["start"].index(
+        "sys-firewall"
+    )
+    assert migration["start"].index("sys-firewall") < migration["start"].index(
+        "sys-dev"
+    )
 
     rollback = planning.plan(
         new, topology, {"sys-dev", "sys-net", "sys-firewall"}, retain_removed=True
@@ -110,7 +114,9 @@ def test_network_pci_handoff_stops_old_provider_and_orders_new_chain(topology):
     assert rollback["stop"].index("sys-firewall") < rollback["stop"].index("sys-net")
 
 
-def test_network_pci_handoff_releases_only_old_owners_network_nics(monkeypatch, tmp_path):
+def test_network_pci_handoff_releases_only_old_owners_network_nics(
+    monkeypatch, tmp_path
+):
     class FakeInterface:
         def __init__(self, value):
             self.value = value
@@ -125,14 +131,18 @@ def test_network_pci_handoff_releases_only_old_owners_network_nics(monkeypatch, 
 
     network = FakeDevice("00_02.0", "p0200")
     unrelated = FakeDevice("00_08.0", "p0300")
-    app = SimpleNamespace(domains={"dom0": SimpleNamespace(devices={"pci": [network, unrelated]})})
+    app = SimpleNamespace(
+        domains={"dom0": SimpleNamespace(devices={"pci": [network, unrelated]})}
+    )
     monkeypatch.setitem(sys.modules, "qubesadmin", SimpleNamespace(Qubes=lambda: app))
     commands = []
 
     def command(*args):
         commands.append(args)
         if args[:3] == ("qvm-device", "pci", "list"):
-            return "dom0:00_02.0  *sys-dev (required)\ndom0:00_08.0  *sys-dev (required)"
+            return (
+                "dom0:00_02.0  *sys-dev (required)\ndom0:00_08.0  *sys-dev (required)"
+            )
         return ""
 
     coordinator = deploy.Coordinator(state=tmp_path, command=command)
@@ -546,7 +556,9 @@ def test_boot_start_image_autostart_and_dependencies(machine, tmp_path, topology
 
 
 @pytest.mark.parametrize("concurrent_start", [True, False])
-def test_boot_start_handles_race_without_hiding_start_failure(machine, monkeypatch, concurrent_start):
+def test_boot_start_handles_race_without_hiding_start_failure(
+    machine, monkeypatch, concurrent_start
+):
     machine.live.remove("sys-dev")
     command = machine.command
 
@@ -565,7 +577,13 @@ def test_boot_start_handles_race_without_hiding_start_failure(machine, monkeypat
         assert "sys-dev" not in result["started"]
         assert any(call[0] == "qrexec-client" for call in machine.calls)
     else:
-        with pytest.raises(subprocess.CalledProcessError):
+        wait = machine.wait_boot_guest
+        monkeypatch.setattr(
+            machine,
+            "wait_boot_guest",
+            lambda name, expected: wait(name, expected, timeout=0),
+        )
+        with pytest.raises(deploy.DeploymentError, match="readiness timed out"):
             machine.boot_start(machine.initial / "topology.json", ["sys-gui"])
 
 
@@ -818,11 +836,16 @@ def test_packaged_coordinator_imports_modules_without_checkout_or_pythonpath(tmp
     )
     package = Path(build.stdout.strip())
     env = {
-        key: value for key, value in os.environ.items()
+        key: value
+        for key, value in os.environ.items()
         if key not in ("PYTHONPATH", "PYTHONHOME")
     }
     source = subprocess.run(
-        [sys.executable, str(ROOT / "lifecycle/runtime/tools/machine-deploy.py"), "--help"],
+        [
+            sys.executable,
+            str(ROOT / "lifecycle/runtime/tools/machine-deploy.py"),
+            "--help",
+        ],
         cwd=tmp_path,
         env=env,
         capture_output=True,
@@ -831,9 +854,16 @@ def test_packaged_coordinator_imports_modules_without_checkout_or_pythonpath(tmp
     )
     installed = subprocess.run(
         [
-            str(wrapper), "shell", installable, "-c", "/bin/sh", "-c",
+            str(wrapper),
+            "shell",
+            installable,
+            "-c",
+            "/bin/sh",
+            "-c",
             'unset PYTHONPATH PYTHONHOME; export PATH=/nonexistent; cd /; exec "$@"',
-            "sh", str(package / "bin/airlock-machine-deploy"), "--help",
+            "sh",
+            str(package / "bin/airlock-machine-deploy"),
+            "--help",
         ],
         cwd=tmp_path,
         env=env,
@@ -1085,13 +1115,9 @@ def test_exact_early_purge_override_preserves_other_guards(machine, tmp_path, to
     source = str(machine.initial)
 
     with pytest.raises(deploy.DeploymentError, match="selected previous"):
-        machine.releases.prune_release(
-            source, source, early_purge_trash=[identity]
-        )
+        machine.releases.prune_release(source, source, early_purge_trash=[identity])
     with pytest.raises(deploy.DeploymentError, match="previous deployment"):
-        machine.retirement.purge_trash(
-            identity, identity, before_expiry=True
-        )
+        machine.retirement.purge_trash(identity, identity, before_expiry=True)
 
     follow = write_release(
         tmp_path / "after-retirement", deploy.load_release(retired)[1], "follow"
@@ -1099,23 +1125,17 @@ def test_exact_early_purge_override_preserves_other_guards(machine, tmp_path, to
     machine.calls.clear()
     machine.apply(follow)
     with pytest.raises(deploy.DeploymentError, match="does not match active trash"):
-        machine.releases.prune_plan(
-            source, early_purge_trash=["999-other-vm"]
-        )
+        machine.releases.prune_plan(source, early_purge_trash=["999-other-vm"])
     preview = machine.releases.prune_plan(source, early_purge_trash=[identity])
     assert preview["blockers"] == []
     assert preview["waived_blockers"] == ["unexpired trash " + identity]
 
     machine.releases.retain_release(source, True)
     with pytest.raises(deploy.DeploymentError, match="explicitly retained"):
-        machine.releases.prune_release(
-            source, source, early_purge_trash=[identity]
-        )
+        machine.releases.prune_release(source, source, early_purge_trash=[identity])
     machine.releases.retain_release(source, False)
     with pytest.raises(deploy.DeploymentError, match="retained deployment"):
-        machine.retirement.purge_trash(
-            identity, identity, before_expiry=True
-        )
+        machine.retirement.purge_trash(identity, identity, before_expiry=True)
     pruned = machine.releases.prune_release(
         source, source, early_purge_trash=[identity]
     )
@@ -1123,9 +1143,7 @@ def test_exact_early_purge_override_preserves_other_guards(machine, tmp_path, to
     assert pruned["waived_blockers"] == ["unexpired trash " + identity]
     with pytest.raises(deploy.DeploymentError, match="retention window"):
         machine.retirement.purge_trash(identity, identity)
-    purged = machine.retirement.purge_trash(
-        identity, identity, before_expiry=True
-    )
+    purged = machine.retirement.purge_trash(identity, identity, before_expiry=True)
     assert purged["status"] == "purged"
     assert purged["purged_before_expiry"] is True
     assert machine.retirement.purge_trash(identity, identity) == purged
@@ -1159,7 +1177,8 @@ def test_interrupted_purge_is_retryable(machine, tmp_path, topology):
 
     machine.command = machine.execute
     assert (
-        machine.retirement.purge_trash(record["id"], record["id"], now=now)["status"] == "purged"
+        machine.retirement.purge_trash(record["id"], record["id"], now=now)["status"]
+        == "purged"
     )
 
 
@@ -1230,7 +1249,9 @@ def test_explicit_retention_can_be_released(machine, obsolete_release):
     machine.releases.retain_release(obsolete_release, True)
     machine.releases.retain_release(obsolete_release, False)
     assert (
-        machine.releases.prune_release(obsolete_release, str(obsolete_release))["status"]
+        machine.releases.prune_release(obsolete_release, str(obsolete_release))[
+            "status"
+        ]
         == "pruned"
     )
 
@@ -1259,7 +1280,10 @@ def test_prune_resumes_after_profile_deletion_without_touching_other_generations
     )
     assert len([c for c in machine.calls if "--delete-generations" in c]) == 1
     machine.calls.clear()
-    assert machine.releases.prune_release(obsolete_release, str(obsolete_release)) == result
+    assert (
+        machine.releases.prune_release(obsolete_release, str(obsolete_release))
+        == result
+    )
     assert not machine.calls
     with pytest.raises(deploy.DeploymentError, match="pruned"):
         machine.apply(obsolete_release)
@@ -1308,7 +1332,10 @@ def test_prune_retry_survives_collection_of_release_artifact(
     obsolete_release.rmdir()
     result = machine.releases.prune_release(obsolete_release, str(obsolete_release))
     assert result["status"] == "pruned"
-    assert any(r.get("status") == "pruned" for r in machine.releases.list_releases()["releases"])
+    assert any(
+        r.get("status") == "pruned"
+        for r in machine.releases.list_releases()["releases"]
+    )
     with pytest.raises(deploy.DeploymentError, match="pruned"):
         machine.apply(obsolete_release)
 
@@ -1428,3 +1455,42 @@ def test_retention_starts_when_retirement_finishes(
     monkeypatch.setattr(deploy.time, "time", lambda: 1000)
     result = machine.retirement.retire(record)
     assert result["purge_after"] == 1000 + 30 * 86400
+
+
+@pytest.mark.parametrize("becomes_ready", [True, False])
+def test_boot_readiness_waits_for_running_and_qrexec(
+    machine, monkeypatch, becomes_ready
+):
+    clock = [0]
+    monkeypatch.setattr(deploy.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(
+        deploy.time, "sleep", lambda seconds: clock.__setitem__(0, clock[0] + seconds)
+    )
+    command = machine.command
+    probes = []
+
+    def delayed(*args, **kwargs):
+        if args[0] == "qvm-ls":
+            if clock[0] < 2 or not becomes_ready:
+                return "sys-dev|Transient"
+            return "sys-dev|Running"
+        if args[0] == "qrexec-client":
+            probes.append(clock[0])
+            if clock[0] < 3:
+                raise subprocess.CalledProcessError(1, args)
+        return command(*args, **kwargs)
+
+    monkeypatch.setattr(machine, "command", delayed)
+    expected = machine.selected["sys-dev"]
+    if becomes_ready:
+        machine.wait_boot_guest("sys-dev", expected, timeout=5)
+        assert probes == [2, 3]
+    else:
+        with pytest.raises(deploy.DeploymentError, match="readiness timed out"):
+            machine.wait_boot_guest("sys-dev", expected, timeout=5)
+        assert clock[0] == 5
+
+
+def test_boot_readiness_rejects_wrong_generation(machine):
+    with pytest.raises(deploy.DeploymentError, match="differs from release"):
+        machine.wait_boot_guest("sys-dev", "/nix/store/wrong-system")

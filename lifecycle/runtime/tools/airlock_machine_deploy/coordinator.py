@@ -104,8 +104,10 @@ class Coordinator:
         path = self.state / "selection.json"
         return read_json(path) if path.exists() else None
 
-    def running(self):
-        text = self.command("qvm-ls", "--raw-data", "--fields", "NAME,STATE")
+    def running(self, timeout=None):
+        text = self.command(
+            "qvm-ls", "--raw-data", "--fields", "NAME,STATE", timeout=timeout
+        )
         return {
             line.split("|")[0]
             for line in text.splitlines()
@@ -509,7 +511,9 @@ class Coordinator:
             except (AttributeError, IndexError, TypeError):
                 continue
         if not network_ports:
-            raise DeploymentError("network PCI handoff found no dom0 network controllers")
+            raise DeploymentError(
+                "network PCI handoff found no dom0 network controllers"
+            )
         assignments = self.command("qvm-device", "pci", "list", "--assignments", "dom0")
         owned = set()
         for line in assignments.splitlines():
@@ -531,9 +535,13 @@ class Coordinator:
             owned.update(owners)
             if f"*{previous} (" in line:
                 if not dry_run:
-                    self.command("qvm-device", "pci", "unassign", previous, f"dom0:{port}")
+                    self.command(
+                        "qvm-device", "pci", "unassign", previous, f"dom0:{port}"
+                    )
         if not owned and not allow_unassigned:
-            raise DeploymentError("network PCI handoff found no assigned network controller")
+            raise DeploymentError(
+                "network PCI handoff found no assigned network controller"
+            )
 
     def verify(self, topology, expected_running):
         observed = {}
@@ -614,7 +622,8 @@ class Coordinator:
             )
             if changes.get("pci_handoff"):
                 self.handoff_network_pci(
-                    changes["pci_handoff"], dry_run=True,
+                    changes["pci_handoff"],
+                    dry_run=True,
                     allow_unassigned=bool(interrupted),
                 )
             changes["stop"] = [name for name in changes["stop"] if name in runtime]
@@ -818,6 +827,30 @@ class Coordinator:
             atomic_json(self.state / "latest.json", record)
             return record
 
+    def wait_boot_guest(self, name, expected, timeout=180):
+        """Wait through Qubes' transient startup state and verify qrexec readiness."""
+        deadline = time.monotonic() + timeout
+        last_error = "not running yet"
+        while time.monotonic() < deadline:
+            try:
+                if name in self.running(timeout=max(0.1, deadline - time.monotonic())):
+                    actual = self.command(
+                        "qrexec-client",
+                        "-d",
+                        name,
+                        "user:readlink -f /run/current-system",
+                        timeout=max(0.1, min(10, deadline - time.monotonic())),
+                    )
+                    if actual != expected:
+                        raise DeploymentError(
+                            f"{name}: running system differs from release: {actual}"
+                        )
+                    return
+            except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+                last_error = str(exc)
+            time.sleep(min(1, max(0, deadline - time.monotonic())))
+        raise DeploymentError(f"{name}: readiness timed out: {last_error}")
+
     def boot_start(self, default_topology, require_running=()):
         """Start declared autostart guests only after boot setup/GPU guards."""
         with self.locked():
@@ -860,15 +893,18 @@ class Coordinator:
             for name in starts:
                 if name not in self.running():
                     try:
-                        self.command("qvm-start", "--skip-if-running", name, timeout=180)
-                    except subprocess.CalledProcessError:
-                        # A desktop/qrexec request can start the VM between the
-                        # state check and Qubes' start call. Still verify its
-                        # generation/readiness below; a stopped VM is a failure.
-                        if name not in self.running():
-                            raise
+                        self.command(
+                            "qvm-start", "--skip-if-running", name, timeout=180
+                        )
+                    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+                        # Another Qubes caller may still be starting this VM.
+                        # The bounded readiness check below decides the outcome.
+                        pass
                     else:
                         started.append(name)
+                self.wait_boot_guest(
+                    name, topology["domains"][name]["backend"]["system"]["source"]
+                )
             observed = self.verify(topology, set(starts) | set(require_running))
             return {
                 "autostart": starts,
