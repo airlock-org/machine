@@ -88,7 +88,10 @@ def prepare_pool(root, descriptors, specs, runtime_root):
             from .builder import prepare_builder
 
             prepare_builder(
-                root, admission, Path(spec["closure_source"]) / "registration"
+                root,
+                admission,
+                Path(spec["closure_source"]) / "registration",
+                Path(spec["closure_source"]) / "flake-inputs.json",
             )
         prepared.append((target, admission))
 

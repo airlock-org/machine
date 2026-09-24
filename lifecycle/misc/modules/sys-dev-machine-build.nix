@@ -120,9 +120,9 @@ let
 
     usage() {
       printf '%s\n' \
-        'usage: airlock-sys-dev-machine-build preflight' \
-        '       airlock-sys-dev-machine-build build [.#INSTALLABLE]' \
-        '       airlock-sys-dev-machine-build admit TARGET [.#INSTALLABLE]'
+        'usage: airlock-sys-dev-machine-build preflight [--offline]' \
+        '       airlock-sys-dev-machine-build build [--offline] [.#INSTALLABLE]' \
+        '       airlock-sys-dev-machine-build admit [--offline] TARGET [.#INSTALLABLE]'
     }
 
     fail() {
@@ -142,16 +142,43 @@ let
       printf '%s\n' "$((blocks * block_size))"
     }
 
+    offline_args=()
+    load_offline_inputs() {
+      local manifest=/run/airlock-builder/pool/.airlock-builder/flake-inputs.json
+      [ -r "$manifest" ] || fail 'image has no pinned offline flake inputs'
+      local expected_lock actual_lock
+      expected_lock="$(${pkgs.jq}/bin/jq -er '.lock_hash' "$manifest")"
+      actual_lock="$(${pkgs.coreutils}/bin/sha256sum "$repo/flake.lock" | ${pkgs.gawk}/bin/awk '{print $1}')"
+      [ "$expected_lock" = "$actual_lock" ] || fail 'checkout flake.lock differs from the image offline inputs'
+      [ "$(${pkgs.jq}/bin/jq -er '.schema' "$manifest")" = airlock.sys-dev-offline-inputs.v1 ] || fail 'invalid offline input manifest'
+      local name path
+      while IFS="$(printf '\t')" read -r name path; do
+        case "$path" in
+          /nix/store/*) ;;
+          *) fail "invalid offline source path: $path" ;;
+        esac
+        [ -d "$store_root$path" ] || fail "missing pinned offline source: $name"
+        offline_args+=(--override-input "$name" "path:$path")
+      done < <(${pkgs.jq}/bin/jq -r '.inputs | to_entries[] | [.key, .value] | @tsv' "$manifest")
+      [ "''${#offline_args[@]}" -gt 0 ] || fail 'offline input manifest is empty'
+    }
+
     preflight() {
       check_repo
       ${pkgs.coreutils}/bin/install -d -m 0700 "$state" "$store_root"
       available="$(free_bytes)"
       [ "$available" -ge "$minimum_free_bytes" ] || fail "private Nix store needs at least 4 GiB free; only $available bytes are available"
-      offline_ready=false
-      if airlock-config-nix --extra-experimental-features nix-command --extra-experimental-features flakes flake metadata --offline "$repo" --json >/dev/null 2>&1; then
+      if [ "$offline_selected" = true ]; then
+        load_offline_inputs
+        airlock-config-nix --extra-experimental-features nix-command --extra-experimental-features flakes flake metadata --offline --no-write-lock-file "''${offline_args[@]}" "$repo" --json >/dev/null || fail 'pinned flake inputs cannot be evaluated offline'
         offline_ready=true
+      else
+        offline_ready=false
+        if airlock-config-nix --extra-experimental-features nix-command --extra-experimental-features flakes flake metadata --offline "$repo" --json >/dev/null 2>&1; then
+          offline_ready=true
+        fi
+        airlock-config-nix --extra-experimental-features nix-command --extra-experimental-features flakes flake metadata "$repo" --json >/dev/null || fail 'locked flake inputs are unavailable from the private store or configured network access'
       fi
-      airlock-config-nix --extra-experimental-features nix-command --extra-experimental-features flakes flake metadata "$repo" --json >/dev/null || fail 'locked flake inputs are unavailable from the private store or configured network access'
       revision="$(${pkgs.gitMinimal}/bin/git -C "$repo" rev-parse HEAD)"
       lock_hash="$(${pkgs.coreutils}/bin/sha256sum "$repo/flake.lock" | ${pkgs.gawk}/bin/awk '{print $1}')"
       ${pkgs.jq}/bin/jq -n \
@@ -172,7 +199,11 @@ let
         *) fail 'installable must start with .# or #' ;;
     esac
       preflight >/dev/null
-      result="$(airlock-config-nix --extra-experimental-features nix-command --extra-experimental-features flakes build "$repo$installable" --no-link --json)"
+      if [ "$offline_selected" = true ]; then
+        result="$(airlock-config-nix --extra-experimental-features nix-command --extra-experimental-features flakes build --offline --no-write-lock-file "''${offline_args[@]}" "$repo$installable" --no-link --json)"
+      else
+        result="$(airlock-config-nix --extra-experimental-features nix-command --extra-experimental-features flakes build "$repo$installable" --no-link --json)"
+      fi
       system="$(printf '%s\n' "$result" | ${pkgs.jq}/bin/jq -er '.[0].outputs.out')"
       printf '%s\n' "$system"
     }
@@ -180,6 +211,11 @@ let
     command="''${1:-}"
     [ -n "$command" ] || { usage >&2; exit 2; }
     shift
+    offline_selected=false
+    if [ "''${1:-}" = --offline ]; then
+      offline_selected=true
+      shift
+    fi
     default_installable='.#nixosConfigurations.airlock-domain-usr-home.config.system.build.toplevel'
     case "$command" in
       preflight)

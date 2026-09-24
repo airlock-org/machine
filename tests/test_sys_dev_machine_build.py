@@ -172,3 +172,89 @@ fi
         assert result.returncode == 23
     if failure == "interrupt":
         assert result.returncode in (-signal.SIGINT, 128 + signal.SIGINT)
+
+
+def test_offline_build_uses_pinned_sources_and_rejects_changed_lock(
+    tmp_path, build_script
+):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    (repo / "flake.lock").write_text("{}")
+    subprocess.run(["git", "-C", str(repo), "add", "."], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repo),
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.invalid",
+            "commit",
+            "-qm",
+            "seed",
+        ],
+        check=True,
+    )
+    source = "/nix/store/" + "a" * 32 + "-source"
+    store = tmp_path / "store"
+    (store / source.lstrip("/")).mkdir(parents=True)
+    manifest = tmp_path / "flake-inputs.json"
+    import hashlib
+
+    lock_hash = hashlib.sha256((repo / "flake.lock").read_bytes()).hexdigest()
+    manifest.write_text(
+        json.dumps(
+            {
+                "schema": "airlock.sys-dev-offline-inputs.v1",
+                "lock_hash": lock_hash,
+                "inputs": {"nixpkgs": source},
+            }
+        )
+    )
+    script = tmp_path / "offline-build"
+    script.write_text(
+        build_script.read_text().replace(
+            "/run/airlock-builder/pool/.airlock-builder/flake-inputs.json",
+            str(manifest),
+        )
+    )
+    binaries = tmp_path / "bin"
+    binaries.mkdir()
+    fake_nix = binaries / "airlock-config-nix"
+    fake_nix.write_text(
+        '#!/bin/sh\nprintf \'%s\\n\' "$*" >> "$CALLS"\ncase "$*" in *\' build \'*) echo \'[{"outputs":{"out":"/nix/store/test-system"}}]\' ;; esac\n'
+    )
+    fake_nix.chmod(0o755)
+    calls = tmp_path / "calls"
+    env = dict(
+        os.environ,
+        PATH=f"{binaries}:{os.environ['PATH']}",
+        AIRLOCK_MACHINE_REPO=str(repo),
+        AIRLOCK_CONFIG_NIX_STORE_ROOT=str(store),
+        CALLS=str(calls),
+    )
+    result = subprocess.run(
+        ["bash", str(script), "build", "--offline"],
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "/nix/store/test-system"
+    assert (
+        "--offline --no-write-lock-file --override-input nixpkgs path:" + source
+        in calls.read_text()
+    )
+    manifest.write_text(manifest.read_text().replace(lock_hash, "b" * 64))
+    calls.unlink()
+    result = subprocess.run(
+        ["bash", str(script), "build", "--offline"],
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode != 0
+    assert "differs from the image offline inputs" in result.stderr
+    assert not calls.exists()
