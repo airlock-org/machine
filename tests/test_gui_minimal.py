@@ -43,6 +43,7 @@ def test_gui_minimal_topology_and_desktop():
         personalLaunchers = guest.airlock.sysGuiGuest.personalLaunchers.enable;
         normalPersonalLaunchers = normal.airlock.sysGuiGuest.personalLaunchers.enable;
         normalPackages = map (p: p.pname or p.name) normal.environment.systemPackages;
+        setupAutostart = gnome.environment.etc."xdg/autostart/airlock-setup.desktop".text;
         gnomeOverrides = gnome.services.desktopManager.gnome.extraGSettingsOverrides;
         gnomeHostPoweroffExtensionSource = builtins.readFile
           "${{gnomeHostPoweroffExtension}}/share/gnome-shell/extensions/airlock-host-poweroff@airlock.local/extension.js";
@@ -79,6 +80,8 @@ def test_gui_minimal_topology_and_desktop():
     assert gui["netvm"] is None
     assert gui["prefs"]["guivm"] == "dom0"
     assert gui["prefs"]["autostart"] is True
+    assert "airlock-setup --auto" in report["setupAutostart"]
+    assert "X-GNOME-Autostart-Phase" not in report["setupAutostart"]
     assert gui["devices"]["pci"] == []
     assert report["setup"]["enable"] is True
     assert report["setup"]["scope"] == "all"

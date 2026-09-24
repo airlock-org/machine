@@ -18,7 +18,6 @@ in
       Name=AirlockOS Setup
       Exec=${setup}/bin/airlock-setup --auto
       OnlyShowIn=GNOME;
-      X-GNOME-Autostart-Phase=Desktop
     '';
   };
 }
