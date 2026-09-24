@@ -1580,6 +1580,7 @@ install_nix_domain_root() {
     return
   fi
 
+  root_image="$(resolve_root_image_file "$root_source")"
   run_or_plan qvm-volume import "$domain:root" "$root_image"
   root_images_changed=$((root_images_changed + 1))
   record_live_action domain-root import "$domain" source "$root_source"
@@ -1836,7 +1837,6 @@ setup_nix_closure_domain() {
     fail "unsupported Nix-native domain store blob device for $domain: $store_blob_device"
   fi
 
-  root_image="$(resolve_root_image_file "$root_source")"
   staged_generation=""
   if [ -n "${AIRLOCK_STAGED_GENERATIONS:-}" ] &&
     [ -f "$AIRLOCK_STAGED_GENERATIONS" ]; then

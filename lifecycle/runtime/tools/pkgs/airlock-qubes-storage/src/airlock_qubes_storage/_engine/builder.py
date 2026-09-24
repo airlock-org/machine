@@ -141,13 +141,21 @@ def prepare_builder(root, admission, registration, offline_inputs_source=None):
     core.atomic_json(root / "builders/sys-dev.json", manifest["builder"])
 
 
-def builder_volume_configs(root, pool_name):
+def builder_volume_configs(root, pool_name, *, physical_root=None):
     """Validated boot volumes for the single image-seeded sys-dev builder."""
     root = Path(root)
+
+    def physical(path):
+        return (
+            Path(physical_root) / Path(path).relative_to(root)
+            if physical_root is not None
+            else Path(path)
+        )
+
     descriptor = root / "builders/sys-dev.json"
-    if not descriptor.exists():
+    if not physical(descriptor).exists():
         return {}
-    data = core.read_json(descriptor)
+    data = core.read_json(physical(descriptor))
     if (
         data.get("schema") != "airlock.sys-dev-builder.v1"
         or data.get("domain") != "sys-dev-builder"
@@ -155,18 +163,20 @@ def builder_volume_configs(root, pool_name):
         core.fail("invalid sys-dev builder descriptor")
     generation = int(data["generation"])
     manifest_path = state.generation_manifest_path(root, "sys-dev-builder", generation)
-    manifest = core.read_json(manifest_path)
+    manifest = core.read_json(physical(manifest_path))
     if (
-        not state.generation_is_committed(root, manifest)
+        not state.generation_is_committed(physical(root), manifest)
         or manifest.get("builder") != data
     ):
         core.fail("sys-dev builder descriptor does not match committed generation")
     pin = core.read_json(
-        state.running_ref_path(
-            root, "sys-dev-builder", generation, "builder-persistent"
+        physical(
+            state.running_ref_path(
+                root, "sys-dev-builder", generation, "builder-persistent"
+            )
         )
     )
-    blob_map = core.read_json(manifest["store"]["canonical_blob_map"])
+    blob_map = core.read_json(physical(manifest["store"]["canonical_blob_map"]))
     expected_refs = [
         ref
         for refs in views.blob_map_physical_references(
@@ -215,12 +225,12 @@ def builder_volume_configs(root, pool_name):
             )
         else:
             path = Path(data["metadata_image"])
-            if path.stat().st_mode & 0o222:
+            if physical(path).stat().st_mode & 0o222:
                 core.fail("builder metadata image must be read-only")
             volume.update(
                 view_kind="metadata-image",
                 view_path=str(path),
-                size=path.stat().st_size,
+                size=physical(path).stat().st_size,
             )
         result[name] = volume
     return result

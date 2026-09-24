@@ -435,14 +435,14 @@ async def ensure_pool(app, pool_name, pool_root):
     return pool, True
 
 
-def shared_volume_configs(pool_name, domain, admission):
+def shared_volume_configs(pool_name, domain, admission, *, metadata_size=None):
     generation = str(admission["generation"])
     view_image = admission.get("metadata_image") or admission["view_image"]
     store = {
         "name": "store",
         "pool": pool_name,
         "vid": f"domains/{domain}/generations/{generation}/store",
-        "size": os.stat(view_image).st_size,
+        "size": os.stat(view_image).st_size if metadata_size is None else metadata_size,
         "rw": False,
         "snap_on_start": False,
         "save_on_stop": True,
