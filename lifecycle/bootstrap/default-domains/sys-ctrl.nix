@@ -1,0 +1,22 @@
+{
+  guestHostName = "sys-ctrl";
+  label = "black";
+  rootImageSizeMiB = 1024;
+  # Candidate history and the writable Nix store live in the Qubes private
+  # volume, independently of the immutable guest root and shared dom0 pool.
+  state.persistentSize = 34359738368;
+  netvm = null;
+  prefs = {
+    autostart = true;
+    guivm = null;
+    include_in_backups = true;
+    memory = 4096;
+    maxmem = 4096;
+    vcpus = 2;
+  };
+  features = {
+    "airlock-managed" = "1";
+    "airlock-role" = "sys-ctrl";
+  };
+  services."network-manager" = false;
+}

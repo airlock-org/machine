@@ -14,6 +14,7 @@ let
   hasCmdRole = cfg.role == "cmd";
   hasSysNetRole = cfg.role == "sys-net";
   hasSysDevRole = cfg.role == "sys-dev";
+  hasSysCtrlRole = cfg.role == "sys-ctrl";
   hasNetworkDriverRole = hasSysNetRole || hasSysDevRole;
   hasSysGuiRole = cfg.role == "sys-gui";
   hasNetworkProviderRole = hasSysNetRole || hasSysDevRole || cfg.role == "sys-firewall";
@@ -23,7 +24,8 @@ let
     || hasConfigStagingRole
     || hasConfigValidatorRole
     || hasCmdRole
-    || hasSysDevRole;
+    || hasSysDevRole
+    || hasSysCtrlRole;
   hasConfigInputsImportRole = hasConfigStagingRole || hasConfigValidatorRole;
   qubesAgentLinux = pkgs.qubes-core-agent-linux;
   qubesDbPython =
@@ -146,6 +148,12 @@ let
     sys-dev = [
       (lib.hiPrio configNix)
       poolSend
+    ];
+    sys-ctrl = [
+      (lib.hiPrio configNix)
+      poolSend
+      roleGit
+      pkgs.jq
     ];
     sys-config-vault = [
       configVaultInit
@@ -407,6 +415,7 @@ in
         "sys-gui"
         "sys-net"
         "sys-dev"
+        "sys-ctrl"
       ];
       default = "base";
       description = "Airlock role-specific userspace to place in the guest domain.";
@@ -811,6 +820,23 @@ in
           install -d -m 0700 -o ${lib.escapeShellArg cfg.user} -g users ${lib.escapeShellArg cfg.configNixStoreRoot}
         ''
         + lib.concatMapStrings installPersistentPath cmdPersistentPaths;
+      serviceConfig = {
+        Type = "oneshot";
+        RemainAfterExit = true;
+      };
+    };
+
+    systemd.services.airlock-sys-ctrl-state = lib.mkIf hasSysCtrlRole {
+      description = "Prepare persistent sys-ctrl source and Nix state";
+      wantedBy = [ "multi-user.target" ];
+      requires = [ "airlock-qubes-rw-init.service" ];
+      after = [ "airlock-qubes-rw-init.service" ];
+      before = [ "qubes-qrexec-agent.service" ];
+      path = [ pkgs.coreutils ];
+      script = ''
+        set -eu
+        install -d -m 0700 -o ${lib.escapeShellArg cfg.user} -g users ${lib.escapeShellArg cfg.configNixStoreRoot}
+      '';
       serviceConfig = {
         Type = "oneshot";
         RemainAfterExit = true;

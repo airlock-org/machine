@@ -23,6 +23,7 @@ let
 
   sysNetRoleDefaults = import ./sys-net.nix { inherit sysNetPrivateSizeBytes; };
   sysDevRoleDefaults = import ./sys-dev.nix;
+  sysCtrlRoleDefaults = import ./sys-ctrl.nix;
   sysFirewallRoleDefaults = import ./sys-firewall.nix { inherit networkDebug; };
   sysGuiRoleDefaults = import ./sys-gui.nix;
   cmdVmRoleDefaults = import ./usr-cmd.nix;
@@ -127,6 +128,34 @@ let
     };
 
   mkSysDevDomainEntry = system: mkSysDevDomainEntryWith system { };
+
+  mkSysCtrlDomainEntryWith =
+    system: { extraSpecialArgs ? { } }:
+    let
+      qubeBuilders = mkAirlockQubeBuilders system;
+    in
+    qubeBuilders.mkNixNativeDomain {
+      name = "sys-ctrl";
+      guestRole = "sys-ctrl";
+      inherit extraSpecialArgs;
+      modules = [
+        ({ ... }: {
+          networking.hostName = sysCtrlRoleDefaults.guestHostName;
+          airlock.qubeGuest.configRepoPath = "/home/user/dev/airlock-machine";
+        })
+        ../../misc/modules/machine-source-seed.nix
+      ];
+      rootImageSizeMiB = sysCtrlRoleDefaults.rootImageSizeMiB;
+      kernelName = airlockQubesVmKernelName;
+      label = sysCtrlRoleDefaults.label;
+      netvm = sysCtrlRoleDefaults.netvm;
+      prefs = sysCtrlRoleDefaults.prefs;
+      features = sysCtrlRoleDefaults.features;
+      services = sysCtrlRoleDefaults.services;
+      state = sysCtrlRoleDefaults.state;
+    };
+
+  mkSysCtrlDomainEntry = system: mkSysCtrlDomainEntryWith system { };
 
   mkSysFirewallDomainEntry =
     system:
@@ -278,6 +307,8 @@ in
     mkSysNetDomainEntry
     mkSysDevDomainEntry
     mkSysDevDomainEntryWith
+    mkSysCtrlDomainEntry
+    mkSysCtrlDomainEntryWith
     sysFirewallRoleDefaults
     sysGuiRoleDefaults
     sysNetRoleDefaults

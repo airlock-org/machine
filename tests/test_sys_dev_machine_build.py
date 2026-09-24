@@ -66,10 +66,14 @@ def test_sys_dev_machine_source_and_build_tools_are_persistent_and_scoped():
     assert "sys-dev-machine-deploy.py" in report["deployTool"]
 
 
-def test_sys_dev_seed_service_includes_gzip_for_the_embedded_archive():
-    guest_module = (ROOT / "lifecycle/misc/modules/sys-dev-guest.nix").read_text()
+def test_shared_machine_seed_service_includes_gzip_for_the_embedded_archive():
+    seed_module = (ROOT / "lifecycle/misc/modules/machine-source-seed.nix").read_text()
+    sys_dev_module = (ROOT / "lifecycle/misc/modules/sys-dev-guest.nix").read_text()
+    domains = (ROOT / "lifecycle/bootstrap/default-domains/default.nix").read_text()
 
-    assert "pkgs.gnutar pkgs.gzip" in guest_module
+    assert "pkgs.gnutar pkgs.gzip" in seed_module
+    assert "./machine-source-seed.nix" in sys_dev_module
+    assert "../../misc/modules/machine-source-seed.nix" in domains
 
 
 @pytest.fixture

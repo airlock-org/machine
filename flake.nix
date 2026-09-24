@@ -217,6 +217,8 @@
         mkSysGuiDomainEntry
         mkSysDevDomainEntry
         mkSysDevDomainEntryWith
+        mkSysCtrlDomainEntry
+        mkSysCtrlDomainEntryWith
         mkSysNetDomainEntry
         ;
 
@@ -408,6 +410,7 @@
           sys-gui-standalone = mkUsbAmdSysGuiDomainEntry system "gnome" false true;
           sys-gui = mkUsbAmdSysGuiDomainEntry system "gnome" true false;
           sys-dev = (bootstrapDomains.mkSysDevDomainEntryWith system { inherit extraSpecialArgs; }) // { preparedDomainName = "sys-dev"; };
+          sys-ctrl = (bootstrapDomains.mkSysCtrlDomainEntryWith system { inherit extraSpecialArgs; }) // { preparedDomainName = "sys-ctrl"; };
           usr-home = (bootstrapDomains.mkHomeVmDomainEntry system) // { preparedDomainName = "usr-home"; };
           usr-browser = (bootstrapDomains.mkBrowserVmDomainEntry system) // { preparedDomainName = "usr-browser"; };
         };
@@ -498,6 +501,7 @@
                   ];
                 };
                 sys-dev = machineDomain "sys-dev";
+                sys-ctrl = machineDomain "sys-ctrl";
                 usr-home = machineDomain "usr-home";
                 usr-browser = (machineDomain "usr-browser") // { netvm = "sys-dev"; };
               };
@@ -846,6 +850,8 @@
         (mkSysFirewallDomainEntry "x86_64-linux").configuration;
       nixosConfigurations.airlock-domain-sys-dev =
         (mkSysDevDomainEntry "x86_64-linux").configuration;
+      nixosConfigurations.airlock-domain-sys-ctrl =
+        (mkSysCtrlDomainEntry "x86_64-linux").configuration;
       nixosConfigurations.airlock-domain-usr-home =
         (mkHomeVmDomainEntry "x86_64-linux").configuration;
       nixosConfigurations.airlock-domain-usr-browser =
