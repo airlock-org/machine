@@ -340,6 +340,8 @@ def main(argv=None):
     parser.add_argument("--identity")
     parser.add_argument("--confirm")
     parser.add_argument("--retain", choices=("true", "false"))
+    parser.add_argument("--allow-unexpired-trash", action="append", default=[])
+    parser.add_argument("--before-expiry", action="store_true")
     args = parser.parse_args(argv)
     if (
         args.action in ("release-prune-plan", "release-prune", "release-retain")
@@ -396,6 +398,11 @@ def main(argv=None):
                 action += [args.identity]
             if args.action in ("release-prune", "trash-purge"):
                 action += ["--confirm", args.confirm]
+            if args.action in ("release-prune-plan", "release-prune"):
+                for identity in args.allow_unexpired_trash:
+                    action += ["--allow-unexpired-trash", identity]
+            if args.action == "trash-purge" and args.before_expiry:
+                action += ["--before-expiry"]
             if args.action == "release-retain":
                 action += ["--retain", args.retain]
         if args.action in (

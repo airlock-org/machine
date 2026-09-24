@@ -96,6 +96,7 @@ class TrashRecord(TypedDict):
     restored_by_release: NotRequired[str]
     restored_by_transaction: NotRequired[str]
     purged_at: NotRequired[str]
+    purged_before_expiry: NotRequired[bool]
 
 
 class PrunePlan(TypedDict):
@@ -106,6 +107,7 @@ class PrunePlan(TypedDict):
     roots: dict[str, str]
     profile_generations: list[int]
     blockers: list[str]
+    waived_blockers: NotRequired[list[str]]
 
 
 class PruneRecord(PrunePlan):
