@@ -286,6 +286,7 @@ let
       pkgs.gzip
       pkgs.python3
       pkgs.util-linux
+      pkgs.python3.pkgs.qubes-core-qrexec.domU
     ];
     text = ''
       exec ${pkgs.python3}/bin/python3 ${../../runtime/tools/sys-dev-machine-deploy.py} "$@"
@@ -312,6 +313,20 @@ in
     pkgs.gitMinimal
     pkgs.gnutar
   ] ++ (if role == "sys-dev" then [ deployTool ] else [ ]);
+  systemd.services.airlock-controller-observe = lib.mkIf (role == "sys-ctrl") {
+    description = "Record authoritative dom0 deployment outcomes";
+    after = [ "qubes-qrexec-agent.service" ];
+    serviceConfig = {
+      Type = "oneshot";
+      User = cfg.user;
+      ExecStart = "${ctrlDeploy}/bin/airlock-sys-ctrl-guest-deploy observe";
+      TimeoutStartSec = 30;
+    };
+  };
+  systemd.timers.airlock-controller-observe = lib.mkIf (role == "sys-ctrl") {
+    wantedBy = [ "timers.target" ];
+    timerConfig = { OnBootSec = "1min"; OnUnitInactiveSec = "1min"; };
+  };
   environment.etc."qubes-rpc/airlock.Ctrl.GuestDeploy" = lib.mkIf (role == "sys-ctrl") {
     source = pkgs.writeShellScript "airlock-ctrl-guest-deploy-qrexec" ''
       [ "''${QREXEC_REMOTE_DOMAIN:-}" = sys-dev ] || exit 1

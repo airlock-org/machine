@@ -19,7 +19,9 @@ let
   guestControl = action: pkgs.writeShellScript "airlock-ctrl-guest-${action}" ''
     set -eu
     [ "$#" -eq 0 ] || exit 2
-    exec ${engine}/bin/airlock-machine-deploy guest-${action} -
+    export PATH=${lib.makeBinPath [ pkgs.systemd ]}:"$PATH"
+    exec ${pkgs.python3}/bin/python3 ${../../runtime/tools/sys-ctrl-guest-receive.py} ${action} \
+      --engine ${engine}/bin/airlock-machine-deploy
   '';
   guestPlan = guestControl "plan";
   guestApply = guestControl "apply";
@@ -31,12 +33,26 @@ let
   '';
   machinePlan = machineControl "plan";
   machineApply = machineControl "apply";
+  control = pkgs.writeShellScript "airlock-machine-control" ''
+    set -eu
+    [ "$#" -eq 0 ] || exit 2
+    export PATH=${lib.makeBinPath [ pkgs.systemd ]}:"$PATH"
+    exec ${pkgs.python3}/bin/python3 ${../../runtime/tools/sys-ctrl-machine-control.py}
+  '';
+  controlHandler = pkgs.writeShellScript "airlock-machine-control-qrexec" ''
+    set -eu
+    case "''${QREXEC_REMOTE_DOMAIN:-}" in sys-dev|sys-ctrl) ;; *) exit 1 ;; esac
+    exec /run/wrappers/bin/sudo -n ${control}
+  '';
   guestHandler = action: helper: pkgs.writeShellScript "airlock-ctrl-guest-${action}-qrexec" ''
     set -eu
     [ "''${QREXEC_REMOTE_DOMAIN:-}" = sys-ctrl ] || exit 1
     exec /run/wrappers/bin/sudo -n ${helper}
   '';
   guestPolicy = pkgs.writeTextDir "etc/qubes/policy.d/43-airlock-ctrl-guest.policy" ''
+    airlock.Ctrl.MachineControl + sys-dev dom0 allow
+    airlock.Ctrl.MachineControl + sys-ctrl dom0 allow
+    airlock.Ctrl.MachineControl * @anyvm @anyvm deny
     airlock.Ctrl.GuestDeploy * sys-dev sys-ctrl allow
     airlock.Ctrl.GuestDeploy * @anyvm @anyvm deny
     airlock.Ctrl.GuestPlan * sys-ctrl dom0 allow
@@ -92,9 +108,14 @@ in
       source = guestHandler "machine-apply" machineApply;
       mode = "0555";
     };
+    environment.etc."qubes-rpc/airlock.Ctrl.MachineControl" = {
+      source = controlHandler;
+      mode = "0555";
+    };
     security.sudo.extraRules = [{
       users = [ config.airlock.dom0.user ];
       commands = [
+        { command = "${control}"; options = [ "NOPASSWD" ]; }
         { command = "${guestPlan}"; options = [ "NOPASSWD" ]; }
         { command = "${guestApply}"; options = [ "NOPASSWD" ]; }
         { command = "${machinePlan}"; options = [ "NOPASSWD" ]; }

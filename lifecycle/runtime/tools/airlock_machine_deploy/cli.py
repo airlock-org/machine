@@ -19,6 +19,9 @@ def main(argv=None):
     sub = parser.add_subparsers(dest="action", required=True)
     for action in ("plan", "apply"):
         sub.add_parser(action).add_argument("release", type=Path)
+    bind = sub.add_parser("machine-bind")
+    bind.add_argument("release", type=Path)
+    bind.add_argument("receipts")
     for action in ("guest-plan", "guest-apply"):
         sub.add_parser(action).add_argument("receipt")
     for action in (
@@ -56,7 +59,10 @@ def main(argv=None):
     args = parser.parse_args(argv)
     coordinator = Coordinator()
     try:
-        if args.action == "plan":
+        if args.action == "machine-bind":
+            receipts = json.load(sys.stdin) if args.receipts == "-" else read_json(args.receipts)
+            result = {"candidate": str(coordinator.machine_candidate(args.release, receipts))}
+        elif args.action == "plan":
             result = coordinator.inspect(args.release)
         elif args.action == "apply":
             result = coordinator.apply(args.release)

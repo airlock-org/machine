@@ -1494,3 +1494,62 @@ def test_boot_readiness_waits_for_running_and_qrexec(
 def test_boot_readiness_rejects_wrong_generation(machine):
     with pytest.raises(deploy.DeploymentError, match="differs from release"):
         machine.wait_boot_guest("sys-dev", "/nix/store/wrong-system")
+
+
+def direct_candidate_fixture(machine, tmp_path, topology):
+    """One guest is enough to exercise release binding independently of Nix."""
+    receipt = guest_receipt(machine, topology)
+    info = machine.generation_details
+    info["approval"]["approved_by"] = "sys-ctrl"
+    wanted = deepcopy(topology)
+    wanted["domains"] = {"usr-home": wanted["domains"]["usr-home"]}
+    wanted["domains"]["usr-home"]["prefs"]["guivm"] = None
+    backend = wanted["domains"]["usr-home"]["backend"]
+    backend["system"]["source"] = info["system"]
+    backend["store"]["source"] = info["closure_source"]
+    release = write_release(tmp_path / "direct-release", wanted)
+    manifest = deploy.read_json(release / "release.json")
+    manifest.update(guestTransport="direct-pool-v1", revision=receipt["source_revision"],
+                    lockHash=receipt["lock_hash"])
+    deploy.atomic_json(release / "release.json", manifest)
+    return release, {"usr-home": receipt}
+
+
+def test_direct_binding_rejects_missing_receipts(machine, tmp_path, topology):
+    release, _ = direct_candidate_fixture(machine, tmp_path, topology)
+    with pytest.raises(deploy.DeploymentError, match="receipts differ"):
+        machine.machine_candidate(release, {})
+
+
+def test_direct_binding_checks_pool_authority(machine, tmp_path, topology):
+    release, receipts = direct_candidate_fixture(machine, tmp_path, topology)
+    machine.generation_details["approval"]["approved_by"] = "sys-dev"
+    with pytest.raises(deploy.DeploymentError, match="requires sys-ctrl"):
+        machine.machine_candidate(release, receipts)
+
+
+def test_direct_binding_is_stable_across_transfer_metrics(machine, tmp_path, topology):
+    release, receipts = direct_candidate_fixture(machine, tmp_path, topology)
+    candidate = machine.machine_candidate(release, receipts)
+    receipts["usr-home"].update(objects_transferred=0, current_generation=17)
+    assert machine.machine_candidate(release, receipts) == candidate
+    assert deploy.read_json(candidate / "staged.json") == {"usr-home": 17}
+
+
+def test_direct_binding_rejects_changed_generation_identity(machine, tmp_path, topology):
+    release, receipts = direct_candidate_fixture(machine, tmp_path, topology)
+    machine.generation_details["system"] = "/nix/store/wrong-system"
+    with pytest.raises(deploy.DeploymentError, match="identity mismatch"):
+        machine.machine_candidate(release, receipts)
+
+
+def test_direct_stage_never_falls_back_to_source_import(machine, tmp_path, topology):
+    release, receipts = direct_candidate_fixture(machine, tmp_path, topology)
+    candidate = machine.machine_candidate(release, receipts)
+    _, wanted = deploy.load_release(candidate)
+    transaction = tmp_path / "staged"
+    transaction.mkdir()
+    machine.calls.clear()
+    machine.stage(candidate, wanted, [], transaction)
+    assert deploy.read_json(transaction / "staged.json") == {"usr-home": 17}
+    assert not any("admit" in call for call in machine.calls)

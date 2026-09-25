@@ -356,7 +356,8 @@ def main(argv=None):
             args.target,
         ])
     if args.action in ("build", "plan", "apply") and not args.legacy_dom0:
-        return subprocess.call(["airlock-sys-ctrl-guest-deploy", "machine-" + args.action])
+        return subprocess.call(["airlock-sys-ctrl-guest-deploy", "machine-" + args.action,
+                                "--repo", str(args.repo)])
     if (
         args.action in ("release-prune-plan", "release-prune", "release-retain")
         and not args.release
@@ -370,6 +371,20 @@ def main(argv=None):
         target = args.release if args.action == "release-prune" else args.identity
         if args.confirm != target:
             parser.error("--confirm must match the exact target")
+    if not args.legacy_dom0:
+        request = {"schema": "airlock.machine-control.v1", "action": args.action}
+        for key in ("release", "identity", "confirm", "retain"):
+            value = getattr(args, key)
+            if value is not None:
+                request[key] = value
+        if args.allow_unexpired_trash:
+            request["allow_unexpired_trash"] = args.allow_unexpired_trash
+        if args.before_expiry:
+            request["before_expiry"] = True
+        return subprocess.run(
+            ["qrexec-client-vm", "dom0", "airlock.Ctrl.MachineControl"],
+            input=json.dumps(request) + "\n", text=True,
+        ).returncode
     session = None
     try:
         receipt = None

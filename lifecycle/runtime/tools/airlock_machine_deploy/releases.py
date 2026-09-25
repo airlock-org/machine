@@ -94,6 +94,15 @@ class ReleaseManager:
         if (baseline / "release.json").exists():
             releases.setdefault(str(baseline), [])
         for root in (self.machine.state / "roots").glob("*"):
+            if root.name.startswith("pending-"):
+                candidate = self.machine.state / "candidates" / root.name.removeprefix("pending-")
+                if root.is_symlink() and (candidate / "release.json").is_file():
+                    releases.setdefault(str(candidate), []).append(root.name)
+                continue
+            if root.name.startswith("host-"):
+                # A direct candidate's transaction root retains its transport
+                # closure; the transport is not independently activatable.
+                continue
             if root.is_symlink() and (root.resolve() / "release.json").is_file():
                 releases.setdefault(str(root.resolve()), []).append(root.name)
         return releases

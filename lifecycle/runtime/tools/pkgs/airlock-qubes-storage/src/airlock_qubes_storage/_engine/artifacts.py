@@ -444,6 +444,40 @@ def _admit_received(manifest, fragments, root, approved_by, *, reused=None):
         kernel_name = kernel_name or previous_manifest.get("kernel", {}).get("name", "")
     if not root_source or not kernel_name:
         fail("pool admission requires complete root and kernel identity")
+    # Retry a candidate without creating another retained view. Reuse only an
+    # exact committed, verified generation with matching admission provenance.
+    # Incremental negotiation has already checked the payload identities.
+    for existing_path in sorted(generations_dir.glob("*/manifest.json")):
+        existing = read_json(existing_path)
+        if (not generation_is_committed(root, existing)
+                or existing.get("system") != system
+                or existing.get("root", {}).get("source") != root_source
+                or existing.get("kernel", {}).get("name") != kernel_name
+                or existing.get("store", {}).get("paths") != sorted(objects)
+                or existing.get("approval") != {
+                    "approved_by": approved_by, "source": manifest["closure_source"],
+                    "transport": "qrexec"}
+                or existing.get("provenance", {}).get("source_revision") != manifest["source_revision"]
+                or existing.get("provenance", {}).get("lock_hash") != manifest["lock_hash"]
+                or existing.get("retention", {}).get("retain") is not True
+                or existing.get("verification", {}).get("status") != "passed"):
+            continue
+        if any((saved := reusable_object(root, path)) is None
+               or saved.get("tree_hash") != obj["tree_hash"]
+               for path, obj in objects.items()):
+            continue
+        return {
+            "schema": SCHEMA_ADMISSION, "status": "passed", "transport": "qrexec",
+            "domain": domain, "generation": existing["generation"],
+            "previous_generation": existing.get("previous_generation"),
+            "current_generation": previous, "activated": False, "retained": True,
+            "manifest": str(existing_path), "system": system, "root_source": root_source,
+            "kernel_name": kernel_name, "closure_hash": existing["store"]["closure_hash"],
+            "objects_total": len(objects), "objects_admitted": 0,
+            "objects_reused": len(objects), "objects_transferred": len(fragments),
+            "payload_bytes_transferred": sum(fragment["size"] for fragment in fragments.values()),
+            "source_revision": manifest["source_revision"], "lock_hash": manifest["lock_hash"],
+        }
     generation = next_generation(domain_dir)
     txid = transaction_id(f"artifact:{domain}:{generation}:{system}")
     tx_path = root / "transactions" / f"{txid}.json"
@@ -664,6 +698,11 @@ def receive_incremental(stream, output, *, pool_root, expected_domain, approved_
     _, _, objects = _validate_received(inventory, {}, expected_domain, inventory=True)
     root = ensure_pool(pool_root)
     with admission_lock(root):
+        # No other admission can own these directories while this lock is held.
+        # Remove fragments abandoned by process death before starting a retry.
+        for orphan in (root / "tmp").glob("incoming-*"):
+            if orphan.is_dir() and not orphan.is_symlink():
+                shutil.rmtree(orphan)
         reused = {}
         for path, record in objects.items():
             existing = reusable_object(root, path)

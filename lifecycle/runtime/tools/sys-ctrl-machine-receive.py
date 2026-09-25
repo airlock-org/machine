@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Restricted dom0 receiver for a controller-built whole-machine release."""
+"""Restricted dom0 receiver for controller releases and direct pool receipts."""
 
 import argparse
 import gzip
@@ -11,14 +11,16 @@ import subprocess
 import sys
 import uuid
 
-SCHEMA = "airlock.sys-ctrl-machine-release.v1"
+SCHEMA = "airlock.sys-ctrl-machine-release.v2"
 STORE_PATH = re.compile(r"/nix/store/[0-9a-df-np-sv-z]{32}-[A-Za-z0-9+._?=-]+")
 HEX = re.compile(r"[0-9a-f]+")
+MAX_HEADER = 16 * 1024 * 1024
+STATE = Path("/var/lib/airlock/machine")
 
 
 def receive(action):
-    line = sys.stdin.buffer.readline(4097)
-    if len(line) > 4096 or not line.endswith(b"\n"):
+    line = sys.stdin.buffer.readline(MAX_HEADER + 1)
+    if len(line) > MAX_HEADER or not line.endswith(b"\n"):
         raise ValueError("invalid release header")
     header = json.loads(line)
     if not isinstance(header, dict) or header.get("schema") != SCHEMA:
@@ -33,14 +35,23 @@ def receive(action):
         raise ValueError("invalid lock hash")
     if header.get("profile") != "usb-lab":
         raise ValueError("unsupported machine profile")
-    nar_bytes = header.get("nar_bytes")
-    if type(nar_bytes) is not int or nar_bytes < 0:
-        raise ValueError("invalid closure size")
+    paths = header.get("paths")
+    if not isinstance(paths, dict) or release not in paths or len(paths) > 100000:
+        raise ValueError("invalid release inventory")
+    if any(not STORE_PATH.fullmatch(path) or type(size) is not int or size < 0
+           for path, size in paths.items()):
+        raise ValueError("invalid release object")
+    valid = set(subprocess.check_output(
+        ["nix", "--extra-experimental-features", "nix-command", "path-info", "--all"],
+        text=True,
+    ).splitlines())
+    missing = sorted(set(paths) - valid)
     stat = os.statvfs("/nix/store")
     available = stat.f_bavail * stat.f_frsize
     reserve = 2 * 1024**3
-    if available < nar_bytes + reserve:
+    if available < sum(paths[path] for path in missing) + reserve:
         raise ValueError("insufficient dom0 store space for release import")
+    print(json.dumps({"schema": SCHEMA, "missing": missing}), flush=True)
     importer = subprocess.Popen(["nix-store", "--import"], stdin=subprocess.PIPE,
                                 stdout=subprocess.DEVNULL)
     try:
@@ -60,6 +71,7 @@ def receive(action):
             importer.wait()
     manifest = json.loads((Path(release) / "release.json").read_text())
     if (manifest.get("schema") != "airlock.machine-release.v1"
+            or manifest.get("guestTransport") != "direct-pool-v1"
             or manifest.get("revision") != revision
             or manifest.get("lockHash") != lock_hash
             or manifest.get("profile") != "usb-lab"):
@@ -69,16 +81,26 @@ def receive(action):
         STORE_PATH.pattern + r"/bin/airlock-machine-deploy", coordinator
     ):
         raise ValueError("invalid release coordinator")
-    plan = subprocess.run([coordinator, "plan", release], check=True,
+    bound = subprocess.run([coordinator, "machine-bind", release, "-"],
+                           input=json.dumps(header.get("receipts")),
+                           check=True, text=True, capture_output=True)
+    candidate = json.loads(bound.stdout)["candidate"]
+    plan = subprocess.run([coordinator, "plan", candidate], check=True,
                           text=True, capture_output=True)
-    if action == "plan":
-        print(plan.stdout, end="")
-    else:
+    # Retain only host/transport objects. The pool owns guest retention.
+    root = STATE / "roots" / ("pending-" + Path(candidate).name)
+    root.parent.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["nix-store", "--add-root", str(root), "--realise", release],
+                   check=True, stdout=subprocess.DEVNULL)
+    result = {"schema": SCHEMA, "release": candidate, "source_release": release,
+              "plan": json.loads(plan.stdout), "paths_transferred": len(missing),
+              "nar_bytes": transferred}
+    if action == "apply":
         unit = "airlock-machine-deploy-" + uuid.uuid4().hex[:12]
         subprocess.run(["systemd-run", "--unit=" + unit, "--collect",
-                        "--property=Type=exec", coordinator, "apply", release], check=True)
-        print(json.dumps({"schema": SCHEMA, "unit": unit, "release": release,
-                          "plan": json.loads(plan.stdout)}, sort_keys=True))
+                        "--property=Type=exec", coordinator, "apply", candidate], check=True, stdout=subprocess.DEVNULL)
+        result["unit"] = unit
+    print(json.dumps(result, sort_keys=True))
 
 
 def main():
@@ -88,7 +110,7 @@ def main():
     try:
         receive(args.action)
         return 0
-    except (ValueError, OSError, subprocess.SubprocessError, EOFError) as exc:
+    except (ValueError, OSError, subprocess.SubprocessError, EOFError, KeyError, TypeError) as exc:
         print(f"airlock-ctrl-machine-receive: {exc}", file=sys.stderr)
         return 1
 

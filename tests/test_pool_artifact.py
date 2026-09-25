@@ -156,6 +156,7 @@ def test_transferred_artifact_is_inactive_retained_and_reused(artifact_input):
     assert first["current_generation"] is None
     assert first["objects_admitted"] == 2
     second = receive(artifact_input)
+    assert second["generation"] == first["generation"]
     assert second["objects_admitted"] == 0
     assert second["objects_reused"] == 2
     assert len(list((artifact_input["pool"] / "objects/metadata").glob("*.json"))) == 2
@@ -183,7 +184,7 @@ def test_transferred_artifact_is_inactive_retained_and_reused(artifact_input):
     gc_result = maintenance.gc(
         SimpleNamespace(pool_root=artifact_input["pool"], keep_generations=0)
     )
-    assert len(gc_result["retained_generations"]) == 2
+    assert len(gc_result["retained_generations"]) == 1
     assert not gc_result["removed_object_metadata"]
 
 
@@ -211,7 +212,8 @@ def test_system_only_artifact_inherits_committed_boot_identity(artifact_input):
     )
     assert result["root_source"] == expected_root
     assert result["kernel_name"] == expected_kernel
-    assert result["previous_generation"] == first["generation"]
+    assert result["current_generation"] == first["generation"]
+    assert result["generation"] == first["generation"]
     manifest = core.read_json(result["manifest"])
     assert manifest["root"]["source"] == expected_root
     assert manifest["kernel"]["name"] == expected_kernel
@@ -498,6 +500,7 @@ def test_incremental_empty_pool_then_no_payload_on_repeat(artifact_input, monkey
         lambda *args: pytest.fail("reused objects must not be packaged"),
     )
     second, request, payload = incremental_exchange(artifact_input)
+    assert second["generation"] == first["generation"]
     assert request["missing"] == []
     assert second["objects_transferred"] == second["objects_admitted"] == 0
     assert second["payload_bytes_transferred"] == 0

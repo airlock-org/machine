@@ -20,7 +20,7 @@ def test_controller_rejects_unapproved_caller_before_reading_input(monkeypatch):
         DEPLOY.serve()
 
 
-@pytest.mark.parametrize("target", ["sys-ctrl", "dom0", "../usr-home"])
+@pytest.mark.parametrize("target", ["sys-config-vault", "dom0", "../usr-home"])
 def test_submission_rejects_non_guest_targets_before_bundling(target, tmp_path):
     with pytest.raises(ValueError, match="unsupported guest"):
         DEPLOY.request("apply", target, tmp_path)

@@ -21,7 +21,7 @@ def validate_release_topology(release, topology) -> None:
     if not isinstance(staged, dict) or any(
         not isinstance(name, str)
         or not re.fullmatch(r"[A-Za-z0-9_.-]+", name)
-        or not isinstance(generation, int)
+        or type(generation) is not int
         or generation < 1
         for name, generation in staged.items()
     ):
@@ -72,14 +72,14 @@ def validate_staged_generation(
     approval = info.get("approval", {})
     provenance = info.get("provenance", {})
     if (
-        approval.get("approved_by") != "sys-dev"
+        approval.get("approved_by") not in {"sys-dev", "sys-ctrl"}
         or approval.get("transport") != "qrexec"
         or approval.get("source") != store["source"]
     ):
         raise DeploymentError(f"{domain}: staged generation approval mismatch")
-    if provenance.get("source_revision") != release_manifest[
-        "revision"
-    ] or provenance.get("lock_hash") != release_manifest.get("lockHash"):
+    expected_provenance = release_manifest.get("guestProvenance", {}).get(domain, release_manifest)
+    if (provenance.get("source_revision") != expected_provenance["revision"]
+            or provenance.get("lock_hash") != expected_provenance.get("lockHash")):
         raise DeploymentError(f"{domain}: staged generation provenance mismatch")
     if info.get("verification", {}).get("status") != "passed":
         raise DeploymentError(f"{domain}: staged generation is not verified")
@@ -105,7 +105,7 @@ def validate_admission_receipt(receipt) -> tuple[str, int, str, str]:
     lock_hash = receipt.get("lock_hash")
     if not isinstance(domain, str) or not re.fullmatch(r"[A-Za-z0-9_.-]+", domain):
         raise DeploymentError("invalid receipt domain")
-    if not isinstance(generation, int) or generation < 1:
+    if type(generation) is not int or generation < 1:
         raise DeploymentError("invalid receipt generation")
     if not isinstance(revision, str) or not re.fullmatch(
         r"[0-9a-f]{40,64}", revision

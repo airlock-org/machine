@@ -205,6 +205,71 @@ class Coordinator:
             raise DeploymentError("closure store returned invalid generation details")
         return result
 
+    def machine_candidate(self, release, receipts):
+        """Bind a controller release to exact, independently checked pool generations."""
+        with self.locked():
+            manifest, topology = load_release(release)
+            if manifest.get("guestTransport") != "direct-pool-v1":
+                raise DeploymentError("release does not use direct pool admission")
+            domains = {
+                name: domain["backend"]
+                for name, domain in topology["domains"].items()
+                if domain["backend"]["type"] == "nix-closure"
+            }
+            if not isinstance(receipts, dict) or set(receipts) != set(domains):
+                raise DeploymentError("admission receipts differ from release guests")
+            staged = {}
+            for name, backend in domains.items():
+                receipt = receipts[name]
+                domain, generation, revision, lock_hash = validate_admission_receipt(receipt)
+                if (domain, revision, lock_hash) != (
+                    name, manifest["revision"], manifest["lockHash"]
+                ):
+                    raise DeploymentError("admission provenance differs from release")
+                info = self.generation_info(name, generation)
+                validate_staged_generation(info, name, generation, backend, manifest)
+                if info.get("approval", {}).get("approved_by") != "sys-ctrl":
+                    raise DeploymentError("whole-machine admission requires sys-ctrl")
+                for key in ("manifest", "system", "root_source", "kernel_name"):
+                    if info.get(key) != receipt.get(key):
+                        raise DeploymentError("admission receipt identity mismatch")
+                if info.get("store", {}).get("closure_hash") != receipt.get("closure_hash"):
+                    raise DeploymentError("admission receipt closure mismatch")
+                staged[name] = generation
+            manifest = dict(manifest, stagedGenerations=staged, sourceRelease=str(release),
+                            guestProvenance={name: {"revision": manifest["revision"],
+                                                    "lockHash": manifest["lockHash"]}
+                                             for name in staged})
+            identity = hashlib.sha256(json.dumps(
+                {"release": manifest, "topology": topology}, sort_keys=True
+            ).encode()).hexdigest()
+            candidate = self.state / "candidates" / identity
+            expected = {"release.json": manifest, "topology.json": topology,
+                        "staged.json": staged, "receipts.json": {
+                            name: {key: receipt.get(key) for key in (
+                                "domain", "generation", "manifest", "system", "root_source",
+                                "kernel_name", "closure_hash", "source_revision", "lock_hash")}
+                            for name, receipt in receipts.items()}}
+            if candidate.exists():
+                if any(read_json(candidate / key) != value for key, value in expected.items()):
+                    raise DeploymentError("existing machine candidate differs")
+            else:
+                candidate.parent.mkdir(parents=True, exist_ok=True)
+                temporary = candidate.parent / f".{identity}.new-{time.time_ns()}"
+                temporary.mkdir()
+                try:
+                    for key, value in expected.items():
+                        atomic_json(temporary / key, value)
+                    temporary.rename(candidate)
+                    fd = os.open(candidate.parent, os.O_RDONLY | os.O_DIRECTORY)
+                    try:
+                        os.fsync(fd)
+                    finally:
+                        os.close(fd)
+                finally:
+                    shutil.rmtree(temporary, ignore_errors=True)
+            return candidate
+
     def guest_candidate(self, receipt):
         domain, generation, revision, lock_hash = validate_admission_receipt(receipt)
 
@@ -282,7 +347,11 @@ class Coordinator:
             revision=revision,
             lockHash=lock_hash,
             baseRelease=str(baseline),
-            stagedGenerations={domain: generation},
+            stagedGenerations={**(current_release.get("stagedGenerations", {})
+                                  if current_release.get("guestTransport") == "direct-pool-v1" else {}),
+                               domain: generation},
+            guestProvenance={**current_release.get("guestProvenance", {}),
+                             domain: {"revision": revision, "lockHash": lock_hash}},
             guestAdmission={
                 "domain": domain,
                 "generation": generation,
@@ -393,6 +462,12 @@ class Coordinator:
     def stage(self, release, topology, names, directory):
         release_manifest, _ = load_release(release)
         preferred = release_manifest.get("stagedGenerations", {})
+        if release_manifest.get("guestTransport") == "direct-pool-v1":
+            expected = {name for name, domain in topology["domains"].items()
+                        if domain["backend"]["type"] == "nix-closure"}
+            if set(preferred) != expected:
+                raise DeploymentError("direct release is missing admitted generations")
+            names = sorted(set(names) | expected)
         unexpected = set(preferred) - set(names)
         if unexpected:
             raise DeploymentError(
@@ -677,7 +752,9 @@ class Coordinator:
                 if str(release).startswith("/nix/store/"):
                     self.pin(transaction, release)
                 else:
-                    self.pin("host-" + transaction, manifest["host"])
+                    self.pin("host-" + transaction, manifest.get("sourceRelease", manifest["host"]))
+                # An applied candidate is now protected by its transaction root.
+                (self.state / "roots" / ("pending-" + release.name)).unlink(missing_ok=True)
                 self.install_boot_hook(release, baseline)
                 self.stage(release, topology, changes["stage"], directory)
                 trash_plan = [

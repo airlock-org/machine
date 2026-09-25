@@ -42,7 +42,8 @@ def test_whole_machine_actions_delegate_to_controller_by_default(monkeypatch, ac
     calls = []
     monkeypatch.setattr(DEPLOY.subprocess, "call", lambda argv: calls.append(argv) or 0)
     assert DEPLOY.main([action]) == 0
-    assert calls == [["airlock-sys-ctrl-guest-deploy", "machine-" + action]]
+    assert calls == [["airlock-sys-ctrl-guest-deploy", "machine-" + action,
+                      "--repo", str(DEPLOY.DEFAULT_REPO)]]
 
 
 def test_dom0_bridge_allocates_the_terminal_required_by_qrexec(monkeypatch):
@@ -368,7 +369,7 @@ def test_maintenance_is_detached_and_does_not_build(action, arguments, monkeypat
         "run_detached",
         lambda _session, command: started.append(command) or "unit",
     )
-    assert DEPLOY.main([action, *arguments]) == 0
+    assert DEPLOY.main([action, "--legacy-dom0", *arguments]) == 0
     assert started == [["/controller", action, arguments[1], "--confirm", arguments[3]]]
 
 
@@ -412,7 +413,7 @@ def test_maintenance_forwards_early_purge_override(
         DEPLOY, "run_detached",
         lambda _session, command: started.append(command) or "unit",
     )
-    assert DEPLOY.main([action, *arguments]) == 0
+    assert DEPLOY.main([action, "--legacy-dom0", *arguments]) == 0
     assert started == [expected]
 
 
@@ -420,3 +421,18 @@ def test_maintenance_refuses_wrong_confirmation_before_connecting(monkeypatch):
     monkeypatch.setattr(DEPLOY, "Dom0", lambda: pytest.fail("unexpected connection"))
     with pytest.raises(SystemExit):
         DEPLOY.main(["trash-purge", "--identity", "123-vm", "--confirm", "456-vm"])
+
+
+@pytest.mark.parametrize("action", ["status", "verify", "resume", "rollback"])
+def test_normal_recovery_uses_typed_dom0_route_without_controller(monkeypatch, action):
+    monkeypatch.setattr(DEPLOY, "Dom0", lambda: pytest.fail("normal recovery opened the development shell"))
+    calls = []
+
+    def run(argv, **kwargs):
+        calls.append((argv, json.loads(kwargs["input"])))
+        return subprocess.CompletedProcess(argv, 0)
+
+    monkeypatch.setattr(DEPLOY.subprocess, "run", run)
+    assert DEPLOY.main([action]) == 0
+    assert calls == [(["qrexec-client-vm", "dom0", "airlock.Ctrl.MachineControl"],
+                      {"schema": "airlock.machine-control.v1", "action": action})]

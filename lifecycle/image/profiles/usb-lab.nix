@@ -13,6 +13,7 @@
     targets = [
       "sys-gui"
       "sys-dev"
+      "sys-ctrl"
       "sys-net"
       "sys-firewall"
       "usr-home"
