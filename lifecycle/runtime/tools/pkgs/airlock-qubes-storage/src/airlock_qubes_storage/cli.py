@@ -7,7 +7,7 @@ from .engine import EngineError, run
 def main(argv=None):
     try:
         result = run(argv)
-    except EngineError as exc:
+    except (EngineError, OSError, ValueError) as exc:
         print(f"airlock-closure-store: {exc}", file=sys.stderr)
         return 1
     print(json.dumps(result, sort_keys=True))

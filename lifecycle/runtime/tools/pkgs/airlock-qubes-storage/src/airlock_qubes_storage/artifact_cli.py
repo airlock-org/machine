@@ -3,6 +3,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 
 from ._engine.artifacts import (
     SCHEMA_ERROR,
@@ -136,11 +137,19 @@ def send_main(argv=None):
             stdout=subprocess.PIPE,
         )
 
-        def negotiate(inventory):
-            write_message(process.stdin, inventory)
-            return read_receiver_message(process.stdout)
+        started = time.monotonic()
+        timings = {}
 
-        write_artifact(process.stdin, negotiate=negotiate, **prepare_kwargs(args))
+        def negotiate(inventory):
+            timings["sender_inventory_seconds"] = time.monotonic() - started
+            write_message(process.stdin, inventory)
+            response = read_receiver_message(process.stdout)
+            timings["sender_negotiation_seconds"] = (
+                time.monotonic() - started - timings["sender_inventory_seconds"])
+            return response
+
+        inventory = write_artifact(process.stdin, negotiate=negotiate, **prepare_kwargs(args))
+        timings["sender_payload_seconds"] = time.monotonic() - started - sum(timings.values())
         process.stdin.close()
         result = read_receiver_message(process.stdout)
         code = process.wait()
@@ -153,8 +162,12 @@ def send_main(argv=None):
             or result.get("system") != args.system
             or result.get("activated") is not False
             or result.get("retained") is not True
+            or (inventory.get("root_artifact") is not None
+                and result.get("root_artifact") != inventory["root_artifact"])
         ):
             raise EngineError("invalid pool admission response")
+        result.setdefault("timings", {}).update(timings)
+        result["payload_encoding"] = "tar-with-canonical-sparse-root"
         print(json.dumps(result, sort_keys=True))
         return 0
     except (EngineError, OSError, ValueError) as exc:

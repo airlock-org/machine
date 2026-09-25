@@ -545,8 +545,9 @@ let
       imageName,
       rootImageSizeMiB ? 512,
     }:
-    pkgs.runCommand "${imageName}-nix-closure-root-image"
+    pkgs.runCommand "airlock-nix-closure-root-image"
       {
+        outputs = [ "out" "metadata" ];
         nativeBuildInputs = [
           pkgs.coreutils
           pkgs.e2fsprogs
@@ -596,14 +597,36 @@ let
 
         (cd "$root" && find . -mindepth 1 -print | sort) > "$out/root-files.txt"
 
+        # Root images have no VM-specific identity. Qubes owns independent
+        # writable/private volumes; identical boot contents have one identity.
+        find "$root" -exec touch -h -d @1 {} +
+        export E2FSPROGS_FAKE_TIME=1 SOURCE_DATE_EPOCH=1
         truncate -s ${toString rootImageSizeMiB}M "$out/root.img"
         # As in NixOS make-ext4-fs, record root ownership in the image without
         # requiring a privileged build. Otherwise -d preserves the build user's
         # UID/GID, making /var user-owned and preventing safe tmpfiles setup.
-        fakeroot mkfs.ext4 -q -F -L nixroot -d "$root" "$out/root.img"
+        fakeroot mkfs.ext4 -q -F -L nixroot \
+          -U 00000000-0000-4000-8000-000000000001 \
+          -O ^has_journal \
+          -E hash_seed=00000000-0000-4000-8000-000000000001,lazy_itable_init=0 \
+          -d "$root" "$out/root.img"
+        # mkfs -d copies host inode ctimes too; normalize every populated inode.
+        {
+          printf "/\n/lost+found\n"
+          sed 's,^\.,,' "$out/root-files.txt"
+        } | while IFS= read -r path; do
+          for field in atime ctime mtime crtime; do
+            printf 'set_inode_field "%s" %s 1\n' "$path" "$field"
+          done
+        done > root-times.debugfs
+        debugfs -w -f root-times.debugfs "$out/root.img"
+        mkdir -p "$metadata"
+        ${pkgs.python3}/bin/python3 \
+          ${../../runtime/tools/pkgs/airlock-qubes-storage/src/airlock_qubes_storage/root_format.py} \
+          "$out/root.img" "$metadata/root.json"
 
         cat > "$out/manifest.json" <<EOF
-        {"schema":"airlock.nix-closure-root-image.v1","name":"${imageName}","image":"root.img","contains_store":false,"init":"/sbin/init","store_mountpoint":"/nix/store","store_device_default":"/dev/xvde","store_blob_device_default":"/dev/xvdf","store_formats":["erofs"]}
+        {"schema":"airlock.nix-closure-root-image.v1","image":"root.img","contains_store":false,"init":"/sbin/init","store_mountpoint":"/nix/store","store_device_default":"/dev/xvde","store_blob_device_default":"/dev/xvdf","store_formats":["erofs"]}
         EOF
       '';
 

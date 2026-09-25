@@ -16,6 +16,7 @@ from .core import (
 from .generations import admit_generation
 from .segments import seal_segment_locked, segment_ids
 from .state import generation_is_committed, generation_manifest_path
+from .root_images import verify_generation_root
 
 SCHEMA_PREPARED = "airlock.closure-store.prepared.v1"
 
@@ -115,6 +116,9 @@ def prepare_pool(root, descriptors, specs, runtime_root):
         store = manifest["store"]
         relative_manifest = str(manifest_path.relative_to(root))
         files = {relative_manifest}
+        root_artifact = manifest.get("root", {}).get("artifact")
+        if root_artifact:
+            files.add(f"root-artifacts/{root_artifact['sha256']}/artifact.json")
         for key in (
             "canonical_metadata_image",
             "canonical_blob_map",
@@ -211,6 +215,7 @@ def verify_outputs(root, descriptors):
         if relative not in files:
             fail("prepared store manifest checksum missing")
         verify_files(root, files, fingerprints)
+        verify_generation_root(root, read_json(Path(root) / relative))
     return {"status": "passed", "variants": len(paths), "files": len(fingerprints)}
 
 
@@ -251,12 +256,13 @@ def verify_prepared(args):
     if relative_manifest not in files:
         fail("prepared store manifest checksum missing")
     print(
-        f"Checking prepared store metadata for {args.domain} (trusting image payload; no payload scan)",
+        f"Checking prepared store metadata and root for {args.domain} (trusting package payload)",
         file=sys.stderr,
         flush=True,
     )
     verify_files(root, files, trust_payload=True)
     manifest = read_json(generation_manifest_path(root, args.domain, generation))
+    verify_generation_root(root, manifest)
     store = manifest.get("store", {})
     if not generation_is_committed(root, manifest):
         fail("prepared store generation is not committed")

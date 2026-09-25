@@ -181,6 +181,7 @@ def serve():
 
 
 def build_machine_release(revision, lock_hash):
+    started = time.monotonic()
     release = output("airlock-sys-dev-machine-build", "build",
                      ".#airlock-machine-release-usb-lab")
     physical = Path("/rw/airlock-builder/merged") / release.lstrip("/")
@@ -198,6 +199,7 @@ def build_machine_release(revision, lock_hash):
                     "--out-link", str(record / "release")], check=True)
     (record / "build.json").write_text(json.dumps({
         "schema": MACHINE_SCHEMA, "release": release,
+        "build_seconds": time.monotonic() - started,
         "revision": revision, "lock_hash": lock_hash,
     }, sort_keys=True) + "\n")
     return release
@@ -207,6 +209,7 @@ def send_machine_release(action, release, revision, lock_hash):
     started = time.monotonic()
     physical = Path("/rw/airlock-builder/merged") / release.lstrip("/")
     topology = json.loads((physical / "topology.json").read_text())
+    roots = json.loads((physical / "root-artifacts.json").read_text())
     receipts = {}
     for name, domain in sorted(topology["domains"].items()):
         backend = domain["backend"]
@@ -220,6 +223,8 @@ def send_machine_release(action, release, revision, lock_hash):
             "--kernel-name", backend["kernel"]["name"],
             "--source-revision", revision, "--lock-hash", lock_hash,
         ))
+        if receipt.get("root_artifact") != roots[name]:
+            raise ValueError("admitted root differs from built release")
         receipts[name] = receipt
         record(STATE / "candidates" / revision / "admissions.json", receipts)
     transport = os.readlink(physical / "transport")
@@ -259,10 +264,20 @@ def send_machine_release(action, release, revision, lock_hash):
         if receiver.wait():
             raise ValueError("machine release transfer or dom0 validation failed")
         result["elapsed_seconds"] = time.monotonic() - started
+        build_record = Path.home() / ".local/share/airlock/machine-deploy" / revision / "build.json"
+        result["build_seconds"] = json.loads(build_record.read_text())["build_seconds"]
         result["guest_transfer"] = {
             name: {key: receipt.get(key) for key in
-                   ("objects_total", "objects_reused", "objects_transferred", "payload_bytes_transferred")}
+                   ("objects_total", "objects_reused", "objects_transferred", "payload_bytes_transferred",
+                    "root_artifact", "root_reused", "root_payload_bytes_transferred",
+                    "root_logical_bytes", "root_allocated_bytes", "timings")}
             for name, receipt in receipts.items()
+        }
+        result["root_inventory"] = {
+            receipt["root_artifact"]["sha256"]: {
+                "logical_bytes": receipt["root_logical_bytes"],
+                "allocated_bytes": receipt["root_allocated_bytes"],
+            } for receipt in receipts.values()
         }
         record(STATE / "candidates" / revision / (action + ".json"), result)
         print(json.dumps(result, sort_keys=True))

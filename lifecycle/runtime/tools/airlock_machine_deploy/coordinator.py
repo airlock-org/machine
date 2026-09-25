@@ -218,6 +218,10 @@ class Coordinator:
             }
             if not isinstance(receipts, dict) or set(receipts) != set(domains):
                 raise DeploymentError("admission receipts differ from release guests")
+            roots = read_json(Path(release) / "root-artifacts.json")
+            if not isinstance(roots, dict) or set(roots) != set(domains):
+                raise DeploymentError("root artifact catalog differs from release guests")
+            manifest = dict(manifest, guestRootArtifacts=roots)
             staged = {}
             for name, backend in domains.items():
                 receipt = receipts[name]
@@ -230,7 +234,7 @@ class Coordinator:
                 validate_staged_generation(info, name, generation, backend, manifest)
                 if info.get("approval", {}).get("approved_by") != "sys-ctrl":
                     raise DeploymentError("whole-machine admission requires sys-ctrl")
-                for key in ("manifest", "system", "root_source", "kernel_name"):
+                for key in ("manifest", "system", "root_source", "root_artifact", "kernel_name"):
                     if info.get(key) != receipt.get(key):
                         raise DeploymentError("admission receipt identity mismatch")
                 if info.get("store", {}).get("closure_hash") != receipt.get("closure_hash"):
@@ -247,7 +251,7 @@ class Coordinator:
             expected = {"release.json": manifest, "topology.json": topology,
                         "staged.json": staged, "receipts.json": {
                             name: {key: receipt.get(key) for key in (
-                                "domain", "generation", "manifest", "system", "root_source",
+                                "domain", "generation", "manifest", "system", "root_source", "root_artifact",
                                 "kernel_name", "closure_hash", "source_revision", "lock_hash")}
                             for name, receipt in receipts.items()}}
             if candidate.exists():
@@ -291,6 +295,7 @@ class Coordinator:
             "manifest": receipt.get("manifest"),
             "system": receipt.get("system"),
             "root_source": receipt.get("root_source"),
+            "root_artifact": receipt.get("root_artifact"),
             "kernel_name": receipt.get("kernel_name"),
             "closure_hash": receipt.get("closure_hash"),
         }
@@ -300,6 +305,7 @@ class Coordinator:
             "manifest": info.get("manifest"),
             "system": info.get("system"),
             "root_source": info.get("root_source"),
+            "root_artifact": info.get("root_artifact"),
             "kernel_name": info.get("kernel_name"),
             "closure_hash": info.get("store", {}).get("closure_hash"),
         }
@@ -325,6 +331,7 @@ class Coordinator:
         candidate_backend = candidate_topology["domains"][domain]["backend"]
         candidate_backend["system"]["source"] = info["system"]
         candidate_backend["store"]["source"] = info["closure_source"]
+        candidate_backend["root"]["source"] = info["root_source"]
         prefs = candidate_topology["domains"][domain].get("prefs", {})
         opts = prefs.get("kernelopts", "")
         matches = re.findall(r"(?<!\S)airlock\.system=(\S+)", opts)
@@ -350,6 +357,8 @@ class Coordinator:
             stagedGenerations={**(current_release.get("stagedGenerations", {})
                                   if current_release.get("guestTransport") == "direct-pool-v1" else {}),
                                domain: generation},
+            guestRootArtifacts={**current_release.get("guestRootArtifacts", {}),
+                                domain: info["root_artifact"]},
             guestProvenance={**current_release.get("guestProvenance", {}),
                              domain: {"revision": revision, "lockHash": lock_hash}},
             guestAdmission={
@@ -361,7 +370,8 @@ class Coordinator:
         validate_staged_generation(
             info, domain, generation, candidate_backend, candidate_manifest
         )
-        if backend["system"]["source"] == info["system"]:
+        if (backend["system"]["source"] == info["system"]
+                and backend["root"]["source"] == info["root_source"]):
             raise DeploymentError("admitted guest system is already selected")
 
         identity = hashlib.sha256(
@@ -381,7 +391,7 @@ class Coordinator:
         expected = {
             "release.json": candidate_manifest,
             "topology.json": candidate_topology,
-            "staged.json": {domain: generation},
+            "staged.json": candidate_manifest["stagedGenerations"],
             "receipt.json": receipt,
         }
         if candidate.exists():

@@ -36,6 +36,7 @@ from .state import (
     switch_current,
 )
 from .views import materialize_view
+from .root_images import admit_root_source, verify_generation_root
 
 
 def mark_running(args):
@@ -84,6 +85,7 @@ def find_generation(args):
             "domain": domain,
         }
     generation, manifest_path, manifest = max(matches, key=lambda item: item[0])
+    verify_generation_root(root, manifest)
     return {
         "schema": "airlock.closure-store.generation-match.v1",
         "status": "found",
@@ -106,6 +108,7 @@ def describe_generation(args):
     if not generation_is_committed(root, manifest):
         fail(f"generation is not committed for {domain}: {generation}")
     store = manifest.get("store", {})
+    verify_generation_root(root, manifest)
     return {
         "schema": "airlock.closure-store.generation-info.v1",
         "status": "passed",
@@ -116,6 +119,7 @@ def describe_generation(args):
         "manifest": str(manifest_path),
         "system": manifest.get("system"),
         "root_source": manifest.get("root", {}).get("source", ""),
+        "root_artifact": manifest.get("root", {}).get("artifact"),
         "kernel_name": manifest.get("kernel", {}).get("name", ""),
         "closure_source": store.get("source", ""),
         "store": {
@@ -138,6 +142,8 @@ def describe_generation(args):
 
 def admit_generation(args):
     root = ensure_pool(args.pool_root)
+    root_artifact = (admit_root_source(root, args.root_source, args.physical_store_root)
+                     if args.root_source else None)
     domain = safe_domain_name(args.domain)
     domain_dir = root / "domains" / domain
     generations_dir = domain_dir / "generations"
@@ -225,6 +231,7 @@ def admit_generation(args):
         "system": args.system,
         "root": {
             "source": args.root_source,
+            "artifact": root_artifact,
         },
         "kernel": {
             "name": args.kernel_name,
@@ -300,6 +307,7 @@ def admit_generation(args):
         "activated": parse_bool(args.activate),
         "manifest": str(manifest_path),
         "system": args.system,
+        "root_artifact": root_artifact,
         "closure_hash": closure_id,
         "verification": verification,
         "store": manifest["store"],
@@ -425,6 +433,7 @@ def switch(args):
     manifest = read_json(generation_manifest_path(root, domain, generation))
     if not generation_is_committed(root, manifest):
         fail(f"generation is not committed for {domain}: {generation}")
+    verify_generation_root(root, manifest)
     previous = current_generation(root, domain)
     switch_current(root, domain, generation)
     return {

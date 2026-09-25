@@ -99,6 +99,12 @@ def artifact_input(tmp_path, monkeypatch):
         }
 
     monkeypatch.setattr(artifacts, "materialize_view", fake_view)
+    root_image = physical / ("c" * 32 + "-root") / "root.img"
+    root_image.parent.mkdir()
+    with root_image.open("wb") as stream:
+        stream.truncate(16 * 1024 * 1024)
+        stream.seek(1080)
+        stream.write(b"\x53\xef")
     output = io.BytesIO()
     kwargs = dict(
         domain="usr-home",
@@ -492,6 +498,8 @@ def test_incremental_empty_pool_then_no_payload_on_repeat(artifact_input, monkey
     assert request["missing"] == [artifact_input["common"], artifact_input["system"]]
     assert first["objects_transferred"] == first["objects_admitted"] == 2
     assert first["payload_bytes_transferred"] > 0
+    assert request["missing_root"] is True
+    assert first["root_payload_bytes_transferred"] < first["root_logical_bytes"]
     assert first["activated"] is False
     assert first["retained"] is True
     monkeypatch.setattr(
@@ -502,12 +510,59 @@ def test_incremental_empty_pool_then_no_payload_on_repeat(artifact_input, monkey
     second, request, payload = incremental_exchange(artifact_input)
     assert second["generation"] == first["generation"]
     assert request["missing"] == []
+    assert request["missing_root"] is False
+    assert second["root_payload_bytes_transferred"] == 0
+    assert second["root_reused"] is True
     assert second["objects_transferred"] == second["objects_admitted"] == 0
     assert second["payload_bytes_transferred"] == 0
     assert second["objects_reused"] == 2
     assert second["current_generation"] is None
     with tarfile.open(fileobj=io.BytesIO(payload)) as archive:
         assert archive.getnames() == ["manifest.json"]
+
+
+def test_changed_root_transfers_without_resending_packages_and_survives_rollback(artifact_input):
+    from airlock_qubes_storage._engine.root_images import reusable_root
+
+    first, _, _ = incremental_exchange(artifact_input)
+    kwargs = artifact_input["kwargs"]
+    image = kwargs["physical_store_root"] / ("e" * 32 + "-root") / "root.img"
+    image.parent.mkdir()
+    with image.open("wb") as stream:
+        stream.truncate(16 * 1024 * 1024)
+        stream.seek(1080)
+        stream.write(b"\x53\xef")
+        stream.seek(4096)
+        stream.write(b"changed boot code")
+    kwargs["root_source"] = "/nix/store/" + image.parent.name + "/root.img"
+    second, request, _ = incremental_exchange(artifact_input)
+    assert request["missing"] == []
+    assert request["missing_root"] is True
+    assert second["payload_bytes_transferred"] == 0
+    assert second["root_payload_bytes_transferred"] > 0
+    assert second["root_artifact"] != first["root_artifact"]
+    args = SimpleNamespace(pool_root=artifact_input["pool"], domain="usr-home",
+                           generation=second["generation"])
+    generations.switch(args)
+    args.generation = first["generation"]
+    generations.rollback(args)
+    maintenance.gc(SimpleNamespace(pool_root=args.pool_root, keep_generations=0))
+    assert reusable_root(args.pool_root, first["root_artifact"]).exists()
+    assert reusable_root(args.pool_root, second["root_artifact"]).exists()
+
+
+def test_corrupt_root_payload_cannot_publish_generation(artifact_input):
+    def corrupt(data):
+        return rewrite_artifact(data, lambda members: [
+            (name, payload[:-1] if name == "root.sparse" else payload)
+            for name, payload in members
+        ])
+
+    with pytest.raises(core.EngineError, match="root artifact payload checksum"):
+        incremental_exchange(artifact_input, corrupt)
+    assert not list((artifact_input["pool"] / "domains").glob("*/generations/*/manifest.json"))
+    result, _, _ = incremental_exchange(artifact_input)
+    assert result["status"] == "passed"
 
 
 def test_nested_path_order_matches_existing_tree_hash(artifact_input):
@@ -636,7 +691,7 @@ def test_sender_cli_reports_receiver_rejection(monkeypatch, capsys, phase):
 def test_incremental_reuses_existing_pool_and_sends_only_new_object(
     artifact_input, monkeypatch
 ):
-    # Seed through the existing full-artifact path: old objects need no migration.
+    # Seed through the full-artifact path, then negotiate reuse.
     receive(artifact_input)
     new = "/nix/store/" + "d" * 32 + "-new-system"
     kwargs = artifact_input["kwargs"]

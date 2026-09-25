@@ -48,6 +48,22 @@ let
     trashRetentionDays = config.airlock.machineDeployment.trashRetentionDays;
   };
   releaseManifest = pkgs.writeText "airlock-machine-release.json" (builtins.toJSON manifest);
+  # Only content descriptors enter the host closure. Payloads stay in the
+  # controller build closure and are admitted to dom0's pool separately.
+  rootArtifacts = pkgs.runCommand "airlock-machine-root-artifacts.json" { } ''
+    echo '{}' > "$out"
+    ${lib.concatStringsSep "\n" (lib.mapAttrsToList (name: domain:
+      let entry = builtins.head (builtins.filter
+        (entry: toString entry.configuration.config.system.build.toplevel == domain.backend.system.source)
+        (builtins.attrValues airlockMachineGuestEntries));
+      in lib.optionalString (domain.backend.type == "nix-closure") ''
+        ${pkgs.jq}/bin/jq --arg name ${lib.escapeShellArg name} \
+          --slurpfile artifact ${entry.rootImage.metadata}/root.json \
+          '. + {($name): $artifact[0]}' "$out" > next.json
+        mv next.json "$out"
+      ''
+    ) deploymentTopology.domains)}
+  '';
   releaseTopology = pkgs.writeText "airlock-machine-topology.json" (
     builtins.toJSON deploymentTopology
   );
@@ -69,23 +85,22 @@ in
     mkdir -p "$out"
     cp ${releaseManifest} "$out/release.json"
     cp ${releaseTopology} "$out/topology.json"
+    cp ${rootArtifacts} "$out/root-artifacts.json"
     ln -s ${config.system.build.airlockMachineTransport} "$out/transport"
   '';
   system.build.airlockMachineTransport = pkgs.runCommand "airlock-machine-transport" { } ''
     mkdir -p "$out"
     cp ${transportManifest} "$out/release.json"
     cp ${detachedTopology} "$out/topology.json"
+    cp ${rootArtifacts} "$out/root-artifacts.json"
   '';
 
-  # The host's boot topology also names guest systems. Keep its actual root
-  # images and kernels explicitly, while pool retention owns guest packages.
+  # The pool retains verified immutable guest roots and package generations.
+  # The host keeps its own kernel/recovery dependencies, without root payloads.
   environment.etc."airlock/qubes-topology.json" = {
     text = lib.mkForce null;
     source = lib.mkDefault detachedTopology;
   };
   system.extraDependencies =
-    map (kernel: kernel.source) (builtins.attrValues config.airlock.qubes.kernels)
-    ++ map (domain: builtins.dirOf domain.backend.root.source)
-      (builtins.filter (domain: domain.backend.type == "nix-closure")
-        (builtins.attrValues deploymentTopology.domains));
+    map (kernel: kernel.source) (builtins.attrValues config.airlock.qubes.kernels);
 }

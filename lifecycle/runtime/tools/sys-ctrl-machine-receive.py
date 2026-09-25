@@ -9,6 +9,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import time
 import uuid
 
 SCHEMA = "airlock.sys-ctrl-machine-release.v2"
@@ -18,7 +19,19 @@ MAX_HEADER = 16 * 1024 * 1024
 STATE = Path("/var/lib/airlock/machine")
 
 
+class CountingReader:
+    def __init__(self, stream):
+        self.stream = stream
+        self.count = 0
+
+    def read(self, size=-1):
+        data = self.stream.read(size)
+        self.count += len(data)
+        return data
+
+
 def receive(action):
+    started = time.monotonic()
     line = sys.stdin.buffer.readline(MAX_HEADER + 1)
     if len(line) > MAX_HEADER or not line.endswith(b"\n"):
         raise ValueError("invalid release header")
@@ -52,23 +65,39 @@ def receive(action):
     if available < sum(paths[path] for path in missing) + reserve:
         raise ValueError("insufficient dom0 store space for release import")
     print(json.dumps({"schema": SCHEMA, "missing": missing}), flush=True)
+    inventory_seconds = time.monotonic() - started
+    started = time.monotonic()
+    wire = CountingReader(sys.stdin.buffer)
     importer = subprocess.Popen(["nix-store", "--import"], stdin=subprocess.PIPE,
                                 stdout=subprocess.DEVNULL)
     try:
         transferred = 0
-        with gzip.GzipFile(fileobj=sys.stdin.buffer, mode="rb") as compressed:
-            while chunk := compressed.read(1024 * 1024):
+        read_seconds = 0.0
+        import_feed_seconds = 0.0
+        with gzip.GzipFile(fileobj=wire, mode="rb") as compressed:
+            while True:
+                step = time.monotonic()
+                chunk = compressed.read(1024 * 1024)
+                read_seconds += time.monotonic() - step
+                if not chunk:
+                    break
                 transferred += len(chunk)
                 if transferred > available - reserve:
                     raise ValueError("release stream exceeds dom0 import space limit")
+                step = time.monotonic()
                 importer.stdin.write(chunk)
+                import_feed_seconds += time.monotonic() - step
+        step = time.monotonic()
         importer.stdin.close()
         if importer.wait():
             raise ValueError("Nix closure import failed")
+        import_finish_seconds = time.monotonic() - step
     finally:
         if importer.poll() is None:
             importer.kill()
             importer.wait()
+    import_seconds = time.monotonic() - started
+    started = time.monotonic()
     manifest = json.loads((Path(release) / "release.json").read_text())
     if (manifest.get("schema") != "airlock.machine-release.v1"
             or manifest.get("guestTransport") != "direct-pool-v1"
@@ -85,6 +114,8 @@ def receive(action):
                            input=json.dumps(header.get("receipts")),
                            check=True, text=True, capture_output=True)
     candidate = json.loads(bound.stdout)["candidate"]
+    binding_seconds = time.monotonic() - started
+    started = time.monotonic()
     plan = subprocess.run([coordinator, "plan", candidate], check=True,
                           text=True, capture_output=True)
     # Retain only host/transport objects. The pool owns guest retention.
@@ -94,7 +125,14 @@ def receive(action):
                    check=True, stdout=subprocess.DEVNULL)
     result = {"schema": SCHEMA, "release": candidate, "source_release": release,
               "plan": json.loads(plan.stdout), "paths_transferred": len(missing),
-              "nar_bytes": transferred}
+              "nar_bytes": transferred, "compressed_bytes": wire.count,
+              "timings": {"inventory_validation_seconds": inventory_seconds,
+                          "transfer_decompress_import_seconds": import_seconds,
+                          "transfer_read_and_decompress_seconds": read_seconds,
+                          "import_pipe_write_seconds": import_feed_seconds,
+                          "import_finish_seconds": import_finish_seconds,
+                          "binding_validation_seconds": binding_seconds,
+                          "plan_and_pin_seconds": time.monotonic() - started}}
     if action == "apply":
         unit = "airlock-machine-deploy-" + uuid.uuid4().hex[:12]
         subprocess.run(["systemd-run", "--unit=" + unit, "--collect",

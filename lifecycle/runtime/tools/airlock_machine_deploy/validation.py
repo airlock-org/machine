@@ -46,6 +46,9 @@ def validate_release_topology(release, topology) -> None:
 def validate_staged_generation(
     info, domain, generation, backend, release_manifest
 ):
+    artifact = release_manifest.get("guestRootArtifacts", {}).get(domain)
+    if not isinstance(artifact, dict) or info.get("root_artifact") != artifact:
+        raise DeploymentError(f"{domain}: staged root artifact mismatch")
     store = backend["store"]
     expected = {
         "domain": domain,

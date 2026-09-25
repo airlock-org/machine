@@ -1540,6 +1540,7 @@ is_nix_closure_boot_feature() {
   case "$1" in
     airlock-system-source|\
     airlock-root-source|\
+    airlock-root-artifact|\
     airlock-store-source|\
     airlock-store-mode|\
     airlock-store-generation|\
@@ -1566,8 +1567,20 @@ install_nix_domain_root() {
   root_source="$2"
   root_image="$3"
   nix_domain_root_deferred=0
+  root_artifact_hash=""
+  if [ -n "${staged_generation:-}" ] || [ ! -e "$root_source" ]; then
+    root_args=(resolve-root --domain "$domain" --root-source "$root_source")
+    if [ -n "${staged_generation:-}" ]; then
+      root_args+=(--generation "$staged_generation")
+    fi
+    root_record="$(airlock-closure-store "${root_args[@]}")"
+    root_image="$(printf '%s' "$root_record" | jq -er '.image')"
+    root_artifact_hash="$(printf '%s' "$root_record" | jq -er '.artifact.sha256')"
+  fi
 
-  if nix_domain_root_current "$domain" "$root_source"; then
+  if nix_domain_root_current "$domain" "$root_source" &&
+      { [ -z "$root_artifact_hash" ] ||
+        [ "$(qvm-features "$domain" airlock-root-artifact 2>/dev/null || true)" = "$root_artifact_hash" ]; }; then
     printf 'Nix-native root current: %s source=%s\n' "$domain" "$root_source"
     return
   fi
@@ -1580,7 +1593,12 @@ install_nix_domain_root() {
     return
   fi
 
-  root_image="$(resolve_root_image_file "$root_source")"
+  if [ -z "$root_artifact_hash" ]; then
+    root_image="$(resolve_root_image_file "$root_source")"
+  fi
+  # Qubes imports into this domain's own volume. Never attach or hard-link the
+  # immutable artifact as a VM's writable root disk.
+  run_or_plan "$NIX_DOMAIN_STORAGE_HELPER" verify-native-volumes "$domain"
   run_or_plan qvm-volume import "$domain:root" "$root_image"
   root_images_changed=$((root_images_changed + 1))
   record_live_action domain-root import "$domain" source "$root_source"
@@ -1905,6 +1923,7 @@ setup_nix_closure_domain() {
     if [ "$nix_domain_storage_deferred" != "1" ]; then
       set_feature "$domain" airlock-system-source "$system_source"
       set_feature "$domain" airlock-root-source "$root_source"
+      set_feature "$domain" airlock-root-artifact "$root_artifact_hash"
       set_feature "$domain" airlock-store-source "$store_source"
       set_feature "$domain" airlock-store-mode "$store_mode"
       set_feature "$domain" airlock-store-view-backend "$store_view_backend"

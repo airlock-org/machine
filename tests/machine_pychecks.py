@@ -9066,6 +9066,11 @@ def check_closure_store_engine(repo_root: Path, log_dir: Path) -> None:
     (work_dir / "bin").mkdir()
     result_dir.mkdir(parents=True, exist_ok=True)
     physical_store = work_dir / "physical-store"
+    root_image = work_dir / "root.img"
+    with root_image.open("wb") as stream:
+        stream.truncate(16 * 1024 * 1024)
+        stream.seek(1080)
+        stream.write(b"\x53\xef")
 
     entries = {
         "common": "11111111111111111111111111111111-common",
@@ -9117,7 +9122,7 @@ def check_closure_store_engine(repo_root: Path, log_dir: Path) -> None:
             "--physical-store-root",
             str(physical_store),
             "--root-source",
-            "root-verify",
+            str(root_image),
             "--kernel-name",
             "kernel-a",
             "--verify-mode",
@@ -9149,7 +9154,7 @@ def check_closure_store_engine(repo_root: Path, log_dir: Path) -> None:
             "--physical-store-root",
             str(physical_store),
             "--root-source",
-            "root-fit",
+            str(root_image),
             "--kernel-name",
             "kernel-a",
             "--verify-mode",
@@ -9185,7 +9190,7 @@ def check_closure_store_engine(repo_root: Path, log_dir: Path) -> None:
             "--physical-store-root",
             str(physical_store),
             "--root-source",
-            "root-work",
+            str(root_image),
             "--kernel-name",
             "kernel-a",
             "--verify-mode",
@@ -9211,7 +9216,7 @@ def check_closure_store_engine(repo_root: Path, log_dir: Path) -> None:
             "--physical-store-root",
             str(physical_store),
             "--root-source",
-            "root-work",
+            str(root_image),
             "--kernel-name",
             "kernel-a",
             "--verify-mode",

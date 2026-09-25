@@ -226,6 +226,39 @@ def validate_vm(vm, domain):
         vm.storage = qubes.storage.Storage(vm)
 
 
+def validate_native_volume_isolation(app, vm):
+    """Immutable pool bases must never become shared writable Qubes volumes."""
+    def identity(volume):
+        return pool_name(volume.pool), volume.vid
+
+    owned = {}
+    for name in ("root", "private"):
+        volume = vm.volumes.get(name)
+        if (volume is None or not volume.rw or not volume.save_on_stop
+                or volume.snap_on_start or volume.source is not None):
+            fail(f"{vm.name}:{name} must be an independent persistent writable volume")
+        key = identity(volume)
+        if key in owned:
+            fail(f"{vm.name}: root and private volumes share storage")
+        owned[key] = name
+    for other in app.domains:
+        if other.name in (vm.name, "dom0"):
+            continue
+        for volume in other.volumes.values():
+            source = volume.source
+            if identity(volume) in owned or (source is not None and identity(source) in owned):
+                fail(f"{vm.name}: writable storage is referenced by {other.name}")
+
+
+async def verify_native_volumes(args):
+    app, vm = load_domain(load_qubes(), args.domain)
+    try:
+        validate_native_volume_isolation(app, vm)
+        return {"domain": args.domain, "native_volume_isolation": "passed"}
+    finally:
+        app.close()
+
+
 def validate_shared_store_volume(vm, domain, expected):
     if "store" not in vm.volumes:
         fail(f"store volume was not persisted for domain: {domain}")
@@ -380,6 +413,9 @@ def load_generation_admission(pool_root, domain, generation):
     manifest = engine.read_json(manifest_path)
     if not engine.generation_is_committed(root, manifest):
         fail(f"generation is not committed for {domain}: {generation}")
+    from airlock_qubes_storage._engine.root_images import verify_generation_root
+
+    verify_generation_root(root, manifest)
     store = manifest.get("store", {})
     view_image = store.get("metadata_image") or store.get("image")
     canonical_view_image = (
@@ -894,6 +930,10 @@ async def ensure_builder_store(args):
 def build_parser():
     parser = argparse.ArgumentParser(prog="airlock-nix-domain-storage")
     sub = parser.add_subparsers(dest="command", required=True)
+
+    native = sub.add_parser("verify-native-volumes")
+    native.add_argument("domain")
+    native.set_defaults(func=verify_native_volumes)
 
     ensure = sub.add_parser("ensure-store")
     ensure.add_argument("domain")

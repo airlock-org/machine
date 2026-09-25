@@ -22,6 +22,7 @@ from .generations import (
 )
 from .maintenance import compact, gc, recover, status
 from .pool import admission_lock
+from .root_images import resolve_root
 from .views import attach_blob_view, detach_blob_view
 
 
@@ -37,6 +38,12 @@ def add_common(parser):
 def build_parser():
     parser = argparse.ArgumentParser(prog="airlock-closure-store")
     sub = parser.add_subparsers(dest="command", required=True)
+    root_parser = sub.add_parser("resolve-root")
+    add_common(root_parser)
+    root_parser.add_argument("--domain", required=True)
+    root_parser.add_argument("--root-source", required=True)
+    root_parser.add_argument("--generation", type=int)
+    root_parser.set_defaults(func=resolve_root)
 
     admit_parser = sub.add_parser("admit")
     add_common(admit_parser)
@@ -214,6 +221,11 @@ def run(argv=None):
     # publication; maintenance must not remove or relocate reusable objects.
     if args.command in (
         "admit",
+        "resolve-root",
+        "describe-generation",
+        "find-generation",
+        "switch",
+        "rollback",
         "gc",
         "compact",
         "recover",

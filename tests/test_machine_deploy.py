@@ -502,6 +502,9 @@ def guest_receipt(machine, topology, generation=17):
         "selected": False,
         "manifest": manifest,
         "system": system,
+        "root_artifact": {"schema": "airlock.root-artifact.v1", "sha256": "d" * 64,
+                          "logical_bytes": 16777216, "payload_bytes": 65576,
+                          "format": "ext4", "boot_abi": "airlock.nix-closure-root.v1"},
         "root_source": topology["domains"]["usr-home"]["backend"]["root"]["source"],
         "kernel_name": topology["domains"]["usr-home"]["backend"]["kernel"]["name"],
         "closure_source": source,
@@ -535,6 +538,7 @@ def guest_receipt(machine, topology, generation=17):
         "manifest": manifest,
         "system": system,
         "root_source": machine.generation_details["root_source"],
+        "root_artifact": deepcopy(machine.generation_details["root_artifact"]),
         "kernel_name": machine.generation_details["kernel_name"],
         "closure_hash": machine.generation_details["store"]["closure_hash"],
         "source_revision": revision,
@@ -1512,6 +1516,8 @@ def direct_candidate_fixture(machine, tmp_path, topology):
     manifest.update(guestTransport="direct-pool-v1", revision=receipt["source_revision"],
                     lockHash=receipt["lock_hash"])
     deploy.atomic_json(release / "release.json", manifest)
+    deploy.atomic_json(release / "root-artifacts.json",
+                       {"usr-home": receipt["root_artifact"]})
     return release, {"usr-home": receipt}
 
 
@@ -1553,3 +1559,22 @@ def test_direct_stage_never_falls_back_to_source_import(machine, tmp_path, topol
     machine.stage(candidate, wanted, [], transaction)
     assert deploy.read_json(transaction / "staged.json") == {"usr-home": 17}
     assert not any("admit" in call for call in machine.calls)
+
+
+def test_direct_binding_rejects_root_catalog_mismatch(machine, tmp_path, topology):
+    release, receipts = direct_candidate_fixture(machine, tmp_path, topology)
+    roots = deploy.read_json(release / "root-artifacts.json")
+    roots["usr-home"]["sha256"] = "e" * 64
+    deploy.atomic_json(release / "root-artifacts.json", roots)
+    with pytest.raises(deploy.DeploymentError, match="root artifact mismatch"):
+        machine.machine_candidate(release, receipts)
+
+
+def test_guest_candidate_binds_changed_root(machine, tmp_path, topology):
+    receipt = guest_receipt(machine, topology)
+    receipt["root_source"] += "-changed"
+    machine.generation_details["root_source"] = receipt["root_source"]
+    candidate = machine.guest_candidate(receipt)
+    manifest, wanted = deploy.load_release(candidate)
+    assert wanted["domains"]["usr-home"]["backend"]["root"]["source"] == receipt["root_source"]
+    assert manifest["guestRootArtifacts"]["usr-home"] == receipt["root_artifact"]

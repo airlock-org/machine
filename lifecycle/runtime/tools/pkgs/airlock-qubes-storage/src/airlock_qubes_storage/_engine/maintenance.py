@@ -1054,8 +1054,11 @@ def gc(args):
         gc_segments(root, live_segment_refs, physical_refs)
     )
 
+    from .root_images import gc_roots
+    removed_roots = gc_roots(root)
     return {
         "schema": SCHEMA_GC,
+        "removed_root_artifacts": removed_roots,
         "status": "passed",
         "pool_root": str(root),
         "retained_generations": [
