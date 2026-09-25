@@ -2126,9 +2126,12 @@ def check_cmd_role(repo_root: Path, log_dir: Path) -> None:
         "git"
         "nix"
         "nss-cacert"
-        "openresolv"
         "openssh"
+        "qubes-core-agent-linux"
+        "iproute2"
+        "curl"
       ];
+      network_client_resolvconf_disabled = !devCfg.networking.resolvconf.enable;
       private_nix_enabled = devCfg.airlock.minimalGuest.nix.enable;
       nix_features = devCfg.nix.settings.experimental-features;
       nix_allowed_users = devCfg.nix.settings.allowed-users;
@@ -2288,6 +2291,7 @@ def check_cmd_role(repo_root: Path, log_dir: Path) -> None:
     assert data["non_dev_dom0_dev_tools_absent"] is True
     assert data["required_tools_present"] is True
     assert data["network_client_support_present"] is True
+    assert data["network_client_resolvconf_disabled"] is True
     assert data["private_nix_enabled"] is True
     assert "nix-command" in data["nix_features"]
     assert "flakes" in data["nix_features"]
@@ -9860,6 +9864,8 @@ def check_config_topology_eval(repo_root: Path, log_dir: Path) -> None:
                   sys_firewall_network_uplink_packages = map (p: p.pname or p.name)
                     sysFirewall.systemd.services."qubes-network-uplink@".path;
                   sys_firewall_udev_rules = sysFirewall.services.udev.extraRules;
+                  sys_firewall_vif_link =
+                    toString sysFirewall.environment.etc."systemd/network/80-qubes-vif.link".source;
                   sys_firewall_network_reconcile = sysFirewall.systemd.services.qubes-network-uplink.script;
                   sys_firewall_network_uplink_stop =
                     sysFirewall.systemd.services."qubes-network-uplink@".serviceConfig.ExecStop;
@@ -10061,6 +10067,12 @@ def check_config_topology_eval(repo_root: Path, log_dir: Path) -> None:
     assert "/bin/setup-ip remove %i" in proxy_eval["sys_firewall_network_uplink_stop"]
     assert "nftables" in proxy_eval["sys_firewall_network_uplink_packages"]
     assert 'KERNEL!="vif*"' in proxy_eval["sys_firewall_udev_rules"]
+    assert 'ACTION=="add"' in proxy_eval["sys_firewall_udev_rules"]
+    assert 'ACTION=="remove"' in proxy_eval["sys_firewall_udev_rules"]
+    assert "systemctl restart --job-mode=replace qubes-network-uplink@%k.service" in proxy_eval["sys_firewall_udev_rules"]
+    assert "systemctl stop --job-mode=replace qubes-network-uplink@%k.service" in proxy_eval["sys_firewall_udev_rules"]
+    assert "SYSTEMD_WANTS" not in proxy_eval["sys_firewall_udev_rules"]
+    assert proxy_eval["sys_firewall_vif_link"].endswith("/80-qubes-vif.link")
     assert 'vif*) continue' in proxy_eval["sys_firewall_network_reconcile"]
     assert "xendriverdomain.service" in proxy_eval["sys_firewall_qrexec_after"]
     assert "airlock-qubes-rw-init.service" in proxy_eval["sys_firewall_qrexec_after"]

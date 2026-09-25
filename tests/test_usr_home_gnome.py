@@ -48,6 +48,7 @@ def test_gnome_desktop_work_applications_are_routed_to_usr_home():
         appGuestUplink = {{ inherit (appGuest.systemd.services."qubes-network-uplink@") requires after bindsTo; }};
         appGuestForwarding = builtins.hasAttr "qubes-network" appGuest.systemd.services;
         appGuestUdev = appGuest.services.udev.extraRules;
+        appGuestVifLink = toString appGuest.environment.etc."systemd/network/80-qubes-vif.link".source;
         appGui = map (cfg: {{
           enabled = cfg.systemd.services.qubes-gui-agent.enable;
           envPath = cfg.systemd.services.qubes-gui-agent.environment.ENV_PATH;
@@ -124,8 +125,10 @@ def test_gnome_desktop_work_applications_are_routed_to_usr_home():
         "sys-subsystem-net-devices-%i.device"
     ]
     assert 'DRIVERS=="vif"' in report["appGuestUdev"]
-    assert "qubes-network-uplink@$name.service" in report["appGuestUdev"]
+    assert "systemctl restart --job-mode=replace qubes-network-uplink@%k.service" in report["appGuestUdev"]
+    assert "systemctl stop --job-mode=replace qubes-network-uplink@%k.service" in report["appGuestUdev"]
     assert 'KERNEL=="eth*"' not in report["appGuestUdev"]
+    assert report["appGuestVifLink"].endswith("/80-qubes-vif.link")
 
     expected = {
         "files": ("org.gnome.Nautilus", "nautilus"),

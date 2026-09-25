@@ -270,12 +270,13 @@ in
       };
     };
 
-    # Match the Xen frontend driver, including NixOS names such as enX0.
-    # Xen backend interfaces (vif<domid>.<index>) belong to vif-route-qubes,
-    # even though their driver can also match vif. Never configure them here.
-    # A VM without a NetVM has no frontend and starts no uplink service.
+    # Match Xen frontends, including interfaces named before the .link file is
+    # available in the initrd. Backend vif devices belong to vif-route-qubes.
+    # Qubes restarts the service explicitly on hotplug: SYSTEMD_WANTS can miss
+    # an add event when udev renames the interface.
     services.udev.extraRules = ''
-      SUBSYSTEM=="net", ACTION=="add", DRIVERS=="vif", KERNEL!="vif*", TAG+="systemd", ENV{SYSTEMD_WANTS}+="qubes-network-uplink@$name.service"
+      SUBSYSTEM=="net", ACTION=="add", DRIVERS=="vif", KERNEL!="vif*", RUN+="${systemdPackage}/bin/systemctl restart --job-mode=replace qubes-network-uplink@%k.service"
+      SUBSYSTEM=="net", ACTION=="remove", DRIVERS=="vif", KERNEL!="vif*", RUN+="${systemdPackage}/bin/systemctl stop --job-mode=replace qubes-network-uplink@%k.service"
     '';
 
     systemd.services."qubes-network-uplink@" = {
@@ -345,7 +346,9 @@ in
       mode = "0555";
     };
 
-    environment.etc."systemd/network/80-qubes-vif.link" = lib.mkIf hasNetworkDriverRole {
+    # Apply upstream's Xen frontend naming rule to every guest with a NetVM.
+    # Keeping the name stable lets the hotplug unit address the same device.
+    environment.etc."systemd/network/80-qubes-vif.link" = {
       source = "${qubesAgentLinux}/lib/systemd/network/80-qubes-vif.link";
       mode = "0444";
     };
