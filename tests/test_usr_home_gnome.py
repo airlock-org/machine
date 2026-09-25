@@ -121,12 +121,11 @@ def test_gnome_desktop_work_applications_are_routed_to_usr_home():
     assert report["appGuestForwarding"] is False
     assert "qubes-db.service" in report["appGuestUplink"]["requires"]
     assert "qubes-sysinit.service" in report["appGuestUplink"]["after"]
-    assert report["appGuestUplink"]["bindsTo"] == [
-        "sys-subsystem-net-devices-%i.device"
-    ]
+    assert report["appGuestUplink"]["bindsTo"] == []
+    assert "sys-subsystem-net-devices-%i.device" not in report["appGuestUplink"]["after"]
     assert 'DRIVERS=="vif"' in report["appGuestUdev"]
-    assert "systemctl restart --job-mode=replace qubes-network-uplink@%k.service" in report["appGuestUdev"]
-    assert "systemctl stop --job-mode=replace qubes-network-uplink@%k.service" in report["appGuestUdev"]
+    assert "systemctl --no-block restart --job-mode=replace qubes-network-uplink@%k.service" in report["appGuestUdev"]
+    assert "systemctl --no-block stop --job-mode=replace qubes-network-uplink@%k.service" in report["appGuestUdev"]
     assert 'KERNEL=="eth*"' not in report["appGuestUdev"]
     assert report["appGuestVifLink"].endswith("/80-qubes-vif.link")
 

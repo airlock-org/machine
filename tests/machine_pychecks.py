@@ -10069,8 +10069,8 @@ def check_config_topology_eval(repo_root: Path, log_dir: Path) -> None:
     assert 'KERNEL!="vif*"' in proxy_eval["sys_firewall_udev_rules"]
     assert 'ACTION=="add"' in proxy_eval["sys_firewall_udev_rules"]
     assert 'ACTION=="remove"' in proxy_eval["sys_firewall_udev_rules"]
-    assert "systemctl restart --job-mode=replace qubes-network-uplink@%k.service" in proxy_eval["sys_firewall_udev_rules"]
-    assert "systemctl stop --job-mode=replace qubes-network-uplink@%k.service" in proxy_eval["sys_firewall_udev_rules"]
+    assert "systemctl --no-block restart --job-mode=replace qubes-network-uplink@%k.service" in proxy_eval["sys_firewall_udev_rules"]
+    assert "systemctl --no-block stop --job-mode=replace qubes-network-uplink@%k.service" in proxy_eval["sys_firewall_udev_rules"]
     assert "SYSTEMD_WANTS" not in proxy_eval["sys_firewall_udev_rules"]
     assert proxy_eval["sys_firewall_vif_link"].endswith("/80-qubes-vif.link")
     assert 'vif*) continue' in proxy_eval["sys_firewall_network_reconcile"]

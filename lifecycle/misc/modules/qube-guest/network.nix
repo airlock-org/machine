@@ -273,17 +273,19 @@ in
     # Match Xen frontends, including interfaces named before the .link file is
     # available in the initrd. Backend vif devices belong to vif-route-qubes.
     # Qubes restarts the service explicitly on hotplug: SYSTEMD_WANTS can miss
-    # an add event when udev renames the interface.
+    # an add event when udev renames the interface. Enqueue without waiting
+    # for service completion inside the udev worker. As upstream, leave the
+    # interface lifecycle to these events: a device dependency here races
+    # its activation, which systemd learns about after udev finishes the event.
     services.udev.extraRules = ''
-      SUBSYSTEM=="net", ACTION=="add", DRIVERS=="vif", KERNEL!="vif*", RUN+="${systemdPackage}/bin/systemctl restart --job-mode=replace qubes-network-uplink@%k.service"
-      SUBSYSTEM=="net", ACTION=="remove", DRIVERS=="vif", KERNEL!="vif*", RUN+="${systemdPackage}/bin/systemctl stop --job-mode=replace qubes-network-uplink@%k.service"
+      SUBSYSTEM=="net", ACTION=="add", DRIVERS=="vif", KERNEL!="vif*", RUN+="${systemdPackage}/bin/systemctl --no-block restart --job-mode=replace qubes-network-uplink@%k.service"
+      SUBSYSTEM=="net", ACTION=="remove", DRIVERS=="vif", KERNEL!="vif*", RUN+="${systemdPackage}/bin/systemctl --no-block stop --job-mode=replace qubes-network-uplink@%k.service"
     '';
 
     systemd.services."qubes-network-uplink@" = {
       description = "Qubes network uplink setup";
-      after = [ "network-pre.target" "qubes-db.service" "qubes-sysinit.service" "sys-subsystem-net-devices-%i.device" ];
+      after = [ "network-pre.target" "qubes-db.service" "qubes-sysinit.service" ];
       requires = [ "network-pre.target" "qubes-db.service" "qubes-sysinit.service" ];
-      bindsTo = [ "sys-subsystem-net-devices-%i.device" ];
       before = [ "network.target" ];
       wants = [ "network.target" ];
       path = qubesGuestPath ++ [ pkgs.iproute2 pkgs.networkmanager pkgs.nftables ];
