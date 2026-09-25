@@ -209,7 +209,6 @@
 
       inherit (bootstrapDomains)
         materializeNixClosureDomain
-        mkConfigDomainEntries
         mkCmdVmDomainEntry
         mkHomeVmDomainEntry
         mkBrowserVmDomainEntry
@@ -226,7 +225,9 @@
         system: networkDebug:
         let
           bootstrapDomainEntriesSource = mkBootstrapDomains networkDebug;
-          bootstrapDomainEntries = (mkConfigDomainEntries system) // {
+          bootstrapDomainEntries = {
+            sys-ctrl = bootstrapDomainEntriesSource.mkSysCtrlDomainEntry system;
+            sys-dev = bootstrapDomainEntriesSource.mkSysDevDomainEntry system;
             usr-cmd = bootstrapDomainEntriesSource.mkCmdVmDomainEntry system;
             usr-home = bootstrapDomainEntriesSource.mkHomeVmDomainEntry system;
             usr-browser = bootstrapDomainEntriesSource.mkBrowserVmDomainEntry system;
@@ -600,28 +601,8 @@
         let
           pkgs = pkgsFor system;
           templateBuilders = mkAirlockQubeBuilders system;
-          configDomainEntries = mkConfigDomainEntries system;
-          configDomainPackages = lib.listToAttrs (
-            lib.concatMap (
-              name:
-              let
-                entry = configDomainEntries.${name};
-              in
-              [
-                {
-                  name = entry.rootImageName;
-                  value = entry.rootImage;
-                }
-                {
-                  name = entry.storeArtifactName;
-                  value = entry.storeArtifact;
-                }
-              ]
-            ) (builtins.attrNames configDomainEntries)
-          );
         in
-        configDomainPackages
-        // {
+        {
           qubes-input-proxy = pkgs.callPackage ./lifecycle/runtime/tools/pkgs/qubes-input-proxy { };
           airlock-config-apply = pkgs.callPackage ./lifecycle/runtime/tools/pkgs/airlock-config-apply { };
           airlock-config-archive-candidate =
@@ -841,12 +822,6 @@
 
       nixosConfigurations.airlock-domain-sys-gpu = (mkSysGpuDomainEntry "x86_64-linux").configuration;
 
-      nixosConfigurations.airlock-domain-sys-config-vault =
-        (mkConfigDomainEntries "x86_64-linux").sys-config-vault.configuration;
-      nixosConfigurations.airlock-domain-sys-config-staging =
-        (mkConfigDomainEntries "x86_64-linux").sys-config-staging.configuration;
-      nixosConfigurations.airlock-domain-sys-config-validator =
-        (mkConfigDomainEntries "x86_64-linux").sys-config-validator.configuration;
       nixosConfigurations.airlock-domain-sys-net = (mkSysNetDomainEntry "x86_64-linux").configuration;
       nixosConfigurations.airlock-domain-sys-net-network-debug =
         (networkDebugBootstrapDomains.mkSysNetDomainEntry "x86_64-linux").configuration;

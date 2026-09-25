@@ -1,67 +1,37 @@
 {
   lib,
   airlockConfigDomains ? { },
-  airlockConfigInputs ? null,
   airlockQubeKernel ? null,
   ...
 }:
 let
-  configRoles = [
-    "sys-config-vault"
-    "sys-config-staging"
-    "sys-config-validator"
-  ];
-  missingConfigDomains = builtins.filter (
-    role: !(builtins.hasAttr role airlockConfigDomains)
-  ) configRoles;
-  autostartConfigDomains =
-    builtins.filter (role: airlockConfigDomains.${role}.prefs.autostart or false)
-      (builtins.filter (role: lib.hasPrefix "sys-config-" role) (builtins.attrNames airlockConfigDomains));
-  haveConfigDomains = missingConfigDomains == [ ];
+  haveController = builtins.hasAttr "sys-ctrl" airlockConfigDomains;
   haveQubeKernel = airlockQubeKernel != null;
-  haveConfigInputs = airlockConfigInputs != null;
 in
 {
+  imports = [ ../misc/modules/machine-deployment.nix ];
+  airlock.machineDeployment = { enable = true; profile = "controller-lab"; };
+  airlock.poolAdmission = {
+    enable = lib.mkDefault true;
+    caller = lib.mkDefault "sys-ctrl";
+    targets = lib.mkDefault (builtins.attrNames airlockConfigDomains);
+  };
   assertions = [
     {
-      assertion = haveConfigDomains;
-      message = "lifecycle/bootstrap/config-system.nix requires generated nix-closure config domains: ${builtins.concatStringsSep ", " missingConfigDomains}";
-    }
-    {
-      assertion = autostartConfigDomains == [ ];
-      message = "sys-config domains must not autostart: ${builtins.concatStringsSep ", " autostartConfigDomains}";
+      assertion = haveController;
+      message = "controller bootstrap requires a sys-ctrl domain";
     }
     {
       assertion = haveQubeKernel;
       message = "lifecycle/bootstrap/config-system.nix requires airlockQubeKernel specialArg.";
     }
-    {
-      assertion = haveConfigInputs;
-      message = "lifecycle/bootstrap/config-system.nix requires airlockConfigInputs specialArgs.";
-    }
   ];
-
-  environment.etc = {
-    "airlock/config-inputs/nixpkgs".source =
-      if haveConfigInputs then airlockConfigInputs.nixpkgs else null;
-    "airlock/config-inputs/nixpkgs-libvirt_10_5".source =
-      if haveConfigInputs && airlockConfigInputs ? nixpkgsLibvirt105 then
-        airlockConfigInputs.nixpkgsLibvirt105
-      else
-        null;
-    "airlock/config-inputs/nixos-qubes".source =
-      if haveConfigInputs then airlockConfigInputs.nixosQubes else null;
-    "airlock/config-inputs/airlock-support".source =
-      if haveConfigInputs then airlockConfigInputs.airlockSupport else null;
-  };
 
   airlock.qubes = {
     enable = true;
     setupConfigOnBoot.enable = true;
     startNetworkProvidersOnBoot.enable = true;
     deferredSetupConfigOnBoot.enable = true;
-    # Config VMs are created at boot but started only by an explicit config
-    # operation. The airlock-config-bootstrap-current command remains installed.
     configCurrentBootstrapOnBoot.enable = false;
 
     prefs = {
@@ -91,20 +61,7 @@ in
       }
     ];
 
-    configAccessPolicy = {
-      enable = true;
-      vault = "sys-config-vault";
-      staging = "sys-config-staging";
-      validator = "sys-config-validator";
-      candidateExportService = "airlock.Config.CandidateExport";
-      candidateValidateService = "airlock.Config.ValidateCandidate";
-      archiveService = "airlock.Config.ArchiveCandidate";
-      archiveDeploymentService = "airlock.Config.ArchiveDeployment";
-      currentExportService = "airlock.Config.ExportCurrent";
-      currentImportService = "airlock.Config.ImportCurrent";
-      configInputsImportService = "airlock.Config.InputsImport";
-      allowedSubmitters = [ "usr-cmd" ];
-    };
+    configAccessPolicy.enable = false;
   };
 
   # This profile may switch a staged dom0 system generation at runtime. Keep the

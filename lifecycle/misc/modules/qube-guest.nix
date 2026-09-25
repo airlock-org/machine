@@ -355,15 +355,14 @@ let
     vm_name="$("$qubesdb_read" /name 2>/dev/null || true)"
 
     case "$qdb_role" in
-      sys-config-vault|sys-config-staging|sys-config-validator) role="$qdb_role" ;;
+      sys-ctrl|sys-dev) role="$qdb_role" ;;
       "") ;;
       *) role=base ;;
     esac
 
     case "$vm_name" in
-      sys-config-vault) role=sys-config-vault ;;
-      sys-config-staging) role=sys-config-staging ;;
-      sys-config-validator) role=sys-config-validator ;;
+      sys-ctrl) role=sys-ctrl ;;
+      sys-dev) role=sys-dev ;;
     esac
 
     printf 'airlock-policy-probe role=%s user=%s\n' "$role" "$(${pkgs.coreutils}/bin/whoami)"

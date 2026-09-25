@@ -6,20 +6,7 @@
   networkDebug ? false,
 }:
 let
-  configVmRoles = [
-    "sys-config-vault"
-    "sys-config-staging"
-    "sys-config-validator"
-  ];
-
-  configNixPrivateSizeBytes = 8589934592;
   sysNetPrivateSizeBytes = 2147483648;
-
-  configRoleDefaults = {
-    sys-config-vault = import ./sys-config-vault.nix;
-    sys-config-staging = import ./sys-config-staging.nix { inherit configNixPrivateSizeBytes; };
-    sys-config-validator = import ./sys-config-validator.nix { inherit configNixPrivateSizeBytes; };
-  };
 
   sysNetRoleDefaults = import ./sys-net.nix { inherit sysNetPrivateSizeBytes; };
   sysDevRoleDefaults = import ./sys-dev.nix;
@@ -29,47 +16,6 @@ let
   cmdVmRoleDefaults = import ./usr-cmd.nix;
   homeVmRoleDefaults = import ./usr-home.nix;
   browserVmRoleDefaults = import ./usr-browser.nix;
-
-  mkConfigDomainEntries =
-    system:
-    let
-      qubeBuilders = mkAirlockQubeBuilders system;
-      mkGuestModule =
-        role:
-        let
-          defaults = configRoleDefaults.${role};
-        in
-        { ... }:
-        {
-          networking.hostName = defaults.guestHostName;
-        };
-      mkEntry =
-        role:
-        let
-          defaults = configRoleDefaults.${role};
-        in
-        qubeBuilders.mkNixNativeDomain {
-          name = role;
-          guestRole = role;
-          inherit airlockConfigInputs;
-          airlockPrebuiltTemplateSources = { };
-          modules = [ (mkGuestModule role) ];
-          rootImageSizeMiB = defaults.rootImageSizeMiB;
-          kernelName = airlockQubesVmKernelName;
-          label = defaults.label;
-          netvm = null;
-          prefs = defaults.prefs;
-          features = defaults.features;
-          services = defaults.services;
-          state = defaults.state or { };
-        };
-    in
-    lib.listToAttrs (
-      builtins.map (role: {
-        name = role;
-        value = mkEntry role;
-      }) configVmRoles
-    );
 
   mkSysNetDomainEntry =
     system:
@@ -296,10 +242,7 @@ let
 in
 {
   inherit
-    configRoleDefaults
-    configVmRoles
     materializeNixClosureDomain
-    mkConfigDomainEntries
     mkCmdVmDomainEntry
     mkHomeVmDomainEntry
     mkBrowserVmDomainEntry

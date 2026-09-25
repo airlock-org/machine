@@ -823,6 +823,10 @@ in
     environment.etc."airlock/qubes-topology.json".text =
       builtins.toJSON config.airlock.qubes.topology + "\n";
     environment.systemPackages = [
+      nixClosureDomainSmoke
+      setupConfig
+      startNetworkProviders
+    ] ++ lib.optionals cfg.configAccessPolicy.enable [
       configApply
       configArchive
       configBootstrapCurrent
@@ -831,9 +835,6 @@ in
       configInputsImport
       configStatus
       configVmsSmoke
-      nixClosureDomainSmoke
-      setupConfig
-      startNetworkProviders
     ];
 
     virtualisation.qubes.packages = lib.optionals cfg.configAccessPolicy.enable [
