@@ -87,5 +87,5 @@ in
     map (kernel: kernel.source) (builtins.attrValues config.airlock.qubes.kernels)
     ++ map (domain: builtins.dirOf domain.backend.root.source)
       (builtins.filter (domain: domain.backend.type == "nix-closure")
-        (builtins.attrValues deploymentTopology));
+        (builtins.attrValues deploymentTopology.domains));
 }

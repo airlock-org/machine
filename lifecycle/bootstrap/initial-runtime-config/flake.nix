@@ -50,9 +50,7 @@
       localDomains = localConfig.domains or { };
       localConfigVms = localConfig.configVms or { };
       configVmRoles = [
-        "sys-config-vault"
-        "sys-config-staging"
-        "sys-config-validator"
+        "sys-ctrl"
       ];
       checkConfigKeys =
         path: allowed: attrs:
@@ -361,72 +359,25 @@
       userNixNativeDomainEntries = builtins.mapAttrs mkNixNativeEntry checkedNixNative.domains;
       configNixPrivateSizeBytes = 8589934592;
       configRoleDefaults = {
-        sys-config-vault = {
-          guestHostName = "sys-config-vault";
+        sys-ctrl = {
+          guestHostName = "sys-ctrl";
           label = "black";
           netvm = null;
           rootImageSizeMiB = 128;
-          prefs = {
-            autostart = false;
-            include_in_backups = true;
-            memory = 256;
-            maxmem = 512;
-            vcpus = 1;
-          };
-          features = {
-            "airlock-managed" = "1";
-            "airlock-role" = "sys-config-vault";
-            "airlock-config-authority" = "1";
-          };
-          services = {
-            "network-manager" = false;
-          };
-        };
-        sys-config-staging = {
-          guestHostName = "sys-config-staging";
-          label = "gray";
-          netvm = null;
-          rootImageSizeMiB = 128;
           state.persistentSize = configNixPrivateSizeBytes;
           prefs = {
             autostart = false;
             include_in_backups = true;
-            memory = 512;
-            maxmem = 1024;
-            vcpus = 2;
-          };
-          features = {
-            "airlock-managed" = "1";
-            "airlock-role" = "sys-config-staging";
-            "airlock-config-staging" = "1";
-            "airlock-config-applied-message" = appliedMessage;
-          };
-          services = {
-            "network-manager" = false;
-          };
-        };
-        sys-config-validator = {
-          guestHostName = "sys-config-validator";
-          label = "blue";
-          netvm = null;
-          rootImageSizeMiB = 128;
-          state.persistentSize = configNixPrivateSizeBytes;
-          prefs = {
-            autostart = false;
-            include_in_backups = true;
-            # Keep enough room for full candidate NixOS evaluation after apply.
             memory = 2048;
             maxmem = 4096;
             vcpus = 2;
           };
           features = {
             "airlock-managed" = "1";
-            "airlock-role" = "sys-config-validator";
-            "airlock-config-validator" = "1";
+            "airlock-role" = "sys-ctrl";
+            "airlock-config-applied-message" = appliedMessage;
           };
-          services = {
-            "network-manager" = false;
-          };
+          services."network-manager" = false;
         };
       };
       mkConfigRoleEntry =
@@ -652,7 +603,7 @@
             jq -c -n \
               --arg schema "airlock.dom0-profile.v1" \
               --arg message "$appliedMessage" \
-              --arg built_by "sys-config-staging" \
+              --arg built_by "sys-ctrl" \
               '{
                 schema: $schema,
                 message: $message,
@@ -716,9 +667,7 @@
 
         inherit config;
         configRoleConfigurations = {
-          sys-config-vault = configDomainEntries.sys-config-vault.configuration;
-          sys-config-staging = configDomainEntries.sys-config-staging.configuration;
-          sys-config-validator = configDomainEntries.sys-config-validator.configuration;
+          sys-ctrl = configDomainEntries.sys-ctrl.configuration;
         };
         nixNativeConfigurations = nixNativeConfigurations;
         system = runtimeSystem;

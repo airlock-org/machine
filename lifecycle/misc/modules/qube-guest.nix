@@ -959,12 +959,12 @@ in
       mode = "0555";
     };
 
-    environment.etc."qubes-rpc/airlock.PolicyProbe" = lib.mkIf hasConfigRole {
+    environment.etc."qubes-rpc/airlock.PolicyProbe" = lib.mkIf (hasSysCtrlRole || hasSysDevRole) {
       source = policyProbeService;
       mode = "0555";
     };
 
-    environment.etc."qubes/rpc-config/airlock.PolicyProbe" = lib.mkIf hasConfigRole {
+    environment.etc."qubes/rpc-config/airlock.PolicyProbe" = lib.mkIf (hasSysCtrlRole || hasSysDevRole) {
       text = "force-user='${cfg.user}'\n";
       mode = "0444";
     };

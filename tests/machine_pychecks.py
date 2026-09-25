@@ -2144,7 +2144,7 @@ def check_cmd_role(repo_root: Path, log_dir: Path) -> None:
       dev_qrexec_requires = devCfg.systemd.services.qubes-qrexec-agent.requires;
       dev_qrexec_after = devCfg.systemd.services.qubes-qrexec-agent.after;
       dev_forbidden_rpc_absent = lib.all (name: !(has name (etcNames devCfg))) forbiddenConfigRpc;
-      dev_allowed_submitters = dom0Cfg.airlock.qubes.configAccessPolicy.allowedSubmitters;
+      retired_config_policy_enabled = dom0Cfg.airlock.qubes.configAccessPolicy.enable;
       dev_no_secret_env = lib.all (name: !(builtins.hasAttr name devCfg.environment.sessionVariables)) secretEnvNames;
       dev_no_codex_auth_etc = lib.all (
         name:
@@ -2305,7 +2305,7 @@ def check_cmd_role(repo_root: Path, log_dir: Path) -> None:
     assert "airlock-cmd-guest-init.service" in data["dev_qrexec_requires"]
     assert "airlock-cmd-guest-init.service" in data["dev_qrexec_after"]
     assert data["dev_forbidden_rpc_absent"] is True
-    assert data["dev_allowed_submitters"] == ["usr-cmd"]
+    assert data["retired_config_policy_enabled"] is False
     assert data["dev_no_secret_env"] is True
     assert data["dev_no_codex_auth_etc"] is True
     assert data["base_role"] == "base"
@@ -8860,12 +8860,13 @@ def check_config_candidate_flake(repo_root: Path, log_dir: Path) -> None:
     assert topology["domains"]["sys-firewall"]["prefs"]["autostart"] is True
     assert topology["domains"]["sys-firewall"]["prefs"]["provides_network"] is True
     assert topology["domains"]["sys-firewall"]["features"]["servicevm"] == "1"
-    assert topology["domains"]["sys-config-validator"]["prefs"]["memory"] == 2048
-    assert topology["domains"]["sys-config-validator"]["prefs"]["maxmem"] == 4096
+    assert not any(name.startswith("sys-config-") for name in topology["domains"])
+    assert topology["domains"]["sys-ctrl"]["prefs"]["memory"] == 2048
+    assert topology["domains"]["sys-ctrl"]["prefs"]["maxmem"] == 4096
     assert topology["prefs"]["default_netvm"] == "sys-firewall"
     assert "dev" not in topology["domains"]
     assert (
-        topology["domains"]["sys-config-staging"]["features"][
+        topology["domains"]["sys-ctrl"]["features"][
             "airlock-config-applied-message"
         ]
         == "initial"
@@ -8885,14 +8886,14 @@ def check_config_candidate_flake(repo_root: Path, log_dir: Path) -> None:
     )
     assert profile_json["schema"] == "airlock.dom0-profile.v1"
     assert profile_json["message"] == "initial"
-    assert profile_json["built_by"] == "sys-config-staging"
+    assert profile_json["built_by"] == "sys-ctrl"
     assert (profile_source / "bin/airlock-dom0-profile-activate").is_file()
     for expected in (
         'mkdir -p "$out/bin" "$out/share/airlock"',
         '"$out/share/airlock/profile.json"',
         '"$out/bin/airlock-dom0-profile-activate"',
         '"airlock.dom0-profile.v1"',
-        '"sys-config-staging"',
+        '"sys-ctrl"',
     ):
         assert expected in profile_build_command
 
@@ -8906,15 +8907,15 @@ def check_config_candidate_flake(repo_root: Path, log_dir: Path) -> None:
         ),
         (
             "{ ... }:\n{\n  configVms.guests.config-stagin = { };\n}\n",
-            "airlock.configRoleConfigurations.sys-config-staging.config.networking.hostName",
+            "airlock.configRoleConfigurations.sys-ctrl.config.networking.hostName",
             "--raw",
             "airlock.configVms.guests: unknown role(s): config-stagin",
         ),
         (
-            '{ ... }:\n{\n  configVms.domains.sys-config-vault.template = "old-template";\n}\n',
+            '{ ... }:\n{\n  configVms.domains.sys-ctrl.template = "old-template";\n}\n',
             "airlock.topology",
             "--json",
-            "airlock.configVms.domains.sys-config-vault: unknown option(s): template",
+            "airlock.configVms.domains.sys-ctrl: unknown option(s): template",
         ),
         (
             '{ ... }:\n{\n  dom0.host.apply.mode = "live";\n}\n',

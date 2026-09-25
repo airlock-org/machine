@@ -9,9 +9,7 @@
 }:
 let
   requiredConfigDomains = [
-    "sys-config-vault"
-    "sys-config-staging"
-    "sys-config-validator"
+    "sys-ctrl"
   ];
 
   missingConfigDomains = builtins.filter (
@@ -33,7 +31,7 @@ else
       {
         service = "airlock.PolicyProbe";
         source = "dom0";
-        target = "sys-config-vault";
+        target = "sys-ctrl";
         action = "allow";
       }
     ]

@@ -9,9 +9,8 @@
 {
   # Primary edit surface for this Airlock runtime.
   #
-  # Edit this file in sys-config-staging, commit the change, validate it in
-  # sys-config-validator, then ask dom0 to apply it. sys-config-vault records the
-  # candidate and deployment history.
+  # Edit and commit this file in sys-ctrl, then validate and submit the
+  # candidate to dom0. sys-ctrl records candidate and deployment history.
 
   # Declare additional traditional Qubes domains here. Airlock supports the
   # existing TemplateVM/AppVM model alongside Nix-native domains.
@@ -201,7 +200,7 @@
   };
 
   # Add or override raw Qubes topology entries here. These become normalized
-  # airlock.topology JSON in sys-config-validator before dom0 applies them.
+  # airlock.topology JSON in sys-ctrl before dom0 applies them.
   # Prefer top-level domains for normal additions; extraDomains is a low-level
   # escape hatch that overrides generated domain entries.
   topology = {
@@ -227,9 +226,7 @@
   # customizes the Qubes runtime envelope around that role.
   configVms = {
     guests = {
-      sys-config-vault = { };
-      sys-config-staging = { };
-      sys-config-validator = { };
+      sys-ctrl = { };
     };
     domains = { };
   };
