@@ -9,7 +9,7 @@
   };
   airlock.poolAdmission = {
     enable = true;
-    caller = "sys-dev";
+    caller = "sys-ctrl";
     targets = [
       "sys-gui"
       "sys-dev"

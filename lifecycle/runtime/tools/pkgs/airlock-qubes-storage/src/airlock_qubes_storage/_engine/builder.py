@@ -1,4 +1,4 @@
-"""Image-seeded, frozen sys-dev build inputs; no guest control authority."""
+"""Image-seeded, frozen builder inputs; no guest control authority."""
 
 import hashlib
 import os
@@ -67,8 +67,10 @@ def prepare_builder(root, admission, registration, offline_inputs_source=None):
     root = Path(root)
     manifest_path = Path(admission["manifest"])
     manifest = core.read_json(manifest_path)
-    if manifest["domain"] != "sys-dev-builder":
-        core.fail("builder preparation is restricted to sys-dev-builder")
+    builder_domain = manifest["domain"]
+    if builder_domain not in ("sys-dev-builder", "sys-ctrl-builder"):
+        core.fail("builder preparation is restricted to declared builder domains")
+    role = builder_domain.removesuffix("-builder")
     registration = Path(registration).read_bytes()
     paths = registration_paths(registration.decode())
     if paths != set(manifest["store"]["paths"]):
@@ -92,7 +94,7 @@ def prepare_builder(root, admission, registration, offline_inputs_source=None):
                     f"{name}: {source}"
                 )
     identity = {
-        "schema": "airlock.sys-dev-builder.v1",
+        "schema": f"airlock.{role}-builder.v1",
         "domain": manifest["domain"],
         "generation": manifest["generation"],
         "closure_hash": manifest["store"]["closure_hash"],
@@ -138,12 +140,15 @@ def prepare_builder(root, admission, registration, offline_inputs_source=None):
     state.mark_running_ref(
         root, manifest["domain"], manifest["generation"], "builder-persistent"
     )
-    core.atomic_json(root / "builders/sys-dev.json", manifest["builder"])
+    core.atomic_json(root / f"builders/{role}.json", manifest["builder"])
 
 
-def builder_volume_configs(root, pool_name, *, physical_root=None):
-    """Validated boot volumes for the single image-seeded sys-dev builder."""
+def builder_volume_configs(root, pool_name, *, domain="sys-dev", physical_root=None):
+    """Validated boot volumes for an image-seeded builder role."""
     root = Path(root)
+    if domain not in ("sys-dev", "sys-ctrl"):
+        core.fail("invalid builder domain")
+    builder_domain = f"{domain}-builder"
 
     def physical(path):
         return (
@@ -152,27 +157,27 @@ def builder_volume_configs(root, pool_name, *, physical_root=None):
             else Path(path)
         )
 
-    descriptor = root / "builders/sys-dev.json"
+    descriptor = root / f"builders/{domain}.json"
     if not physical(descriptor).exists():
         return {}
     data = core.read_json(physical(descriptor))
     if (
-        data.get("schema") != "airlock.sys-dev-builder.v1"
-        or data.get("domain") != "sys-dev-builder"
+        data.get("schema") != f"airlock.{domain}-builder.v1"
+        or data.get("domain") != builder_domain
     ):
-        core.fail("invalid sys-dev builder descriptor")
+        core.fail(f"invalid {domain} builder descriptor")
     generation = int(data["generation"])
-    manifest_path = state.generation_manifest_path(root, "sys-dev-builder", generation)
+    manifest_path = state.generation_manifest_path(root, builder_domain, generation)
     manifest = core.read_json(physical(manifest_path))
     if (
         not state.generation_is_committed(physical(root), manifest)
         or manifest.get("builder") != data
     ):
-        core.fail("sys-dev builder descriptor does not match committed generation")
+        core.fail(f"{domain} builder descriptor does not match committed generation")
     pin = core.read_json(
         physical(
             state.running_ref_path(
-                root, "sys-dev-builder", generation, "builder-persistent"
+                root, builder_domain, generation, "builder-persistent"
             )
         )
     )
@@ -180,14 +185,14 @@ def builder_volume_configs(root, pool_name, *, physical_root=None):
     expected_refs = [
         ref
         for refs in views.blob_map_physical_references(
-            blob_map, f"running:sys-dev-builder:{generation}:builder-persistent"
+            blob_map, f"running:{builder_domain}:{generation}:builder-persistent"
         ).values()
         for ref in refs
     ]
     expected_pin = {
         "schema": core.SCHEMA_RUNNING_REF,
         "status": "running",
-        "domain": "sys-dev-builder",
+        "domain": builder_domain,
         "generation": generation,
         "volume": "builder-persistent",
         "manifest": str(manifest_path),
@@ -195,7 +200,7 @@ def builder_volume_configs(root, pool_name, *, physical_root=None):
         "physical_references": expected_refs,
     }
     if any(pin.get(key) != value for key, value in expected_pin.items()):
-        core.fail("sys-dev builder persistent pin is missing or inconsistent")
+        core.fail(f"{domain} builder persistent pin is missing or inconsistent")
     store = manifest["store"]
     common = {
         "pool": pool_name,
@@ -204,7 +209,7 @@ def builder_volume_configs(root, pool_name, *, physical_root=None):
         "save_on_stop": True,
         "source": None,
         "revisions_to_keep": 0,
-        "domain_name": "sys-dev-builder",
+        "domain_name": builder_domain,
         "generation": str(generation),
         "closure_hash": store["closure_hash"],
         "manifest_path": str(manifest_path),
@@ -214,7 +219,7 @@ def builder_volume_configs(root, pool_name, *, physical_root=None):
         volume = {
             **common,
             "name": name,
-            "vid": f"domains/sys-dev-builder/generations/{generation}/{name}",
+            "vid": f"domains/{builder_domain}/generations/{generation}/{name}",
         }
         if name == "builder-data":
             volume.update(

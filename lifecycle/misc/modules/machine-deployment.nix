@@ -16,6 +16,26 @@ let
     * * @anyvm @tag:airlock-retired deny
   '';
   guardedGui = config.airlock.guiGpu.enable && config.airlock.guiGpu.startOnBoot;
+  guestControl = action: pkgs.writeShellScript "airlock-ctrl-guest-${action}" ''
+    set -eu
+    [ "$#" -eq 0 ] || exit 2
+    exec ${engine}/bin/airlock-machine-deploy guest-${action} -
+  '';
+  guestPlan = guestControl "plan";
+  guestApply = guestControl "apply";
+  guestHandler = action: helper: pkgs.writeShellScript "airlock-ctrl-guest-${action}-qrexec" ''
+    set -eu
+    [ "''${QREXEC_REMOTE_DOMAIN:-}" = sys-ctrl ] || exit 1
+    exec /run/wrappers/bin/sudo -n ${helper}
+  '';
+  guestPolicy = pkgs.writeTextDir "etc/qubes/policy.d/43-airlock-ctrl-guest.policy" ''
+    airlock.Ctrl.GuestDeploy * sys-dev sys-ctrl allow
+    airlock.Ctrl.GuestDeploy * @anyvm @anyvm deny
+    airlock.Ctrl.GuestPlan * sys-ctrl dom0 allow
+    airlock.Ctrl.GuestPlan * @anyvm @anyvm deny
+    airlock.Ctrl.GuestApply * sys-ctrl dom0 allow
+    airlock.Ctrl.GuestApply * @anyvm @anyvm deny
+  '';
   bootPrerequisites = [
     "airlock-setup-config.service"
   ]
@@ -43,7 +63,22 @@ in
   };
   config = lib.mkIf cfg.enable {
     environment.systemPackages = [ engine ];
-    virtualisation.qubes.packages = [ retiredPolicy ];
+    virtualisation.qubes.packages = [ retiredPolicy guestPolicy ];
+    environment.etc."qubes-rpc/airlock.Ctrl.GuestPlan" = {
+      source = guestHandler "plan" guestPlan;
+      mode = "0555";
+    };
+    environment.etc."qubes-rpc/airlock.Ctrl.GuestApply" = {
+      source = guestHandler "apply" guestApply;
+      mode = "0555";
+    };
+    security.sudo.extraRules = [{
+      users = [ config.airlock.dom0.user ];
+      commands = [
+        { command = "${guestPlan}"; options = [ "NOPASSWD" ]; }
+        { command = "${guestApply}"; options = [ "NOPASSWD" ]; }
+      ];
+    }];
     environment.etc."airlock/machine-profile".text = cfg.profile + "\n";
     systemd.services = lib.mkMerge [
       (lib.mkIf config.airlock.qubes.setupConfigOnBoot.enable {

@@ -319,6 +319,8 @@ def main(argv=None):
         "action",
         choices=[
             "build",
+            "guest-plan",
+            "guest-apply",
             "plan",
             "apply",
             "status",
@@ -337,12 +339,21 @@ def main(argv=None):
     parser.add_argument("--repo", type=Path, default=DEFAULT_REPO)
     parser.add_argument("--state", type=Path, default=DEFAULT_STATE)
     parser.add_argument("--release")
+    parser.add_argument("--target")
     parser.add_argument("--identity")
     parser.add_argument("--confirm")
     parser.add_argument("--retain", choices=("true", "false"))
     parser.add_argument("--allow-unexpired-trash", action="append", default=[])
     parser.add_argument("--before-expiry", action="store_true")
     args = parser.parse_args(argv)
+    if args.action in ("guest-plan", "guest-apply"):
+        if not args.target:
+            parser.error("--target is required for guest deployment")
+        return subprocess.call([
+            "airlock-sys-ctrl-guest-deploy",
+            args.action.removeprefix("guest-"),
+            args.target,
+        ])
     if (
         args.action in ("release-prune-plan", "release-prune", "release-retain")
         and not args.release

@@ -824,7 +824,7 @@ async def ensure_store(args):
     if missing:
         fail(f"shared-closure mode requires: {', '.join(missing)}")
     result = await ensure_shared_store(args)
-    if args.domain == "sys-dev":
+    if args.domain in ("sys-dev", "sys-ctrl"):
         await ensure_builder_store(args)
     return result
 
@@ -833,7 +833,7 @@ async def ensure_builder_store(args):
     """Attach the fixed image-seeded builder base; never replace it on OS update."""
     from airlock_qubes_storage._engine.builder import builder_volume_configs
 
-    desired = builder_volume_configs(args.pool_root, args.pool_name)
+    desired = builder_volume_configs(args.pool_root, args.pool_name, domain=args.domain)
     if not desired:
         return  # Non-prepared installations have no image-seeded builder yet.
     qubes = load_qubes()
@@ -871,14 +871,14 @@ async def ensure_builder_store(args):
         return
     if vm.is_running():
         app.close()
-        fail("stop sys-dev before attaching its persistent builder base")
+        fail(f"stop {args.domain} before attaching its persistent builder base")
     app.close()
 
     async def install():
         app, vm = load_domain(qubes, args.domain)
         check(vm)
         if vm.is_running():
-            fail("sys-dev started while preparing builder volumes")
+            fail(f"{args.domain} started while preparing builder volumes")
         for name, config in desired.items():
             vm.volume_config[name] = config.copy()
             volume = vm.storage.init_volume(name, config.copy())

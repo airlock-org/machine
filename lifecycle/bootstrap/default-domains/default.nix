@@ -144,6 +144,8 @@ let
           airlock.qubeGuest.configRepoPath = "/home/user/dev/airlock-machine";
         })
         ../../misc/modules/machine-source-seed.nix
+        ../../misc/modules/sys-dev-build-store.nix
+        ../../misc/modules/sys-dev-machine-build.nix
       ];
       rootImageSizeMiB = sysCtrlRoleDefaults.rootImageSizeMiB;
       kernelName = airlockQubesVmKernelName;

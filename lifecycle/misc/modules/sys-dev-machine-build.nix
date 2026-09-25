@@ -1,6 +1,7 @@
 { config, lib, pkgs, ... }:
 let
   cfg = config.airlock.qubeGuest;
+  role = cfg.role or "sys-dev";
   repo = "/home/${cfg.user}/dev/airlock-machine";
   state = "/home/${cfg.user}/.local/share/airlock/machine-build";
   cache = "/home/${cfg.user}/.cache/airlock-machine-source";
@@ -268,7 +269,7 @@ let
     [ -r "$ready" ] \
       && ${pkgs.util-linux}/bin/mountpoint -q ${lib.escapeShellArg "${cfg.configNixStoreRoot}/nix/store"} \
       && ${pkgs.util-linux}/bin/mountpoint -q /run/airlock-builder/lower/nix/store || {
-      echo 'sys-dev pool-backed build store is not ready; inspect airlock-sys-dev-build-store.service' >&2
+      echo '${role} pool-backed build store is not ready; inspect airlock-${role}-build-store.service' >&2
       exit 1
     }
     store_uri="$(${pkgs.jq}/bin/jq -er .uri "$ready")"
@@ -290,14 +291,32 @@ let
       exec ${pkgs.python3}/bin/python3 ${../../runtime/tools/sys-dev-machine-deploy.py} "$@"
     '';
   };
+  ctrlDeploy = pkgs.writeShellApplication {
+    name = "airlock-sys-ctrl-guest-deploy";
+    runtimeInputs = [
+      sourceTool buildTool configNixStore
+      pkgs.coreutils pkgs.gitMinimal pkgs.gnutar pkgs.gzip pkgs.gawk pkgs.jq
+      pkgs.python3 pkgs.python3.pkgs.qubes-core-qrexec.domU
+    ];
+    text = ''
+      exec ${pkgs.python3}/bin/python3 ${../../runtime/tools/sys-ctrl-guest-deploy.py} "$@"
+    '';
+  };
 in
 {
   environment.systemPackages = [
     sourceTool
     buildTool
     configNixStore
-    deployTool
+    ctrlDeploy
     pkgs.gitMinimal
     pkgs.gnutar
-  ];
+  ] ++ (if role == "sys-dev" then [ deployTool ] else [ ]);
+  environment.etc."qubes-rpc/airlock.Ctrl.GuestDeploy" = lib.mkIf (role == "sys-ctrl") {
+    source = pkgs.writeShellScript "airlock-ctrl-guest-deploy-qrexec" ''
+      [ "''${QREXEC_REMOTE_DOMAIN:-}" = sys-dev ] || exit 1
+      exec ${ctrlDeploy}/bin/airlock-sys-ctrl-guest-deploy serve
+    '';
+    mode = "0555";
+  };
 }

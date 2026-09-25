@@ -1,4 +1,4 @@
-"""Mount sys-dev's pinned pool base plus its private persistent Nix upper."""
+"""Mount a builder role's pinned pool base plus its private Nix upper."""
 
 import argparse
 import hashlib
@@ -14,12 +14,12 @@ def checked(*command, **kwargs):
     return subprocess.run(command, check=True, text=True, **kwargs)
 
 
-def read_identity(metadata):
+def read_identity(metadata, domain="sys-dev"):
     identity = json.loads((metadata / "identity.json").read_text())
     registration = (metadata / "registration").read_bytes()
     if (
-        identity.get("schema") != "airlock.sys-dev-builder.v1"
-        or identity.get("domain") != "sys-dev-builder"
+        identity.get("schema") != f"airlock.{domain}-builder.v1"
+        or identity.get("domain") != f"{domain}-builder"
         or hashlib.sha256(registration).hexdigest()
         != identity.get("registration_sha256")
     ):
@@ -94,7 +94,7 @@ def start(args):
             f"ro,nodev,nosuid,device={args.blob_device}",
             args.store_device,
         )
-        identity, registration = read_identity(pool / ".airlock-builder")
+        identity, registration = read_identity(pool / ".airlock-builder", args.domain)
         record_base(state, identity)
         lower = runtime / "lower"
         # --load-db registers metadata, never imports package payloads. State is
@@ -161,6 +161,7 @@ def main():
     parser.add_argument("--state", default="/rw/airlock-builder")
     parser.add_argument("--runtime", default="/run/airlock-builder")
     parser.add_argument("--user", default="user")
+    parser.add_argument("--domain", choices=("sys-dev", "sys-ctrl"), default="sys-dev")
     parser.add_argument("--store-device", default="/dev/xvdg")
     parser.add_argument("--blob-device", default="/dev/xvdh")
     parser.add_argument("--nix-store", default="nix-store")

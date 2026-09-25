@@ -130,7 +130,7 @@ def prepare_pool(root, descriptors, specs, runtime_root):
                     )
                 )
             )
-            files.add("builders/sys-dev.json")
+            files.add(f"builders/{manifest['domain'].removesuffix('-builder')}.json")
             files.add(
                 f"running/{manifest['domain']}/{manifest['generation']}/builder-persistent.json"
             )

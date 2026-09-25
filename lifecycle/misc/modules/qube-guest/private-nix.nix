@@ -15,15 +15,15 @@ rec {
       esac
     done
 
-    ${lib.optionalString (cfg.role == "sys-dev") ''
+    ${lib.optionalString (builtins.elem cfg.role [ "sys-dev" "sys-ctrl" ]) ''
       [ "''${AIRLOCK_CONFIG_NIX_STORE_ROOT:-${cfg.configNixStoreRoot}}" = ${lib.escapeShellArg cfg.configNixStoreRoot} ] || {
-        echo 'sys-dev uses its pinned pool-backed store; use an explicit --store for a different store' >&2
+        echo '${cfg.role} uses its pinned pool-backed store; use an explicit --store for a different store' >&2
         exit 1
       }
       [ -r /run/airlock-builder/ready.json ] \
         && ${pkgs.util-linux}/bin/mountpoint -q ${lib.escapeShellArg "${cfg.configNixStoreRoot}/nix/store"} \
         && ${pkgs.util-linux}/bin/mountpoint -q /run/airlock-builder/lower/nix/store || {
-        echo 'sys-dev pool-backed build store is not ready; inspect airlock-sys-dev-build-store.service' >&2
+        echo '${cfg.role} pool-backed build store is not ready; inspect airlock-${cfg.role}-build-store.service' >&2
         exit 1
       }
       store_uri="$(${pkgs.jq}/bin/jq -er .uri /run/airlock-builder/ready.json)"

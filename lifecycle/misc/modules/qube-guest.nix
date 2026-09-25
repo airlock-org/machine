@@ -256,7 +256,7 @@ let
     exec ${poolArtifacts}/bin/airlock-pool-send \
       --physical-store-root ${lib.escapeShellArg "${cfg.configNixStoreRoot}/nix/store"} \
       --nix ${configNix}/bin/airlock-config-nix \
-      ${lib.optionalString (cfg.role != "sys-dev") "--nix-store ${lib.escapeShellArg cfg.configNixStoreRoot}"} \
+      ${lib.optionalString (!(builtins.elem cfg.role [ "sys-dev" "sys-ctrl" ])) "--nix-store ${lib.escapeShellArg cfg.configNixStoreRoot}"} \
       "$@"
   '';
 
@@ -820,23 +820,6 @@ in
           install -d -m 0700 -o ${lib.escapeShellArg cfg.user} -g users ${lib.escapeShellArg cfg.configNixStoreRoot}
         ''
         + lib.concatMapStrings installPersistentPath cmdPersistentPaths;
-      serviceConfig = {
-        Type = "oneshot";
-        RemainAfterExit = true;
-      };
-    };
-
-    systemd.services.airlock-sys-ctrl-state = lib.mkIf hasSysCtrlRole {
-      description = "Prepare persistent sys-ctrl source and Nix state";
-      wantedBy = [ "multi-user.target" ];
-      requires = [ "airlock-qubes-rw-init.service" ];
-      after = [ "airlock-qubes-rw-init.service" ];
-      before = [ "qubes-qrexec-agent.service" ];
-      path = [ pkgs.coreutils ];
-      script = ''
-        set -eu
-        install -d -m 0700 -o ${lib.escapeShellArg cfg.user} -g users ${lib.escapeShellArg cfg.configNixStoreRoot}
-      '';
       serviceConfig = {
         Type = "oneshot";
         RemainAfterExit = true;
