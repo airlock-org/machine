@@ -5,7 +5,7 @@
   # Candidate history and the writable Nix store live in the Qubes private
   # volume, independently of the immutable guest root and shared dom0 pool.
   state.persistentSize = 34359738368;
-  netvm = null;
+  netvm = "sys-firewall";
   prefs = {
     autostart = true;
     guivm = null;

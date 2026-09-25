@@ -167,7 +167,7 @@ def serve():
         return
     configuration = "sys-gui-usb-lab" if target == "sys-gui" else target
     installable = f".#nixosConfigurations.airlock-domain-{configuration}.config.system.build.toplevel"
-    receipt = json.loads(output("airlock-sys-dev-machine-build", "admit", "--offline", target, installable))
+    receipt = json.loads(output("airlock-sys-dev-machine-build", "admit", target, installable))
     if receipt.get("source_revision") != revision or receipt.get("lock_hash") != lock_hash or receipt.get("domain") != target:
         raise ValueError("admission receipt differs from submitted candidate")
     result = subprocess.run(
@@ -181,7 +181,7 @@ def serve():
 
 
 def build_machine_release(revision, lock_hash):
-    release = output("airlock-sys-dev-machine-build", "build", "--offline",
+    release = output("airlock-sys-dev-machine-build", "build",
                      ".#airlock-machine-release-usb-lab")
     physical = Path("/rw/airlock-builder/merged") / release.lstrip("/")
     manifest = json.loads((physical / "release.json").read_text())

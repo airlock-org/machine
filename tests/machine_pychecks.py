@@ -8676,7 +8676,7 @@ def check_config_topology_eval(repo_root: Path, log_dir: Path) -> None:
     assert not any(name.startswith("sys-config-") for name in topology["domains"])
     controller = topology["domains"]["sys-ctrl"]
     assert controller["class"] == "StandaloneVM"
-    assert controller["netvm"] is None
+    assert controller["netvm"] == "sys-firewall"
     assert controller["backend"]["type"] == "nix-closure"
     assert controller["backend"]["store"]["mode"] == "shared-closure"
     assert _nix_eval_json(repo_root, prefix + ".airlock.qubes.configAccessPolicy.enable") is False

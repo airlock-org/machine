@@ -362,7 +362,7 @@
         sys-ctrl = {
           guestHostName = "sys-ctrl";
           label = "black";
-          netvm = null;
+          netvm = "sys-firewall";
           rootImageSizeMiB = 128;
           state.persistentSize = configNixPrivateSizeBytes;
           prefs = {
