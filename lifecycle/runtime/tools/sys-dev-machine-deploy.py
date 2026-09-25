@@ -340,6 +340,7 @@ def main(argv=None):
     parser.add_argument("--state", type=Path, default=DEFAULT_STATE)
     parser.add_argument("--release")
     parser.add_argument("--target")
+    parser.add_argument("--legacy-dom0", action="store_true", help="use the development-only direct dom0 transport")
     parser.add_argument("--identity")
     parser.add_argument("--confirm")
     parser.add_argument("--retain", choices=("true", "false"))
@@ -354,6 +355,8 @@ def main(argv=None):
             args.action.removeprefix("guest-"),
             args.target,
         ])
+    if args.action in ("build", "plan", "apply") and not args.legacy_dom0:
+        return subprocess.call(["airlock-sys-ctrl-guest-deploy", "machine-" + args.action])
     if (
         args.action in ("release-prune-plan", "release-prune", "release-retain")
         and not args.release

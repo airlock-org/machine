@@ -2,6 +2,7 @@
 """Submit a committed guest candidate from sys-dev to sys-ctrl."""
 
 import argparse
+import gzip
 import hashlib
 import json
 import os
@@ -15,6 +16,7 @@ SCHEMA = "airlock.sys-ctrl-guest-request.v1"
 SOURCE_SCHEMA = "airlock.sys-dev-machine-source.v1"
 TARGETS = {"sys-dev", "sys-gui", "sys-net", "sys-firewall", "usr-home", "usr-browser"}
 REPO = Path("/home/user/dev/airlock-machine")
+MACHINE_SCHEMA = "airlock.sys-ctrl-machine-release.v1"
 
 
 def output(*args):
@@ -32,8 +34,14 @@ def identity(repo):
 
 
 def request(action, target, repo):
-    if target not in TARGETS or action not in {"plan", "apply"}:
-        raise ValueError("unsupported guest deployment action or target")
+    if action in {"plan", "apply"}:
+        if target not in TARGETS:
+            raise ValueError("unsupported guest deployment action or target")
+    elif action in {"machine-build", "machine-plan", "machine-apply"}:
+        if target is not None:
+            raise ValueError("machine requests must not select a guest")
+    else:
+        raise ValueError("unsupported deployment action")
     revision, lock_hash = identity(repo)
     if output("git", "-C", str(repo), "submodule", "status", "--recursive"):
         raise ValueError("source bundles with submodules are not supported")
@@ -86,8 +94,12 @@ def serve():
     action, target = header.get("action"), header.get("target")
     revision, lock_hash = header.get("revision"), header.get("lock_hash")
     size = header.get("archive_bytes")
-    if action not in {"plan", "apply"} or target not in TARGETS:
-        raise ValueError("unsupported guest deployment action or target")
+    if (action in {"plan", "apply"} and target not in TARGETS) or (
+        action in {"machine-build", "machine-plan", "machine-apply"} and target is not None
+    ):
+        raise ValueError("invalid deployment target")
+    if action not in {"plan", "apply", "machine-build", "machine-plan", "machine-apply"}:
+        raise ValueError("unsupported deployment action")
     if not isinstance(revision, str) or len(revision) != 40 or any(c not in "0123456789abcdef" for c in revision):
         raise ValueError("invalid source revision")
     if not isinstance(lock_hash, str) or len(lock_hash) != 64 or any(c not in "0123456789abcdef" for c in lock_hash):
@@ -110,6 +122,14 @@ def serve():
         )
     if identity(REPO) != (revision, lock_hash):
         raise ValueError("controller checkout differs from submitted source")
+    if action.startswith("machine-"):
+        release = build_machine_release(revision, lock_hash)
+        if action == "machine-build":
+            print(json.dumps({"schema": MACHINE_SCHEMA, "release": release,
+                              "revision": revision, "lock_hash": lock_hash}))
+        else:
+            send_machine_release(action.removeprefix("machine-"), release, revision, lock_hash)
+        return
     installable = f".#nixosConfigurations.airlock-domain-{target}.config.system.build.toplevel"
     receipt = json.loads(output("airlock-sys-dev-machine-build", "admit", "--offline", target, installable))
     if receipt.get("source_revision") != revision or receipt.get("lock_hash") != lock_hash or receipt.get("domain") != target:
@@ -121,19 +141,75 @@ def serve():
     print(result.stdout, end="")
 
 
+def build_machine_release(revision, lock_hash):
+    release = output("airlock-sys-dev-machine-build", "build", "--offline",
+                     ".#airlock-machine-release-usb-lab")
+    physical = Path("/rw/airlock-builder/merged") / release.lstrip("/")
+    manifest = json.loads((physical / "release.json").read_text())
+    if (manifest.get("schema") != "airlock.machine-release.v1"
+            or manifest.get("revision") != revision
+            or manifest.get("lockHash") != lock_hash
+            or manifest.get("profile") != "usb-lab"):
+        raise ValueError("built release provenance differs from submitted source")
+    if identity(REPO) != (revision, lock_hash):
+        raise ValueError("controller checkout changed during release build")
+    record = Path.home() / ".local/share/airlock/machine-deploy" / revision
+    record.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["airlock-config-nix", "build", release,
+                    "--out-link", str(record / "release")], check=True)
+    (record / "build.json").write_text(json.dumps({
+        "schema": MACHINE_SCHEMA, "release": release,
+        "revision": revision, "lock_hash": lock_hash,
+    }, sort_keys=True) + "\n")
+    return release
+
+
+def send_machine_release(action, release, revision, lock_hash):
+    raw = json.loads(output("airlock-config-nix", "path-info", "--recursive", "--json", release))
+    metadata = {entry["path"]: entry for entry in raw} if isinstance(raw, list) else raw
+    paths = sorted(metadata)
+    if release not in paths:
+        raise ValueError("release is missing from closure metadata")
+    header = {"schema": MACHINE_SCHEMA, "release": release, "revision": revision,
+              "lock_hash": lock_hash, "profile": "usb-lab",
+              "nar_bytes": sum(entry["narSize"] for entry in metadata.values())}
+    exporter = subprocess.Popen(["airlock-config-nix-store", "--export", *paths],
+                                stdout=subprocess.PIPE)
+    receiver = subprocess.Popen(
+        ["qrexec-client-vm", "dom0", "airlock.Ctrl.Machine" + action.title()],
+        stdin=subprocess.PIPE,
+    )
+    try:
+        receiver.stdin.write(json.dumps(header).encode() + b"\n")
+        with gzip.GzipFile(fileobj=receiver.stdin, mode="wb", compresslevel=1) as stream:
+            while chunk := exporter.stdout.read(1024 * 1024):
+                stream.write(chunk)
+        exporter.stdout.close()
+        receiver.stdin.close()
+        if exporter.wait() or receiver.wait():
+            raise ValueError("machine release transfer or dom0 validation failed")
+    finally:
+        for process in (exporter, receiver):
+            if process.poll() is None:
+                process.kill()
+                process.wait()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="action", required=True)
     for action in ("plan", "apply"):
         sub.add_parser(action).add_argument("target", choices=sorted(TARGETS))
+    for action in ("machine-build", "machine-plan", "machine-apply"):
+        sub.add_parser(action)
     sub.add_parser("serve")
     args = parser.parse_args()
     try:
         if args.action == "serve":
             serve()
             return 0
-        return request(args.action, args.target, REPO)
-    except (ValueError, OSError, subprocess.SubprocessError, json.JSONDecodeError) as exc:
+        return request(args.action, getattr(args, "target", None), REPO)
+    except (ValueError, OSError, subprocess.SubprocessError, json.JSONDecodeError, KeyError, IndexError, TypeError) as exc:
         print(f"airlock-sys-ctrl-guest-deploy: {exc}", file=sys.stderr)
         return 1
 

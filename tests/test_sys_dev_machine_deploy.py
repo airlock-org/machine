@@ -37,6 +37,14 @@ def test_guest_apply_delegates_to_controller(monkeypatch):
     assert calls == [["airlock-sys-ctrl-guest-deploy", "apply", "usr-home"]]
 
 
+@pytest.mark.parametrize("action", ["build", "plan", "apply"])
+def test_whole_machine_actions_delegate_to_controller_by_default(monkeypatch, action):
+    calls = []
+    monkeypatch.setattr(DEPLOY.subprocess, "call", lambda argv: calls.append(argv) or 0)
+    assert DEPLOY.main([action]) == 0
+    assert calls == [["airlock-sys-ctrl-guest-deploy", "machine-" + action]]
+
+
 def test_dom0_bridge_allocates_the_terminal_required_by_qrexec(monkeypatch):
     class Process:
         stdin = BytesIO()
@@ -292,7 +300,7 @@ def test_plan_builds_transfers_and_never_starts_apply(tmp_path, monkeypatch, cap
     monkeypatch.setattr(DEPLOY, "Dom0", PlanSession)
     PlanSession.instances.clear()
 
-    assert DEPLOY.main(["plan", "--state", str(tmp_path)]) == 0
+    assert DEPLOY.main(["plan", "--legacy-dom0", "--state", str(tmp_path)]) == 0
 
     session = PlanSession.instances[0]
     assert session.closed is True
@@ -320,7 +328,7 @@ def test_apply_uses_release_coordinator_in_a_detached_worker(tmp_path, monkeypat
     )
     PlanSession.instances.clear()
 
-    assert DEPLOY.main(["apply", "--state", str(tmp_path)]) == 0
+    assert DEPLOY.main(["apply", "--legacy-dom0", "--state", str(tmp_path)]) == 0
     assert started == [
         [
             "/nix/store/coordinator/bin/airlock-machine-deploy",

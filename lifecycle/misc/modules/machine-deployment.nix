@@ -23,6 +23,14 @@ let
   '';
   guestPlan = guestControl "plan";
   guestApply = guestControl "apply";
+  machineControl = action: pkgs.writeShellScript "airlock-ctrl-machine-${action}" ''
+    set -eu
+    [ "$#" -eq 0 ] || exit 2
+    export PATH=${lib.makeBinPath [ pkgs.nix pkgs.systemd ]}:"$PATH"
+    exec ${pkgs.python3}/bin/python3 ${../../runtime/tools/sys-ctrl-machine-receive.py} ${action}
+  '';
+  machinePlan = machineControl "plan";
+  machineApply = machineControl "apply";
   guestHandler = action: helper: pkgs.writeShellScript "airlock-ctrl-guest-${action}-qrexec" ''
     set -eu
     [ "''${QREXEC_REMOTE_DOMAIN:-}" = sys-ctrl ] || exit 1
@@ -35,6 +43,10 @@ let
     airlock.Ctrl.GuestPlan * @anyvm @anyvm deny
     airlock.Ctrl.GuestApply * sys-ctrl dom0 allow
     airlock.Ctrl.GuestApply * @anyvm @anyvm deny
+    airlock.Ctrl.MachinePlan * sys-ctrl dom0 allow
+    airlock.Ctrl.MachinePlan * @anyvm @anyvm deny
+    airlock.Ctrl.MachineApply * sys-ctrl dom0 allow
+    airlock.Ctrl.MachineApply * @anyvm @anyvm deny
   '';
   bootPrerequisites = [
     "airlock-setup-config.service"
@@ -72,11 +84,21 @@ in
       source = guestHandler "apply" guestApply;
       mode = "0555";
     };
+    environment.etc."qubes-rpc/airlock.Ctrl.MachinePlan" = {
+      source = guestHandler "machine-plan" machinePlan;
+      mode = "0555";
+    };
+    environment.etc."qubes-rpc/airlock.Ctrl.MachineApply" = {
+      source = guestHandler "machine-apply" machineApply;
+      mode = "0555";
+    };
     security.sudo.extraRules = [{
       users = [ config.airlock.dom0.user ];
       commands = [
         { command = "${guestPlan}"; options = [ "NOPASSWD" ]; }
         { command = "${guestApply}"; options = [ "NOPASSWD" ]; }
+        { command = "${machinePlan}"; options = [ "NOPASSWD" ]; }
+        { command = "${machineApply}"; options = [ "NOPASSWD" ]; }
       ];
     }];
     environment.etc."airlock/machine-profile".text = cfg.profile + "\n";

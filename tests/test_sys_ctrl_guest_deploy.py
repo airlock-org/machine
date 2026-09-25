@@ -43,6 +43,8 @@ def test_controller_and_dom0_policy_wiring():
         controllerService = toString ctrl.environment.etc."qubes-rpc/airlock.Ctrl.GuestDeploy".source;
         planService = toString host.environment.etc."qubes-rpc/airlock.Ctrl.GuestPlan".source;
         applyService = toString host.environment.etc."qubes-rpc/airlock.Ctrl.GuestApply".source;
+        machinePlan = toString host.environment.etc."qubes-rpc/airlock.Ctrl.MachinePlan".source;
+        machineApply = toString host.environment.etc."qubes-rpc/airlock.Ctrl.MachineApply".source;
         admissionCaller = host.airlock.poolAdmission.caller;
         builderService = ctrl.systemd.services.airlock-sys-ctrl-build-store.description;
       }}
@@ -55,4 +57,4 @@ def test_controller_and_dom0_policy_wiring():
     assert report["admissionCaller"] == "sys-ctrl"
     assert "sys-ctrl" in report["builderService"]
     assert all(report[key].startswith("/nix/store/") for key in
-               ("controllerService", "planService", "applyService"))
+               ("controllerService", "planService", "applyService", "machinePlan", "machineApply"))
