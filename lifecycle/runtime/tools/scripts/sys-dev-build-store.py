@@ -94,7 +94,9 @@ def start(args):
             f"ro,nodev,nosuid,device={args.blob_device}",
             args.store_device,
         )
-        identity, registration = read_identity(pool / ".airlock-builder", args.domain)
+        identity, registration = read_identity(
+            pool / ".airlock-builder", getattr(args, "domain", "sys-dev")
+        )
         record_base(state, identity)
         lower = runtime / "lower"
         # --load-db registers metadata, never imports package payloads. State is
