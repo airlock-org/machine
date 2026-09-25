@@ -9947,6 +9947,12 @@ def check_nix_domain_storage_helper_shared(repo_root: Path, log_dir: Path) -> No
     shutil.rmtree(result_dir, ignore_errors=True)
     for path in (physical_store, work_dir / "closures", fake_bin):
         path.mkdir(parents=True)
+    root_image = physical_store / "example-root" / "root.img"
+    root_image.parent.mkdir()
+    with root_image.open("wb") as stream:
+        stream.truncate(16 * 1024 * 1024)
+        stream.seek(1080)
+        stream.write(b"\x53\xef")
     _write_fake_qubes_package(fake_root)
     _write_executable(
         fake_bin / "systemctl",
