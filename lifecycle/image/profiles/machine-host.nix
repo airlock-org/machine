@@ -7,14 +7,14 @@
 
   airlock.dom0 = {
     enable = true;
-    user = "airlock";
+    user = "user";
     gui.enable = true;
     bootMenu.enable = true;
     devModeNetworkProxy.enable = false;
     dom0Resources = { memoryMiB = 8192; maxMemoryMiB = 8192; };
   };
   users.mutableUsers = false;
-  users.users.airlock = {
+  users.users.user = {
     isNormalUser = true;
     uid = 1000;
     extraGroups = [ "wheel" "qubes" "networkmanager" ];
@@ -28,6 +28,7 @@
   networking.firewall.interfaces.tailscale0.allowedTCPPorts = [ 22 ];
   services.tailscale.enable = true;
   airlock.devDom0Terminal.host.enable = true;
+  airlock.devDom0Terminal.user = "user";
   services.openssh = {
     enable = true;
     openFirewall = false;
@@ -68,8 +69,8 @@
   ];
   systemd.tmpfiles.rules = [
     "d /var/lib/airlock/usb 0700 root root - -"
-    "d /home/airlock/dev 0755 airlock users - -"
-    "d /home/airlock/.airlock-logs 0700 airlock users - -"
+    "d /home/user/dev 0755 user users - -"
+    "d /home/user/.airlock-logs 0700 user users - -"
   ];
   systemd.services."qubes-vm@".enable = lib.mkForce false;
   system.stateVersion = "26.05";
