@@ -16,7 +16,9 @@ def receive(action, engine):
     if not isinstance(receipt, dict):
         raise ValueError("invalid guest admission receipt")
     prepared = subprocess.run([engine, "guest-plan", "-"], input=json.dumps(receipt),
-                              text=True, capture_output=True, check=True)
+                              text=True, capture_output=True)
+    if prepared.returncode:
+        raise ValueError(f"dom0 guest plan failed: {prepared.stderr.strip()[:4096]}")
     result = json.loads(prepared.stdout)
     if action == "apply":
         unit = "airlock-machine-deploy-" + uuid.uuid4().hex[:12]

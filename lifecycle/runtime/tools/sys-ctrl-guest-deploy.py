@@ -172,8 +172,10 @@ def serve():
         raise ValueError("admission receipt differs from submitted candidate")
     result = subprocess.run(
         ["qrexec-client-vm", "dom0", "airlock.Ctrl.Guest" + action.title()],
-        input=json.dumps(receipt) + "\n", text=True, check=True, capture_output=True,
+        input=json.dumps(receipt) + "\n", text=True, capture_output=True,
     )
+    if result.returncode:
+        raise ValueError(f"dom0 guest {action} failed: {result.stderr.strip()[:4096]}")
     record(STATE / "candidates" / revision / f"guest-{target}-{action}.json", json.loads(result.stdout))
     print(result.stdout, end="")
 

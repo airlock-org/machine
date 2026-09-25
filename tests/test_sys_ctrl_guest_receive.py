@@ -24,7 +24,7 @@ def test_guest_activation_binds_before_detaching(monkeypatch, capsys, action):
 
     def run(argv, **kwargs):
         calls.append(argv)
-        return SimpleNamespace(stdout=json.dumps({"candidate": candidate, "plan": {}}))
+        return SimpleNamespace(returncode=0, stdout=json.dumps({"candidate": candidate, "plan": {}}))
 
     monkeypatch.setattr(RECEIVER.subprocess, "run", run)
     RECEIVER.receive(action, "/coordinator")
@@ -37,3 +37,15 @@ def test_guest_activation_binds_before_detaching(monkeypatch, capsys, action):
     else:
         assert len(calls) == 1
         assert "unit" not in result
+
+
+def test_guest_plan_reports_dom0_reason(monkeypatch):
+    monkeypatch.setattr(RECEIVER.sys, "stdin", io.TextIOWrapper(io.BytesIO(b'{"generation": 2}\n')))
+    monkeypatch.setattr(
+        RECEIVER.subprocess, "run",
+        lambda *args, **kwargs: SimpleNamespace(
+            returncode=1, stderr="admitted guest system is already selected\n"
+        ),
+    )
+    with pytest.raises(ValueError, match="admitted guest system is already selected"):
+        RECEIVER.receive("plan", "/coordinator")
