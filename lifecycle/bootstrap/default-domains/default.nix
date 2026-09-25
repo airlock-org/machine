@@ -88,6 +88,8 @@ let
         ({ ... }: {
           networking.hostName = sysCtrlRoleDefaults.guestHostName;
           airlock.qubeGuest.configRepoPath = "/home/user/dev/airlock-machine";
+          # Bound concurrent builds in the controller's fixed memory budget.
+          nix.settings.max-jobs = 1;
         })
         ../../misc/modules/machine-source-seed.nix
         ../../misc/modules/sys-dev-build-store.nix

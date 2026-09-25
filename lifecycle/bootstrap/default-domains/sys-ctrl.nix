@@ -10,8 +10,9 @@
     autostart = true;
     guivm = null;
     include_in_backups = true;
-    memory = 4096;
-    maxmem = 4096;
+    # The first whole-machine release build was killed in the 4 GiB VM.
+    memory = 8192;
+    maxmem = 8192;
     vcpus = 2;
   };
   features = {

@@ -368,8 +368,8 @@
           prefs = {
             autostart = false;
             include_in_backups = true;
-            memory = 2048;
-            maxmem = 4096;
+            memory = 8192;
+            maxmem = 8192;
             vcpus = 2;
           };
           features = {

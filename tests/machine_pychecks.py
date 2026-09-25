@@ -8861,8 +8861,8 @@ def check_config_candidate_flake(repo_root: Path, log_dir: Path) -> None:
     assert topology["domains"]["sys-firewall"]["prefs"]["provides_network"] is True
     assert topology["domains"]["sys-firewall"]["features"]["servicevm"] == "1"
     assert not any(name.startswith("sys-config-") for name in topology["domains"])
-    assert topology["domains"]["sys-ctrl"]["prefs"]["memory"] == 2048
-    assert topology["domains"]["sys-ctrl"]["prefs"]["maxmem"] == 4096
+    assert topology["domains"]["sys-ctrl"]["prefs"]["memory"] == 8192
+    assert topology["domains"]["sys-ctrl"]["prefs"]["maxmem"] == 8192
     assert topology["prefs"]["default_netvm"] == "sys-firewall"
     assert "dev" not in topology["domains"]
     assert (
