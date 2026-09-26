@@ -877,6 +877,12 @@ async def ensure_builder_store(args):
     descriptor = json.loads((Path(args.pool_root) / f"builders/{args.domain}.json").read_text())
 
     def check(vm):
+        unexpected = {
+            name for name in set(vm.volumes) | set(vm.volume_config)
+            if name.startswith("builder-") and name not in desired
+        }
+        if unexpected:
+            fail(f"unsupported builder volumes: {', '.join(sorted(unexpected))}")
         for name, config in desired.items():
             current = vm.volume_config.get(name)
             if current is None:

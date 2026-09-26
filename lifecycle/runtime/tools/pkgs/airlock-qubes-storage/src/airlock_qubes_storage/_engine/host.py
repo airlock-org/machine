@@ -78,7 +78,7 @@ def publish(root, system, registration, systems=None, *, incremental=True):
         "registration": str(manifest_path.parent / "registration"),
         "registration_sha256": hashlib.sha256(registration.encode()).hexdigest(),
         "metadata_image": store["canonical_metadata_image"],
-        "metadata_sha256": core.hash_file(store["canonical_metadata_image"]),
+        "metadata_image_sha256": core.hash_file(store["canonical_metadata_image"]),
         "blob_map": store["canonical_blob_map"],
         "blob_map_sha256": core.hash_file(store["canonical_blob_map"]),
         "closure_hash": store["closure_hash"],

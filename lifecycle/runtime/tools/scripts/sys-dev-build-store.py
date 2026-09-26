@@ -38,8 +38,8 @@ def record_base(state, identity):
         previous = json.loads(target.read_text())
         if previous == identity:
             return
-        binding = {key: previous[key] for key in ("generation", "closure_hash", "registration_sha256")}
-        if binding not in identity.get("predecessors", []):
+        binding = {key: previous.get(key) for key in ("generation", "closure_hash", "registration_sha256")}
+        if any(value is None for value in binding.values()) or binding not in identity.get("predecessors", []):
             raise RuntimeError(
                 "builder base changed; preserve the old base and upper, do not rebase automatically"
             )

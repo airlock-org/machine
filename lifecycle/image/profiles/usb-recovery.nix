@@ -13,6 +13,7 @@ in {
   fileSystems."/boot" = { device = "/dev/disk/by-label/ESP"; fsType = "vfat"; };
   fileSystems."/nix/store" = {
     device = "/var/lib/airlock/recovery-store";
+    fsType = "none";
     options = [ "bind" "ro" ];
     neededForBoot = true;
   };
