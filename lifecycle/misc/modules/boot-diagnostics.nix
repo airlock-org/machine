@@ -30,7 +30,7 @@ in {
     services.journald.settings.Journal = {
       Storage = "persistent";
       SystemMaxUse = "128M";
-      SyncIntervalSec = "5s";
+      SyncIntervalSec = lib.mkDefault "5s";
     };
     systemd.tmpfiles.rules = [ "d /var/log/airlock-boot 0700 root root - -" ];
   };
