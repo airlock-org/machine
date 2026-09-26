@@ -1,8 +1,36 @@
 """Exact installed Xen EFI artifacts, usable from independent recovery."""
 from pathlib import Path
 import os
+import struct
 
 from ._engine import core
+
+
+def xen_config(binary):
+    """Read the .config PE section embedded by the upstream Xen builder."""
+    data = Path(binary).read_bytes()
+    if len(data) < 64 or data[:2] != b"MZ":
+        core.fail("invalid Xen EFI DOS header")
+    offset = struct.unpack_from("<I", data, 60)[0]
+    if offset + 24 > len(data) or data[offset:offset + 4] != b"PE\0\0":
+        core.fail("invalid Xen EFI PE header")
+    count = struct.unpack_from("<H", data, offset + 6)[0]
+    optional_size = struct.unpack_from("<H", data, offset + 20)[0]
+    table = offset + 24 + optional_size
+    if table + count * 40 > len(data):
+        core.fail("truncated Xen EFI section table")
+    sections = []
+    for index in range(count):
+        section = table + index * 40
+        if data[section:section + 8].rstrip(b"\0") != b".config":
+            continue
+        size, start = struct.unpack_from("<II", data, section + 16)
+        if not size or start + size > len(data):
+            core.fail("truncated Xen EFI configuration")
+        sections.append(data[start:start + size].rstrip(b"\0").decode("utf-8"))
+    if len(sections) != 1:
+        core.fail("Xen EFI must contain exactly one configuration section")
+    return dict(line.split("=", 1) for line in sections[0].splitlines() if "=" in line)
 
 
 def inventory(esp, system):
@@ -15,17 +43,14 @@ def inventory(esp, system):
         if not efi.startswith("/EFI/nixos/") or ".." in Path(efi).parts:
             continue
         binary = esp / efi.lstrip("/")
-        configuration = binary.with_suffix(".cfg")
-        if not configuration.is_file():
-            continue
-        config = dict(line.split("=", 1) for line in configuration.read_text().splitlines() if "=" in line)
+        config = xen_config(binary)
         kernel = config.get("kernel", "").split()
         if f"init={system}/init" not in kernel:
             continue
         names = [kernel[0], config["ramdisk"]]
         if any(Path(name).name != name for name in names):
             core.fail("Xen boot artifact escapes its EFI directory")
-        files = [entry, binary, configuration, *(binary.parent / name for name in names)]
+        files = [entry, binary, *(binary.parent / name for name in names)]
         fingerprints = {}
         for path in files:
             with path.open("rb") as stream:

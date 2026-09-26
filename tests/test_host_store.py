@@ -144,7 +144,7 @@ def test_recovery_uses_xen_efi_binding_and_rejects_damaged_initramfs(tmp_path):
     (directory / "xen-generation-1.efi").write_bytes(b"xen")
     (directory / "kernel.efi").write_bytes(b"kernel")
     (directory / "initrd.efi").write_bytes(b"initrd")
-    (directory / "xen-generation-1.cfg").write_text(f"[xen]\nkernel=kernel.efi init={A}/init\nramdisk=initrd.efi\n")
+    write_xen_efi(directory / "xen-generation-1.efi", f"[xen]\nkernel=kernel.efi init={A}/init\nramdisk=initrd.efi\n")
     record = {"system": A, "generation": 1}
     core.atomic_json(root / "host/boots" / (host.key(A) + ".json"), record)
     host_artifacts.seal(root, esp)
@@ -152,3 +152,25 @@ def test_recovery_uses_xen_efi_binding_and_rejects_damaged_initramfs(tmp_path):
     (directory / "initrd.efi").write_bytes(b"broken")
     with pytest.raises(core.EngineError, match="corrupt boot artifact"):
         host_artifacts.verify(root, esp, record)
+
+
+def write_xen_efi(path, config):
+    import struct
+    payload = config.encode() + b"\0"
+    data = bytearray(512)
+    data[:2] = b"MZ"
+    struct.pack_into("<I", data, 60, 64)
+    data[64:68] = b"PE\0\0"
+    struct.pack_into("<H", data, 70, 1)
+    data[88:96] = b".config\0"
+    struct.pack_into("<II", data, 104, len(payload), 512)
+    path.write_bytes(data + payload)
+
+
+def test_xen_config_rejects_truncated_embedded_section(tmp_path):
+    from airlock_qubes_storage import host_artifacts
+    binary = tmp_path / 'xen.efi'
+    write_xen_efi(binary, f'kernel=kernel.efi init={A}/init\nramdisk=initrd.efi\n')
+    binary.write_bytes(binary.read_bytes()[:-8])
+    with pytest.raises(core.EngineError, match='truncated Xen EFI configuration'):
+        host_artifacts.xen_config(binary)
