@@ -29,7 +29,7 @@ in {
     # handoff's /run journal. Keep storage bounded on development USB media.
     services.journald.settings.Journal = {
       Storage = "persistent";
-      SystemMaxUse = "128M";
+      SystemMaxUse = lib.mkDefault "128M";
       SyncIntervalSec = lib.mkDefault "5s";
     };
     systemd.tmpfiles.rules = [ "d /var/log/airlock-boot 0700 root root - -" ];
