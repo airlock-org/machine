@@ -12,6 +12,7 @@ let
   lower = "local%3Froot%3D%2Fvar%2Flib%2Fairlock%2Fhost-store%2Flower%26read-only%3Dtrue";
   uri = "local-overlay://?lower-store=${lower}&upper-layer=/var/lib/airlock/host-store/upper";
 in {
+  imports = [ ./boot-diagnostics.nix ];
   options.airlock.hostStore.enable = lib.mkEnableOption "pool-backed dom0 Nix store";
   config = lib.mkIf cfg.enable {
     assertions = [{ assertion = config.boot.initrd.systemd.enable;
@@ -24,7 +25,7 @@ in {
       requiredBy = [ "initrd-root-fs.target" ];
       after = [ "sysroot.mount" ];
       requires = [ "sysroot.mount" ];
-      before = [ "initrd-root-fs.target" "initrd-nixos-activation.service" ];
+      before = [ "initrd-root-fs.target" "initrd-nixos-activation.service" "initrd-find-nixos-closure.service" ];
       unitConfig.DefaultDependencies = false;
       path = [ pkgs.nix pkgs.util-linux pkgs.lvm2 ];
       environment.PYTHONPATH = toString bootSource;
@@ -32,8 +33,16 @@ in {
         Type = "oneshot";
         RemainAfterExit = true;
         PrivateMounts = false;
+        StandardOutput = "journal+console";
+        StandardError = "journal+console";
         ExecStart = "${pkgs.python3}/bin/python -m airlock_qubes_storage.host_boot";
       };
+    };
+    # RequiresMountsFor=/sysroot/nix/store only waits for declared mount
+    # units. Our overlay is mounted by a service, so it needs an explicit edge.
+    boot.initrd.systemd.services.initrd-find-nixos-closure = lib.mkIf (!config.system.nixos-init.enable) {
+      requires = [ "airlock-host-store.service" ];
+      after = [ "airlock-host-store.service" ];
     };
     nix.settings.experimental-features = [ "local-overlay-store" "read-only-local-store" ];
     nix.settings.store = "daemon";

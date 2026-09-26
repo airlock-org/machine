@@ -3,11 +3,18 @@ import argparse
 import os
 from pathlib import Path
 import shutil
+import subprocess
+import time
+import traceback
 
 from ._engine import builder, core, host, state, views
 from ._engine.pool import admission_lock
 from ._engine.prepared import relocate
 from . import host_state
+
+
+def progress(message):
+    print(f"Airlock host store [{time.monotonic():.3f}s]: {message}", flush=True)
 
 
 def boot_system(cmdline):
@@ -33,6 +40,7 @@ def assemble(sysroot, cmdline):
     def physical(path):
         return sysroot / str(path).lstrip("/")
     system = boot_system(cmdline)
+    progress(f"starting assembly for {system}")
     with admission_lock(root):
         if "/specialisation/" in system:
             aliases = core.read_json(root / "host/aliases.json")
@@ -44,6 +52,7 @@ def assemble(sysroot, cmdline):
         # Cached lower metadata alone does not keep obsolete host generations.
         previous_path = storage / "base.json"
         previous = core.read_json(previous_path) if previous_path.exists() else {"systems": []}
+        progress("validated boot record; reading previous Nix database")
         old_registration = host_state.dump_registration(sysroot)
         old_records = builder.registration_records(old_registration)
         upper = storage / "upper"
@@ -81,11 +90,13 @@ def assemble(sysroot, cmdline):
         registered_paths = builder.registration_paths(registration)
         upper_registration = "".join(old_records[path] for path in sorted(upper_needed))
         new_registration = builder.merge_registration(registration, upper_registration) if upper_registration else registration
+        progress(f"validated {len(records)} bases and {len(registered_paths)} store paths")
         mounts = []
         try:
             bases = []
             for record in records:
                 generation = record["generation"]
+                progress(f"mounting EROFS base {generation}")
                 target = storage / "bases" / str(generation)
                 target.mkdir(parents=True, exist_ok=True)
                 if os.path.ismount(target):
@@ -104,6 +115,7 @@ def assemble(sysroot, cmdline):
             # Register metadata before the read-only lower mount is visible.
             # The database is reconstructed each boot from checked registrations.
             shutil.rmtree(lower / "nix/var/nix/db", ignore_errors=True)
+            progress("loading lower Nix database")
             host.command("nix-store", "--store", f"local?root={lower}", "--load-db", input=registration)
             if len(bases) == 1:
                 host.command("mount", "--bind", str(bases[0]), str(lower_store))
@@ -148,6 +160,7 @@ def assemble(sysroot, cmdline):
                     "closure_hash": record["closure_hash"], "volume": "host-upper",
                     "physical_references": [ref for group in refs.values() for ref in group],
                 })
+            progress("replacing host Nix database")
             host_state.replace_database(sysroot, new_registration)
             core.atomic_json(previous_path, {"schema": "airlock.host-base.v1", "systems": systems})
             shutil.rmtree(trash)
@@ -159,6 +172,7 @@ def assemble(sysroot, cmdline):
                     if link.is_file() and link.lstat().st_nlink == 1:
                         link.unlink()
                 core.fsync_dir(links)
+            progress("mounting final host overlay")
             merged = sysroot / "nix/store"
             merged.mkdir(parents=True, exist_ok=True)
             host.command("mount", "-t", "overlay", "overlay", "-o",
@@ -174,6 +188,7 @@ def assemble(sysroot, cmdline):
                 if int(pin.parent.name) not in keep:
                     state.clear_running_ref(root, "dom0", int(pin.parent.name), "host-upper")
             host.collect_retired(root)
+            progress("assembly complete; ready for NixOS closure discovery and activation")
 
         except BaseException:
             for target in reversed(mounts):
@@ -185,7 +200,14 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--sysroot", default="/sysroot")
     args = parser.parse_args()
-    assemble(args.sysroot, Path("/proc/cmdline").read_text())
+    try:
+        assemble(args.sysroot, Path("/proc/cmdline").read_text())
+    except BaseException as error:
+        progress("FAILED during host store assembly")
+        if isinstance(error, subprocess.CalledProcessError):
+            print(f"Command: {error.cmd!r}\nstdout: {error.stdout}\nstderr: {error.stderr}", flush=True)
+        traceback.print_exc()
+        raise
 
 
 if __name__ == "__main__":

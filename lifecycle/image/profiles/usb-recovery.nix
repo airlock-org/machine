@@ -2,6 +2,8 @@
 let
   storage = pkgs.python3.pkgs.callPackage ../../runtime/tools/pkgs/airlock-qubes-storage { };
 in {
+  imports = [ ../../misc/modules/boot-diagnostics.nix ];
+  airlock.bootDiagnostics.enable = true;
   # Independent system: no parent topology, desktop, guests or main pool mount.
   virtualisation.xen.enable = true;
   boot.initrd.systemd.enable = true;
