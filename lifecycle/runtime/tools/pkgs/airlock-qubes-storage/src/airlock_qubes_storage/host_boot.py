@@ -117,13 +117,13 @@ def assemble(sysroot, cmdline):
             shutil.rmtree(lower / "nix/var/nix/db", ignore_errors=True)
             progress("loading lower Nix database")
             host.command("nix-store", "--store", f"local?root={lower}", "--load-db", input=registration)
-            if len(bases) == 1:
-                host.command("mount", "--bind", str(bases[0]), str(lower_store))
-                host.command("mount", "-o", "remount,bind,ro", str(lower_store))
-            else:
-                host.command("mount", "-t", "overlay", "overlay", "-o",
-                             "ro,index=off,metacopy=off,redirect_dir=nofollow,lowerdir=" + ":".join(map(str, bases)),
-                             str(lower_store))
+            # LocalStore opens .links even with a read-only database. Keep
+            # this empty administrative directory outside sealed object views.
+            scaffold = storage / "lower-scaffold"
+            (scaffold / ".links").mkdir(parents=True, exist_ok=True)
+            host.command("mount", "-t", "overlay", "overlay", "-o",
+                         "ro,index=off,metacopy=off,redirect_dir=nofollow,lowerdir="
+                         + ":".join(map(str, [*bases, scaffold])), str(lower_store))
             mounts.append(lower_store)
             db = lower / "nix/var/nix/db"
             host.command("mount", "--bind", str(db), str(db))
