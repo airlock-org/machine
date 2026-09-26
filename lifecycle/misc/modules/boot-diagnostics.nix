@@ -8,7 +8,9 @@ in {
     boot.consoleLogLevel = lib.mkForce 7;
     boot.kernelParams = [ "systemd.show_status=1" "rd.systemd.show_status=1" ];
     boot.initrd.verbose = true;
-    boot.initrd.systemd.storePaths = [ pkgs.python3 recorder ];
+    # Bare paths are interpreted as submodule imports by this option's type.
+    # A store-path string includes the script as data instead.
+    boot.initrd.systemd.storePaths = [ pkgs.python3 "${recorder}" ];
     boot.initrd.systemd.services.airlock-boot-journal = {
       description = "Save initramfs journal to the root filesystem";
       wantedBy = [ "initrd.target" ];
