@@ -25,11 +25,11 @@ in {
     };
     # The early recorder captures stage 1; journald owns stage 2 and the
     # handoff's /run journal. Keep storage bounded on development USB media.
-    services.journald.extraConfig = ''
-      Storage=persistent
-      SystemMaxUse=128M
-      SyncIntervalSec=5s
-    '';
+    services.journald.settings.Journal = {
+      Storage = "persistent";
+      SystemMaxUse = "128M";
+      SyncIntervalSec = "5s";
+    };
     systemd.tmpfiles.rules = [ "d /var/log/airlock-boot 0700 root root - -" ];
   };
 }
