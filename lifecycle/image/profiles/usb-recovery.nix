@@ -1,39 +1,40 @@
-{ lib, pkgs, ... }:
+{ pkgs, ... }:
 let
-  recoveryNetwork = pkgs.writeShellScriptBin "airlock-recovery-network" ''
-    set -eu
-
-    if [ ! -e /etc/airlock/recovery ]; then
-      echo "This command is available only in Airlock recovery mode." >&2
-      exit 1
-    fi
-    if [ "$(id -u)" -ne 0 ]; then
-      exec /run/wrappers/bin/sudo "$0" "$@"
-    fi
-
-    ${pkgs.systemd}/bin/systemctl start NetworkManager.service
-    ${pkgs.systemd}/bin/systemctl start tailscaled.service
-    if ! ${pkgs.networkmanager}/bin/nm-online --quiet --timeout 20; then
-      echo "No network connection is ready." >&2
-      echo "For Wi-Fi, connect with: sudo nmcli --ask device wifi connect YOUR_SSID" >&2
-      echo "Then run airlock-recovery-network again." >&2
-      exit 1
-    fi
-    exec ${pkgs.tailscale}/bin/tailscale up --ssh --hostname=airlock-recovery
-  '';
-in
-{
-  imports = [ ./usb-headless.nix ];
-
+  storage = pkgs.python3.pkgs.callPackage ../../runtime/tools/pkgs/airlock-qubes-storage { };
+in {
+  # Independent system: no parent topology, desktop, guests or main pool mount.
+  virtualisation.xen.enable = true;
+  boot.initrd.systemd.enable = true;
+  boot.initrd.availableKernelModules = [ "nvme" "xhci_pci" "usb_storage" "uas" "sd_mod" "ahci" ];
+  boot.loader.systemd-boot.enable = true;
+  boot.loader.efi.canTouchEfiVariables = false;
+  boot.kernelParams = [ "console=tty0" "console=hvc0" ];
+  fileSystems."/" = { device = "/dev/disk/by-label/airlock-usb"; fsType = "ext4"; };
+  fileSystems."/boot" = { device = "/dev/disk/by-label/ESP"; fsType = "vfat"; };
+  fileSystems."/nix/store" = {
+    device = "/var/lib/airlock/recovery-store";
+    options = [ "bind" "ro" ];
+    neededForBoot = true;
+  };
   environment.etc."airlock/boot-role".text = "recovery\n";
-  environment.etc."airlock/recovery".text = ''
-    Xen text recovery; VMs and networking do not start automatically.
-    Run: sudo airlock-recovery-network
+  environment.etc."airlock/pool-recovery".text = ''
+    Independent pool recovery. Networking and guests are disabled.
+    Select a retained boot entry with: sudo airlock-host-store recover SYSTEM
   '';
-  environment.systemPackages = [ recoveryNetwork ];
-
-  # Keep recovery offline until the operator explicitly invokes the command.
-  systemd.services.NetworkManager.wantedBy = lib.mkForce [ ];
-  systemd.services.NetworkManager-wait-online.enable = lib.mkForce false;
-  systemd.services.tailscaled.wantedBy = lib.mkForce [ ];
+  environment.systemPackages = [ storage pkgs.e2fsprogs pkgs.util-linux pkgs.lvm2 ];
+  networking.useDHCP = false;
+  networking.wireless.enable = false;
+  users.mutableUsers = false;
+  users.users.user = {
+    isNormalUser = true;
+    uid = 1000;
+    extraGroups = [ "wheel" ];
+    hashedPasswordFile = "/var/lib/airlock/usb/local-password.hash";
+  };
+  users.users.root.hashedPassword = "!";
+  security.sudo.wheelNeedsPassword = true;
+  # Recovery selects already-installed EFI artifacts, so it needs no daemon
+  # and must not open or collect the main host's persistent Nix database.
+  nix.enable = false;
+  system.stateVersion = "26.05";
 }

@@ -306,6 +306,7 @@ class ReleaseManager:
             if selected and record["profile_generations"]:
                 host = load_release(selected["release"])[0]["host"]
                 self.machine.command(host + "/bin/switch-to-configuration", "boot", timeout=600)
+                self.machine.command("airlock-host-store", "seal-boot")
             for name in record["roots"]:
                 (self.machine.state / "roots" / name).unlink(missing_ok=True)
             roots = self.machine.state / "roots"
@@ -315,6 +316,12 @@ class ReleaseManager:
                     os.fsync(fd)
                 finally:
                     os.close(fd)
+            if not any(
+                other != release and not self.prune_record_path(other).exists()
+                and load_release(other)[0]["host"] == record["host"]
+                for other in self.release_inventory()
+            ):
+                self.machine.command("airlock-host-store", "retire", record["host"])
             record.update(status="pruned", finished_at=time.time())
             atomic_json(path, record)
             return record

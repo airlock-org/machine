@@ -352,6 +352,9 @@ class Machine(deploy.Coordinator):
         self.calls.append(args)
         if self.fail and args[0] == self.fail:
             raise deploy.DeploymentError("simulated failure")
+        if args[0] == "airlock-host-store":
+            return json.dumps({"schema": "airlock.host-store.v1", "system": args[-1],
+                               "generation": 1, "closure_hash": "host-closure"})
         if args[0] == "nix-store" and "--add-root" in args:
             root = Path(args[args.index("--add-root") + 1])
             root.unlink(missing_ok=True)

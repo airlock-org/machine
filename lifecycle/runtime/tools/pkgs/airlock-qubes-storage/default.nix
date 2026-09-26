@@ -5,6 +5,7 @@
   gnutar,
   lib,
   lvm2,
+  nix,
   makeWrapper,
   setuptools,
   util-linux,
@@ -23,6 +24,8 @@ buildPythonPackage {
   ];
 
   postFixup = ''
+    wrapProgram "$out/bin/airlock-host-store" \
+      --prefix PATH : ${lib.makeBinPath [ nix erofs-utils gnutar lvm2 util-linux ]}
     wrapProgram "$out/bin/airlock-closure-store" \
       --prefix PATH : ${lib.makeBinPath [
         e2fsprogs

@@ -302,7 +302,7 @@ def test_nix_selection_drives_reservation_assignment_and_start():
         ]; }}).config;
         hybridGuest = guestReport f.nixosConfigurations.airlock-domain-sys-gui-usb.config;
         normalSender = normal.airlock.inputProxy.sender.enable;
-        recoverySender = normal.specialisation.usb-text-recovery.configuration.airlock.inputProxy.sender.enable;
+        recoverySender = normal.specialisation.usb-text-recovery.configuration.airlock.inputProxy.sender.enable or false;
         inputTarget = lab.systemd.targets.airlock-gui-input.wantedBy;
         inputServices = lab.systemd.targets.airlock-gui-input.wants;
         udevRules = lab.services.udev.extraRules;

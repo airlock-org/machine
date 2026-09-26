@@ -2,6 +2,7 @@ import argparse
 import asyncio
 import json
 import os
+from pathlib import Path
 import shutil
 import subprocess
 import sys
@@ -866,17 +867,16 @@ async def ensure_store(args):
 
 
 async def ensure_builder_store(args):
-    """Attach the fixed image-seeded builder base; never replace it on OS update."""
-    from airlock_qubes_storage._engine.builder import builder_volume_configs
+    """Attach an approved additive successor only while the builder is stopped."""
+    from airlock_qubes_storage._engine.builder import builder_volume_configs, release_predecessors
 
     desired = builder_volume_configs(args.pool_root, args.pool_name, domain=args.domain)
     if not desired:
         return  # Non-prepared installations have no image-seeded builder yet.
     qubes = load_qubes()
+    descriptor = json.loads((Path(args.pool_root) / f"builders/{args.domain}.json").read_text())
 
     def check(vm):
-        if "builder-metadata" in vm.volume_config or "builder-metadata" in vm.volumes:
-            fail("legacy three-disk builder requires explicit offline migration")
         for name, config in desired.items():
             current = vm.volume_config.get(name)
             if current is None:
@@ -887,7 +887,10 @@ async def ensure_builder_store(args):
                 for key, value in config.items()
                 if key != "size"
             ):
-                fail(f"refusing to replace persistent builder base: {name}")
+                if not any(str(old["generation"]) == str(current.get("generation"))
+                           and old["closure_hash"] == current.get("closure_hash")
+                           for old in descriptor.get("predecessors", [])):
+                    fail(f"unapproved persistent builder base transition: {name}")
         if any(name in vm.volume_config for name in desired) and not all(
             name in vm.volume_config for name in desired
         ):
@@ -901,7 +904,15 @@ async def ensure_builder_store(args):
 
     app, vm = load_domain(qubes, args.domain)
     check(vm)
-    if all(name in vm.volume_config for name in desired):
+    attached = all(name in vm.volume_config for name in desired)
+    unchanged = attached and all(
+        all(str(vm.volume_config[name].get(key, False if value is False else None)) == str(value)
+            for key, value in config.items() if key != "size")
+        for name, config in desired.items()
+    )
+    if unchanged or (attached and vm.is_running()):
+        # An active controller finishes its request against its pinned old base.
+        # The next stopped setup installs both successor volumes in one save.
         check_frontends(vm)
         app.close()
         return
@@ -922,6 +933,7 @@ async def ensure_builder_store(args):
         check_frontends(vm)
         app.save(lock=False)
         app.close()
+        release_predecessors(args.pool_root, args.domain, descriptor)
         return {"metadata_changed": True}
 
     await with_qubesd_restart(True, install)

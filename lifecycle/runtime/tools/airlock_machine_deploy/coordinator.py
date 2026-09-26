@@ -240,6 +240,11 @@ class Coordinator:
                 if info.get("store", {}).get("closure_hash") != receipt.get("closure_hash"):
                     raise DeploymentError("admission receipt closure mismatch")
                 staged[name] = generation
+            # Verify and retain dom0's objects before a candidate is reviewable.
+            # This also publishes an approved controller base for its next
+            # stopped setup; the running controller keeps its existing view.
+            host_pool = json.loads(self.command("airlock-host-store", "publish", manifest["host"]))
+            manifest = dict(manifest, hostPool=host_pool)
             manifest = dict(manifest, stagedGenerations=staged, sourceRelease=str(release),
                             guestProvenance={name: {"revision": manifest["revision"],
                                                     "lockHash": manifest["lockHash"]}
@@ -765,6 +770,7 @@ class Coordinator:
                     self.pin("host-" + transaction, manifest.get("sourceRelease", manifest["host"]))
                 # An applied candidate is now protected by its transaction root.
                 (self.state / "roots" / ("pending-" + release.name)).unlink(missing_ok=True)
+                self.command("airlock-host-store", "publish", manifest["host"])
                 self.install_boot_hook(release, baseline)
                 self.stage(release, topology, changes["stage"], directory)
                 trash_plan = [
@@ -841,6 +847,8 @@ class Coordinator:
                     "boot",
                     timeout=600,
                 )
+                self.command("airlock-host-store", "seal-boot")
+                self.command("airlock-host-store", "select", manifest["host"])
                 phase("starting")
                 for name in changes["start"]:
                     if name not in self.running():

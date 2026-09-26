@@ -32,19 +32,23 @@ def read_identity(metadata, domain="sys-dev"):
 
 
 def record_base(state, identity):
-    """Never silently rebase a persistent upper; fail closed on identity change."""
+    """Accept only a dom0-authorized additive transition before mounting upper."""
     target = state / "base.json"
     if target.exists():
-        if json.loads(target.read_text()) != identity:
+        previous = json.loads(target.read_text())
+        if previous == identity:
+            return
+        binding = {key: previous[key] for key in ("generation", "closure_hash", "registration_sha256")}
+        if binding not in identity.get("predecessors", []):
             raise RuntimeError(
                 "builder base changed; preserve the old base and upper, do not rebase automatically"
             )
-        return
-    # First initialization is safe only with no existing overlay state.
-    for name in ("upper", "merged", "work"):
-        directory = state / name
-        if directory.exists() and any(directory.iterdir()):
-            raise RuntimeError("builder state exists without its base identity")
+    else:
+        # First initialization is safe only with no existing overlay state.
+        for name in ("upper", "merged", "work"):
+            directory = state / name
+            if directory.exists() and any(directory.iterdir()):
+                raise RuntimeError("builder state exists without its base identity")
     temporary = state / ".base.json.tmp"
     with temporary.open("w") as stream:
         json.dump(identity, stream, sort_keys=True)

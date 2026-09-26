@@ -1,4 +1,4 @@
-"""Image-seeded, frozen builder inputs; no guest control authority."""
+"""Approved builder inputs and explicit, offline, additive base transitions."""
 
 import hashlib
 import os
@@ -62,7 +62,32 @@ def offline_source_root(source):
     return match.group(1)
 
 
-def prepare_builder(root, admission, registration, offline_inputs_source=None):
+def registration_records(text):
+    """Parse once and retain exact Nix registration records for metadata unions."""
+    registration_paths(text)
+    lines = text.splitlines()
+    result = {}
+    offset = 0
+    while offset < len(lines):
+        end = offset + 5 + int(lines[offset + 4])
+        result[lines[offset]] = "\n".join(lines[offset:end]) + "\n"
+        offset = end
+    return result
+
+
+def merge_registration(*texts):
+    records = {}
+    for text in texts:
+        for path, record in registration_records(text).items():
+            if path in records and records[path].splitlines()[1:3] != record.splitlines()[1:3]:
+                core.fail(f"conflicting Nix registration: {path}")
+            if path in records and records[path].splitlines()[4:] != record.splitlines()[4:]:
+                core.fail(f"conflicting Nix references: {path}")
+            records[path] = record
+    return "".join(records[path] for path in sorted(records))
+
+
+def prepare_builder(root, admission, registration, offline_inputs_source=None, predecessor=None):
     """Build metadata only; package bytes are shared with guest pool views."""
     root = Path(root)
     manifest_path = Path(admission["manifest"])
@@ -102,6 +127,18 @@ def prepare_builder(root, admission, registration, offline_inputs_source=None):
     }
     if offline_bytes is not None:
         identity["flake_inputs_sha256"] = hashlib.sha256(offline_bytes).hexdigest()
+    if predecessor is not None:
+        old_manifest = core.read_json(state.generation_manifest_path(
+            root, builder_domain, predecessor["generation"]
+        ))
+        if old_manifest.get("builder") != predecessor:
+            core.fail("builder transition predecessor differs from committed base")
+        old_registration = (Path(old_manifest["builder"]["metadata_image"]).parent / "registration").read_text()
+        if merge_registration(old_registration, registration.decode()) != merge_registration(registration.decode()):
+            core.fail("builder transition must retain every previous registered object")
+        identity["predecessors"] = predecessor.get("predecessors", []) + [
+            {key: predecessor[key] for key in ("generation", "closure_hash", "registration_sha256")}
+        ]
     # Copy only the small index, never the external package payload. Keep the
     # canonical guest index untouched: this image belongs to the frozen builder.
     metadata_image = manifest_path.parent / "builder-store.erofs"
@@ -132,7 +169,12 @@ def prepare_builder(root, admission, registration, offline_inputs_source=None):
             ]
         )
     os.chmod(metadata_image, 0o444)
+    with metadata_image.open("rb") as stream:
+        os.fsync(stream.fileno())
     manifest["builder"] = {**identity, "metadata_image": str(metadata_image)}
+    core.atomic_write(manifest_path.parent / "registration", registration.decode(), mode=0o444)
+    if offline_bytes is not None:
+        core.atomic_write(manifest_path.parent / "flake-inputs.json", offline_bytes.decode(), mode=0o444)
     core.atomic_json(manifest_path, manifest)
     # This is intentionally NOT tied to VM running state. Persistent upper
     # outputs can reference lower objects while the VM is off, or after an OS
@@ -239,3 +281,24 @@ def builder_volume_configs(root, pool_name, *, domain="sys-dev", physical_root=N
             )
         result[name] = volume
     return result
+
+
+def release_predecessors(root, role, descriptor):
+    """After an atomic stopped-VM attachment, the successor owns all base refs."""
+    from .pool import admission_lock
+
+    root = Path(root)
+    with admission_lock(root):
+        if core.read_json(root / f"builders/{role}.json") != descriptor:
+            core.fail("builder descriptor changed during stopped attachment")
+        for predecessor in descriptor.get("predecessors", []):
+            generation = predecessor["generation"]
+            path = state.generation_manifest_path(root, f"{role}-builder", generation)
+            if not path.exists():
+                continue
+            manifest = core.read_json(path)
+            if manifest["store"]["closure_hash"] != predecessor["closure_hash"]:
+                core.fail("builder predecessor identity mismatch during pin handoff")
+            manifest["retention"]["retain"] = False
+            core.atomic_json(path, manifest)
+            state.clear_running_ref(root, f"{role}-builder", generation, "builder-persistent")

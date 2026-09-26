@@ -460,19 +460,24 @@
           self.nixosModules.dom0
           ./lifecycle/image/profiles/machine-host.nix
           ./lifecycle/misc/modules/machine-deployment.nix
+          ./lifecycle/misc/modules/host-store.nix
           ./lifecycle/image/hardware/thinkpad-t14-gen3-amd.nix
           ({ config, lib, ... }: {
             airlock.machineDeployment.enable = true;
+            airlock.hostStore.enable = true;
             airlock.machineDeployment.profile = "usb-dev";
             # The image's base generation is only a console/bootstrap carrier.
             # Its normal and recovery specialisations own guest startup.
             airlock.qubes.setupConfigOnBoot.enable = lib.mkIf
               (!includeAlternativeGuiProfiles && config.specialisation != { })
               (lib.mkForce false);
-            specialisation.usb-text-recovery.configuration = {
-              imports = [ ./lifecycle/image/profiles/usb-recovery.nix ];
-              # Do not reconcile or start VMs from possibly changed qubes.xml.
-              airlock.qubes.setupConfigOnBoot.enable = lib.mkForce false;
+            specialisation.usb-text-recovery = {
+              inheritParentConfig = false;
+              configuration = {
+                imports = [ ./lifecycle/image/profiles/usb-recovery.nix ];
+                boot.kernelPackages = config.boot.kernelPackages;
+                virtualisation.xen.package = config.virtualisation.xen.package;
+              };
             };
             specialisation.usb-gui-lab = lib.mkIf includeAlternativeGuiProfiles {
               configuration = {
