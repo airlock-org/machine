@@ -46,7 +46,11 @@ in {
     };
     nix.settings.experimental-features = [ "local-overlay-store" "read-only-local-store" ];
     nix.settings.store = "daemon";
-    systemd.services.nix-daemon.environment.NIX_REMOTE = uri;
+    # nix.conf selects the daemon for clients. Override it for the daemon
+    # itself: NIX_REMOTE is only a default and would recurse into that socket.
+    # systemd expands percent specifiers even in Environment= assignments.
+    systemd.services.nix-daemon.environment.NIX_CONFIG =
+      "store = ${lib.replaceStrings [ "%" ] [ "%%" ] uri}";
     environment.systemPackages = [ storage ];
     environment.etc."airlock/host-store".text = uri + "\n";
     # Mounts are made by stage 1 and survive switch-root. Never remount or
