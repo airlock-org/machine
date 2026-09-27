@@ -149,7 +149,14 @@ def main():
         receive(args.action)
         return 0
     except (ValueError, OSError, subprocess.SubprocessError, EOFError, KeyError, TypeError) as exc:
-        print(f"airlock-ctrl-machine-receive: {exc}", file=sys.stderr)
+        detail = str(exc)
+        if isinstance(exc, subprocess.CalledProcessError) and exc.stderr:
+            detail += ": " + str(exc.stderr).strip()
+        detail = detail[:4096]
+        # Dom0 qrexec logs stderr locally. Return the bounded failure over the
+        # protocol too, so the controller does not report an empty JSON reply.
+        print(json.dumps({"schema": SCHEMA, "error": detail}), flush=True)
+        print(f"airlock-ctrl-machine-receive: {detail}", file=sys.stderr)
         return 1
 
 

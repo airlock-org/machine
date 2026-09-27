@@ -205,6 +205,17 @@ def build_machine_release(revision, lock_hash):
     return release
 
 
+def machine_response(data, stage):
+    if not data:
+        raise ValueError(f"dom0 closed the machine {stage} response; inspect its qrexec log")
+    result = json.loads(data)
+    if not isinstance(result, dict):
+        raise ValueError(f"invalid dom0 machine {stage} response")
+    if result.get("error"):
+        raise ValueError(f"dom0 machine {stage} failed: {str(result['error'])[:4096]}")
+    return result
+
+
 def send_machine_release(action, release, revision, lock_hash):
     started = time.monotonic()
     physical = Path("/rw/airlock-builder/merged") / release.lstrip("/")
@@ -241,7 +252,7 @@ def send_machine_release(action, release, revision, lock_hash):
     try:
         receiver.stdin.write(json.dumps(header).encode() + b"\n")
         receiver.stdin.flush()
-        response = json.loads(receiver.stdout.readline(16 * 1024 * 1024 + 1))
+        response = machine_response(receiver.stdout.readline(16 * 1024 * 1024 + 1), "inventory")
         missing = response.get("missing")
         if (response.get("schema") != MACHINE_SCHEMA or not isinstance(missing, list)
                 or any(not isinstance(path, str) for path in missing)
@@ -260,7 +271,7 @@ def send_machine_release(action, release, revision, lock_hash):
                 # Nix export streams terminate with a zero 64-bit word.
                 stream.write(bytes(8))
         receiver.stdin.close()
-        result = json.loads(receiver.stdout.read())
+        result = machine_response(receiver.stdout.read(), "planning")
         if receiver.wait():
             raise ValueError("machine release transfer or dom0 validation failed")
         result["elapsed_seconds"] = time.monotonic() - started

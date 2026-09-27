@@ -97,3 +97,19 @@ def test_imported_release_is_checked_before_coordinator_action(monkeypatch, tmp_
         assert calls[4][-3:] == [coordinator, "apply", candidate]
     else:
         assert len(calls) == 4
+
+
+def test_machine_failure_returns_bounded_coordinator_error(monkeypatch, capsys):
+    import subprocess
+
+    def fail(_action):
+        raise subprocess.CalledProcessError(1, ["coordinator", "machine-bind"],
+                                            stderr="specific admission failure")
+
+    monkeypatch.setattr(RECEIVER, "receive", fail)
+    monkeypatch.setattr(RECEIVER.sys, "argv", ["receiver", "plan"])
+    assert RECEIVER.main() == 1
+    reply = json.loads(capsys.readouterr().out)
+    assert reply["schema"] == RECEIVER.SCHEMA
+    assert "specific admission failure" in reply["error"]
+    assert len(reply["error"]) <= 4096

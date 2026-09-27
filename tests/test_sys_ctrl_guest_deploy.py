@@ -58,3 +58,12 @@ def test_controller_and_dom0_policy_wiring():
     assert "sys-ctrl" in report["builderService"]
     assert all(report[key].startswith("/nix/store/") for key in
                ("controllerService", "planService", "applyService", "machinePlan", "machineApply"))
+
+
+@pytest.mark.parametrize("stage", ["inventory", "planning"])
+def test_machine_response_preserves_dom0_failure(stage):
+    with pytest.raises(ValueError, match="specific admission failure"):
+        DEPLOY.machine_response(json.dumps({"schema": DEPLOY.MACHINE_SCHEMA,
+                                          "error": "specific admission failure"}), stage)
+    with pytest.raises(ValueError, match="closed the machine"):
+        DEPLOY.machine_response(b"", stage)
