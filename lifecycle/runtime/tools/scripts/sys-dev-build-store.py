@@ -6,12 +6,25 @@ import json
 import os
 from pathlib import Path
 import pwd
+import re
 import subprocess
 from urllib.parse import quote
 
 
 def checked(*command, **kwargs):
     return subprocess.run(command, check=True, text=True, **kwargs)
+
+
+def is_mountpoint(path, mountinfo=Path("/proc/self/mountinfo")):
+    """Recognize same-filesystem bind mounts, including the read-only DB bind."""
+    target = os.path.abspath(path)
+    for line in mountinfo.read_text().splitlines():
+        mount_path = re.sub(
+            r"\\([0-7]{3})", lambda match: chr(int(match[1], 8)), line.split()[4]
+        )
+        if mount_path == target:
+            return True
+    return False
 
 
 def read_identity(metadata, domain="sys-dev"):
@@ -83,7 +96,7 @@ def start(args):
 
     def mount(target, *options):
         target.mkdir(parents=True, exist_ok=True)
-        if target.is_symlink() or os.path.ismount(target):
+        if target.is_symlink() or is_mountpoint(target):
             raise RuntimeError(f"unsafe or already mounted builder path: {target}")
         checked("mount", *options, str(target))
         mounts.append(str(target))
@@ -155,7 +168,7 @@ def stop(args):
         return
     data = json.loads(ready.read_text())
     for path in reversed(data["mounts"]):
-        if os.path.ismount(path):
+        if is_mountpoint(path):
             checked("umount", path)
     ready.unlink()
     # Keep upper, Nix DB, base identity AND dom0's persistent physical pin.
