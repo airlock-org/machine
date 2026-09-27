@@ -221,3 +221,63 @@ def test_registration_union_compares_hash_bytes_and_reference_sets():
 def test_registration_union_rejects_overflowing_nix_base32_hash():
     with pytest.raises(core.EngineError, match="exceeds 256 bits"):
         builder.merge_registration(registration(A, digest="sha256:" + "z" * 52))
+
+
+@pytest.mark.parametrize("invalid_registration", [False, True])
+def test_database_transition_preserves_saved_derivation(tmp_path, monkeypatch, invalid_registration):
+    """Exercise real Nix registration; emulate only privileged bind mounts."""
+    import shutil
+    import sqlite3
+    import subprocess
+    from airlock_qubes_storage import host_state
+
+    if not shutil.which("nix-store") or not shutil.which("nix-instantiate"):
+        pytest.skip("requires Nix registration tools")
+    root = tmp_path / "root"
+    command = host.command
+    # Instantiate only: this creates a valid saved recipe without building it.
+    drv = command("nix-instantiate", "--store", f"local?root={root}", "--expr",
+                  'derivation { name = "saved-build"; system = builtins.currentSystem; '
+                  'builder = "/bin/sh"; args = []; }').strip()
+    recipe = (root / drv.lstrip("/")).read_text()
+    output = command("nix-store", "--store", f"local?root={root}", "--query", "--outputs", drv).strip()
+    registration_text = command("nix-store", "--store", f"local?root={root}", "--dump-db")
+    empty = tmp_path / "empty"
+    with pytest.raises(subprocess.CalledProcessError) as failure:
+        command("nix-store", "--store", f"local?root={empty}", "--load-db", input=registration_text)
+    assert "does not exist" in failure.value.stderr
+
+    mounts = set()
+
+    def mounted_command(*args, **kwargs):
+        if args[:2] == ("mount", "--bind"):
+            source, target = map(Path, args[2:])
+            assert source == root / "nix/store"
+            shutil.copytree(source, target, dirs_exist_ok=True)
+            mounts.add(target)
+            return ""
+        if args[:3] == ("mount", "-o", "remount,bind,ro"):
+            assert Path(args[3]) in mounts
+            return ""
+        if args[0] == "umount":
+            target = Path(args[1])
+            mounts.remove(target)
+            shutil.rmtree(target)
+            target.mkdir()
+            return ""
+        if "--load-db" in args:
+            assert mounts
+        return command(*args, **kwargs)
+
+    monkeypatch.setattr(host, "command", mounted_command)
+    if invalid_registration:
+        with pytest.raises(subprocess.CalledProcessError):
+            host_state.replace_database(root, registration_text + "not-a-store-path\n")
+    else:
+        host_state.replace_database(root, registration_text)
+    assert not mounts
+    assert (root / drv.lstrip("/")).read_text() == recipe
+    db = root / "nix/var/nix/db/db.sqlite"
+    with sqlite3.connect(db.as_uri() + "?mode=ro", uri=True) as connection:
+        assert connection.execute("SELECT path FROM ValidPaths").fetchall() == [(drv,)]
+        assert connection.execute("SELECT id,path FROM DerivationOutputs").fetchall() == [("out", output)]

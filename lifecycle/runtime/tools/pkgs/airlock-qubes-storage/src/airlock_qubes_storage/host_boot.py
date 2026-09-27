@@ -135,11 +135,8 @@ def assemble(sysroot, cmdline):
             lower = storage / "lower"
             lower_store = lower / "nix/store"
             lower_store.mkdir(parents=True, exist_ok=True)
-            # Register metadata before the read-only lower mount is visible.
-            # The database is reconstructed each boot from checked registrations.
+            # Reconstruct metadata from checked registrations each boot.
             shutil.rmtree(lower / "nix/var/nix/db", ignore_errors=True)
-            progress("loading lower Nix database")
-            host.command("nix-store", "--store", f"local?root={lower}", "--load-db", input=registration)
             # LocalStore opens .links even with a read-only database. Keep
             # this empty administrative directory outside sealed object views.
             scaffold = storage / "lower-scaffold"
@@ -148,6 +145,9 @@ def assemble(sysroot, cmdline):
                          "ro,index=off,metacopy=off,redirect_dir=nofollow,lowerdir="
                          + ":".join(map(str, [*bases, scaffold])), str(lower_store))
             mounts.append(lower_store)
+            # --load-db needs readable .drv contents, not just their records.
+            progress("loading lower Nix database")
+            host.command("nix-store", "--store", f"local?root={lower}", "--load-db", input=registration)
             db = lower / "nix/var/nix/db"
             host.command("mount", "--bind", str(db), str(db))
             mounts.append(db)
@@ -183,6 +183,15 @@ def assemble(sysroot, cmdline):
                     "closure_hash": record["closure_hash"], "volume": "host-upper",
                     "physical_references": [ref for group in refs.values() for ref in group],
                 })
+            # Assemble payloads before staging registration: Nix reads saved
+            # derivations while rebuilding the database. No stage-2 process is
+            # running yet, and failure cleanup unmounts this view.
+            progress("mounting final host overlay")
+            merged = sysroot / "nix/store"
+            merged.mkdir(parents=True, exist_ok=True)
+            host.command(sys.executable, "-m", "airlock_qubes_storage.host_boot",
+                         "--mount-overlay", "--sysroot", str(sysroot))
+            mounts.append(merged)
             progress("replacing host Nix database")
             host_state.replace_database(sysroot, new_registration)
             core.atomic_json(previous_path, {"schema": "airlock.host-base.v1", "systems": systems})
@@ -195,15 +204,6 @@ def assemble(sysroot, cmdline):
                     if link.is_file() and link.lstat().st_nlink == 1:
                         link.unlink()
                 core.fsync_dir(links)
-            progress("mounting final host overlay")
-            merged = sysroot / "nix/store"
-            merged.mkdir(parents=True, exist_ok=True)
-            # Chroot only the child; keep this process in the initramfs for
-            # remaining bookkeeping and failure cleanup. The mount namespace
-            # is shared, so switch-root inherits the resulting overlay.
-            host.command(sys.executable, "-m", "airlock_qubes_storage.host_boot",
-                         "--mount-overlay", "--sysroot", str(sysroot))
-            mounts.append(merged)
             if not (physical(system) / "init").is_file():
                 core.fail("selected system init missing from assembled host view")
             core.atomic_json(root / "host/running.json", selected)

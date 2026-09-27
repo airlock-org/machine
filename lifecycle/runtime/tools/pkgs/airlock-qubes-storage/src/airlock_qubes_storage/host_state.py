@@ -52,7 +52,17 @@ def replace_database(sysroot, registration):
     state = sysroot / "nix/var/nix"
     staging = state / "airlock-db-pending"
     staging.mkdir()
-    host.command("nix-store", "--store", f"local?root={staging}", "--load-db", input=registration)
+    # Nix parses registered .drv files to rebuild DerivationOutputs. An empty
+    # staging store cannot load a database containing saved build recipes.
+    # The caller has assembled the future store before host services start.
+    store = staging / "nix/store"
+    store.mkdir(parents=True)
+    host.command("mount", "--bind", str(sysroot / "nix/store"), str(store))
+    try:
+        host.command("mount", "-o", "remount,bind,ro", str(store))
+        host.command("nix-store", "--store", f"local?root={staging}", "--load-db", input=registration)
+    finally:
+        host.command("umount", str(store))
     old_db = state / "db"
     new_db = staging / "nix/var/nix/db"
     # Preserve trust metadata omitted by --dump-db. Reading the stopped old
