@@ -109,6 +109,55 @@ def test_published_host_rejects_corrupt_metadata_and_missing_pin(tmp_path, monke
         host.validate_boot(root, A)
 
 
+def test_boot_selection_excludes_pool_maintenance_until_record_is_durable(tmp_path, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from contextlib import contextmanager
+    from threading import Event
+
+    from airlock_qubes_storage import host_artifacts
+    from airlock_qubes_storage._engine import cli
+
+    root, _ = publication(tmp_path, monkeypatch)
+    record = host.publish(root, A, registration(A))
+    monkeypatch.setattr(host, "POOL", root)
+    selecting, release_selection = Event(), Event()
+    maintenance_waiting, maintenance_entered = Event(), Event()
+
+    def verify(*args):
+        selecting.set()
+        assert release_selection.wait(5)
+        return "retained-host.conf"
+
+    def collect(args):
+        maintenance_entered.set()
+        assert core.read_json(root / "host/selected.json") == record
+        assert host.validate_boot(root, A) == record
+        return {"status": "passed"}
+
+    @contextmanager
+    def observed_lock(path):
+        maintenance_waiting.set()
+        with pool.admission_lock(path):
+            yield
+
+    monkeypatch.setattr(host_artifacts, "verify", verify)
+    monkeypatch.setattr(host_artifacts, "select_entry", lambda *args: None)
+    monkeypatch.setattr(cli, "gc", collect)
+    monkeypatch.setattr(cli, "admission_lock", observed_lock)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        selection = executor.submit(host.select, A)
+        try:
+            assert selecting.wait(5)
+            maintenance = executor.submit(cli.run, ["gc", "--pool-root", str(root)])
+            assert maintenance_waiting.wait(5)
+            assert not maintenance_entered.wait(0.1)
+            assert not (root / "host/selected.json").exists()
+        finally:
+            release_selection.set()
+        assert selection.result(timeout=5) == record
+        assert maintenance.result(timeout=5) == {"status": "passed"}
+
+
 def test_upper_reference_closure_keeps_dependencies_without_cached_lower_entries():
     from airlock_qubes_storage.host_state import reference_closure
     records = builder.registration_records(registration(A, [B]) + registration(B))
