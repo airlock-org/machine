@@ -200,3 +200,24 @@ def test_host_overlay_mount_uses_post_switch_root_paths(monkeypatch, mount_resul
     assert b'/sysroot' not in options
     assert b'lowerdir=/var/lib/airlock/host-store/lower/nix/store' in options
     assert b'upperdir=/var/lib/airlock/host-store/upper' in options
+
+
+def test_registration_union_compares_hash_bytes_and_reference_sets():
+    # Same real glibc-locales NAR hash from image closureInfo and live dump-db.
+    encoded = "sha256:1cxkagflgwsvbq4yw595lmg6vmcvr0rhippi2zqf1wvlp0i4rkz9"
+    digest = "e9cf4c22b874f3e0f017f1de0833c89bd56d5ea52515ee095e5bf347dd53b3b3"
+    original = registration(A, [A, B], digest=encoded) + registration(B)
+    equivalent = registration(B) + registration(A, [B, A], digest=digest)
+    assert builder.merge_registration(original, equivalent) == original
+    assert builder.merge_registration(equivalent, original) == (
+        registration(A, [B, A], digest=digest) + registration(B)
+    )
+    with pytest.raises(core.EngineError, match="conflicting Nix registration"):
+        builder.merge_registration(original, registration(A, [A, B], digest="0" * 64) + registration(B))
+    with pytest.raises(core.EngineError, match="conflicting Nix references"):
+        builder.merge_registration(original, registration(A, [B], digest=digest) + registration(B))
+
+
+def test_registration_union_rejects_overflowing_nix_base32_hash():
+    with pytest.raises(core.EngineError, match="exceeds 256 bits"):
+        builder.merge_registration(registration(A, digest="sha256:" + "z" * 52))

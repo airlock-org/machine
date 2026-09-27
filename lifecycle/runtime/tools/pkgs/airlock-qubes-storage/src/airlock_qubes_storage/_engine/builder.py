@@ -75,15 +75,36 @@ def registration_records(text):
     return result
 
 
+def registration_identity(record):
+    """Compare Nix identities across closureInfo and nix-store dump formats."""
+    lines = record.splitlines()
+    digest = lines[1]
+    if digest.startswith("sha256:"):
+        alphabet = "0123456789abcdfghijklmnpqrsvwxyz"
+        value = 0
+        for character in digest.removeprefix("sha256:"):
+            value = value * 32 + alphabet.index(character)
+        try:
+            digest = value.to_bytes(32, "little").hex()
+        except OverflowError:
+            core.fail("invalid registration hash: SHA256 exceeds 256 bits")
+    return digest, int(lines[2]), frozenset(lines[5:])
+
+
 def merge_registration(*texts):
     records = {}
     for text in texts:
         for path, record in registration_records(text).items():
-            if path in records and records[path].splitlines()[1:3] != record.splitlines()[1:3]:
-                core.fail(f"conflicting Nix registration: {path}")
-            if path in records and records[path].splitlines()[4:] != record.splitlines()[4:]:
-                core.fail(f"conflicting Nix references: {path}")
-            records[path] = record
+            identity = registration_identity(record)
+            if path in records:
+                previous = registration_identity(records[path])
+                if previous[:2] != identity[:2]:
+                    core.fail(f"conflicting Nix registration: {path}")
+                if previous[2] != identity[2]:
+                    core.fail(f"conflicting Nix references: {path}")
+            # Preserve the previous encoding and informational deriver so an
+            # equivalent registration does not create a new builder base.
+            records.setdefault(path, record)
     return "".join(records[path] for path in sorted(records))
 
 
