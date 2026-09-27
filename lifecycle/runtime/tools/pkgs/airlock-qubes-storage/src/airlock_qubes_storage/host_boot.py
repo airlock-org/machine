@@ -1,9 +1,11 @@
 """Offline assembly of dom0's store, before initrd prepares the normal root."""
 import argparse
+import ctypes
 import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import time
 import traceback
 
@@ -15,6 +17,27 @@ from . import host_state
 
 def progress(message):
     print(f"Airlock host store [{time.monotonic():.3f}s]: {message}", flush=True)
+
+
+def mount_overlay_in_root(sysroot):
+    """Mount in a chrooted child so saved OverlayFS options survive switch-root.
+
+    Load libc before chroot: the destination store is not mounted yet, so no
+    executable or dynamic library can be loaded from it at this point.
+    """
+    libc = ctypes.CDLL(None, use_errno=True)
+    mount = libc.mount
+    mount.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p,
+                      ctypes.c_ulong, ctypes.c_char_p]
+    mount.restype = ctypes.c_int
+    options = ("index=off,metacopy=off,redirect_dir=nofollow,"
+               f"lowerdir={host.HOST}/lower/nix/store,"
+               f"upperdir={host.HOST}/upper,workdir={host.HOST}/work")
+    os.chroot(sysroot)
+    os.chdir("/")
+    if mount(b"overlay", b"/nix/store", b"overlay", 0, options.encode()) != 0:
+        error = ctypes.get_errno()
+        raise OSError(error, os.strerror(error), "/nix/store")
 
 
 def boot_system(cmdline):
@@ -175,8 +198,11 @@ def assemble(sysroot, cmdline):
             progress("mounting final host overlay")
             merged = sysroot / "nix/store"
             merged.mkdir(parents=True, exist_ok=True)
-            host.command("mount", "-t", "overlay", "overlay", "-o",
-                         f"index=off,metacopy=off,redirect_dir=nofollow,lowerdir={lower_store},upperdir={upper},workdir={work}", str(merged))
+            # Chroot only the child; keep this process in the initramfs for
+            # remaining bookkeeping and failure cleanup. The mount namespace
+            # is shared, so switch-root inherits the resulting overlay.
+            host.command(sys.executable, "-m", "airlock_qubes_storage.host_boot",
+                         "--mount-overlay", "--sysroot", str(sysroot))
             mounts.append(merged)
             if not (physical(system) / "init").is_file():
                 core.fail("selected system init missing from assembled host view")
@@ -199,7 +225,11 @@ def assemble(sysroot, cmdline):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--sysroot", default="/sysroot")
+    parser.add_argument("--mount-overlay", action="store_true")
     args = parser.parse_args()
+    if args.mount_overlay:
+        mount_overlay_in_root(args.sysroot)
+        return
     try:
         assemble(args.sysroot, Path("/proc/cmdline").read_text())
     except BaseException as error:

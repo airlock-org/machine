@@ -174,3 +174,29 @@ def test_xen_config_rejects_truncated_embedded_section(tmp_path):
     binary.write_bytes(binary.read_bytes()[:-8])
     with pytest.raises(core.EngineError, match='truncated Xen EFI configuration'):
         host_artifacts.xen_config(binary)
+
+
+@pytest.mark.parametrize('mount_result', [0, -1])
+def test_host_overlay_mount_uses_post_switch_root_paths(monkeypatch, mount_result):
+    import errno
+    from unittest.mock import Mock
+    from airlock_qubes_storage import host_boot
+    events = []
+    mount = Mock(side_effect=lambda *args: events.append(('mount', args)) or mount_result)
+    libc = Mock(mount=mount)
+    monkeypatch.setattr(host_boot.ctypes, 'CDLL', lambda *a, **kw: events.append(('libc',)) or libc)
+    monkeypatch.setattr(host_boot.ctypes, 'get_errno', lambda: errno.EPERM)
+    monkeypatch.setattr(host_boot.os, 'chroot', lambda path: events.append(('chroot', path)))
+    monkeypatch.setattr(host_boot.os, 'chdir', lambda path: events.append(('chdir', path)))
+    if mount_result:
+        with pytest.raises(OSError) as failure:
+            host_boot.mount_overlay_in_root('/sysroot')
+        assert failure.value.errno == errno.EPERM
+    else:
+        host_boot.mount_overlay_in_root('/sysroot')
+    assert events[:3] == [('libc',), ('chroot', '/sysroot'), ('chdir', '/')]
+    source, target, fstype, flags, options = events[3][1]
+    assert (source, target, fstype, flags) == (b'overlay', b'/nix/store', b'overlay', 0)
+    assert b'/sysroot' not in options
+    assert b'lowerdir=/var/lib/airlock/host-store/lower/nix/store' in options
+    assert b'upperdir=/var/lib/airlock/host-store/upper' in options
