@@ -42,6 +42,7 @@ from .segments import (
     object_meta_path,
     parse_positive_int,
     read_segment_meta,
+    record_payload_hash_bytes,
     seal_segment_locked,
     segment_blob_path,
     segment_ids,
@@ -52,6 +53,7 @@ from .segments import (
     top_level_location_fields,
     validate_segment_id,
     verify_segment_region,
+    with_payload_verification,
 )
 from .state import (
     current_generation,
@@ -425,6 +427,7 @@ def copy_location_to_tmp(root, entry, location, txid):
                 fail(f"cannot compact {entry}: source segment is truncated")
             remaining -= len(data)
             digest.update(data)
+            record_payload_hash_bytes(len(data))
             target.write(data)
         target.flush()
         if closure_store_fsync_enabled():
@@ -519,13 +522,17 @@ def publish_blob_location(root, entry, new_location, txid, reason):
     return True
 
 
-def refresh_blob_map_locations(root, blob_map_path):
+def refresh_blob_map_locations(root, blob_map_path, changed_entries=None):
     root = Path(root)
     blob_map_path = Path(blob_map_path)
     if not blob_map_path.exists() or blob_map_path.is_symlink():
         return False
     payload = read_json(blob_map_path)
     if payload.get("view_backend") != VIEW_BACKEND_EROFS_OBJECTMAP:
+        return False
+    if changed_entries is not None and not any(
+        extent.get("object") in changed_entries for extent in payload.get("extents", [])
+    ):
         return False
     changed = False
     segments = {}
@@ -582,19 +589,30 @@ def refresh_blob_map_locations(root, blob_map_path):
     return changed
 
 
-def refresh_all_blob_maps(root):
+def refresh_all_blob_maps(root, changed_entries=None):
     refreshed = []
+    # Boot records checksum these maps; persistent builders also bind the exact
+    # physical references in their pins. Keep them until explicit retirement.
+    # Their existing pins continue to protect the old physical segments.
+    pinned_maps = {
+        Path(ref["blob_map"])
+        for _domain, _generation, _path, ref in iter_running_generation_refs(root)
+        if ref.get("volume") in ("host-retained", "builder-persistent")
+        and ref.get("blob_map")
+    }
     for blob_map in sorted(
         (Path(root) / "views/by-closure").glob("*/store.blob-map.json")
     ):
-        if refresh_blob_map_locations(root, blob_map):
+        if blob_map not in pinned_maps and refresh_blob_map_locations(
+            root, blob_map, changed_entries
+        ):
             refreshed.append(str(blob_map))
     for blob_map in sorted(
         (Path(root) / "domains").glob("*/generations/*/store.blob-map.json")
     ):
-        if blob_map.is_symlink():
+        if blob_map.is_symlink() or blob_map in pinned_maps:
             continue
-        if refresh_blob_map_locations(root, blob_map):
+        if refresh_blob_map_locations(root, blob_map, changed_entries):
             refreshed.append(str(blob_map))
     return refreshed
 
@@ -617,6 +635,7 @@ def retire_unreferenced_segments(root, live_objects, live_views):
     }
 
 
+@with_payload_verification
 def compact(args):
     root = ensure_pool(args.pool_root)
     threshold = parse_positive_int(
@@ -670,6 +689,34 @@ def compact(args):
             ),
         }
 
+    if not candidates and not zero_ref_retire:
+        return {
+            "schema": SCHEMA_COMPACTION,
+            "status": "passed",
+            "dry_run": False,
+            "noop": True,
+            "pool_root": str(root),
+            "transaction": None,
+            "threshold_percent": threshold,
+            "max_segments": max_segments,
+            "segment_target_bytes": target_bytes,
+            "candidate_segments": [],
+            "objects_moved": [],
+            "objects_reused": [],
+            "bytes_copied": 0,
+            "bytes_reclaimed": 0,
+            "segments_retired": [],
+            "segments_blocked_from_deletion": [
+                segment["id"] for segment in segments
+                if segment.get("sealed")
+                and int(segment.get("current_live_bytes", 0)) == 0
+                and physical_refs.get(segment["id"])
+            ],
+            "views_refreshed": [],
+            "write_amplification": 0.0,
+            "segment_compaction": "copy-and-switch",
+        }
+
     txid = uuid.uuid4().hex
     tx_path = transaction_path(root, txid)
     atomic_json(
@@ -685,16 +732,17 @@ def compact(args):
     )
     maybe_failpoint("compact-after-tx-create")
 
-    with segment_lock_path(root).open("a+", encoding="utf-8") as lock:
-        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
-        current = current_open_segment_locked(root)
-        if current is not None:
-            current_segment_id, current_meta = current
-            if int(current_meta.get("object_count", 0)) > 0:
-                seal_segment_locked(
-                    root, current_segment_id, txid, "pre-compaction-open-segment"
-                )
-        fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+    if candidates:
+        with segment_lock_path(root).open("a+", encoding="utf-8") as lock:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+            current = current_open_segment_locked(root)
+            if current is not None:
+                current_segment_id, current_meta = current
+                if int(current_meta.get("object_count", 0)) > 0:
+                    seal_segment_locked(
+                        root, current_segment_id, txid, "pre-compaction-open-segment"
+                    )
+            fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
 
     moved = []
     reused = []
@@ -769,7 +817,8 @@ def compact(args):
                 seal_segment_locked(root, segment_id, txid, "compaction-replacement")
             fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
 
-    refreshed = refresh_all_blob_maps(root)
+    changed_entries = {item["entry"] for item in moved + reused}
+    refreshed = refresh_all_blob_maps(root, changed_entries) if changed_entries else []
     maybe_failpoint("compact-after-view-refresh")
     atomic_json(
         tx_path,
@@ -807,6 +856,7 @@ def compact(args):
         "schema": SCHEMA_COMPACTION,
         "status": "passed",
         "dry_run": False,
+        "noop": False,
         "pool_root": str(root),
         "transaction": txid,
         "threshold_percent": threshold,
@@ -825,6 +875,7 @@ def compact(args):
     }
 
 
+@with_payload_verification
 def recover(args):
     root = ensure_pool(args.pool_root)
     aborted = []
@@ -925,6 +976,7 @@ def recover(args):
     }
 
 
+@with_payload_verification
 def gc(args):
     root = ensure_pool(args.pool_root)
     live_objects = set()

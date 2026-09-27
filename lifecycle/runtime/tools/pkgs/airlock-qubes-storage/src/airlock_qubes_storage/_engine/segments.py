@@ -1,6 +1,9 @@
 import hashlib
 import os
 import re
+import time
+from contextvars import ContextVar
+from functools import wraps
 from pathlib import Path
 
 
@@ -18,6 +21,42 @@ from .core import (
     remove_path,
     utc_now,
 )
+
+
+_verification_scope = ContextVar("maintenance_payload_verification", default=None)
+
+
+def with_payload_verification(operation):
+    """Share verification only within one admission-locked maintenance call."""
+
+    @wraps(operation)
+    def run(*args, **kwargs):
+        scope = {"verified": set(), "payload_bytes_hashed": 0, "cache_hits": 0}
+        token = _verification_scope.set(scope)
+        started = time.monotonic()
+        try:
+            result = operation(*args, **kwargs)
+            result["verification"] = {
+                "payload_bytes_hashed": scope["payload_bytes_hashed"],
+                "cache_hits": scope["cache_hits"],
+                "elapsed_seconds": round(time.monotonic() - started, 6),
+            }
+            return result
+        finally:
+            _verification_scope.reset(token)
+
+    return run
+
+
+def record_payload_hash_bytes(size):
+    scope = _verification_scope.get()
+    if scope is not None:
+        scope["payload_bytes_hashed"] += size
+
+
+def verification_file_identity(handle):
+    stat = os.fstat(handle.fileno())
+    return (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns)
 
 
 def object_meta_path(root, entry):
@@ -218,6 +257,12 @@ def seal_segment_locked(root, segment_id, txid, reason):
 def verify_segment_region(root, segment_id, offset, size, digest, label):
     blob_path = segment_blob_path(root, segment_id)
     with blob_path.open("rb") as handle:
+        scope = _verification_scope.get()
+        identity = verification_file_identity(handle)
+        key = (identity, offset, size, digest)
+        if scope is not None and key in scope["verified"]:
+            scope["cache_hits"] += 1
+            return
         handle.seek(offset)
         remaining = size
         current = hashlib.sha256()
@@ -227,8 +272,13 @@ def verify_segment_region(root, segment_id, offset, size, digest, label):
                 fail(f"{label} is truncated at offset {offset}")
             remaining -= len(data)
             current.update(data)
+            record_payload_hash_bytes(len(data))
+        if verification_file_identity(handle) != identity:
+            fail(f"{label} backing segment changed during verification")
     if current.hexdigest() != digest:
         fail(f"{label} hash mismatch at offset {offset}")
+    if scope is not None:
+        scope["verified"].add(key)
 
 
 def object_extent_from_meta(root, meta, label, *, verify_payload=True):
