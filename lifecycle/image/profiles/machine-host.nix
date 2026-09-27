@@ -28,6 +28,7 @@
   networking.firewall.interfaces.tailscale0.allowedTCPPorts = [ 22 ];
   services.tailscale.enable = true;
   airlock.devDom0Terminal.host.enable = true;
+  airlock.bootDiagnostics.enable = true;
   airlock.devDom0Terminal.user = "user";
   services.openssh = {
     enable = true;

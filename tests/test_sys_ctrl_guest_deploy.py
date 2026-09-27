@@ -47,6 +47,7 @@ def test_controller_and_dom0_policy_wiring():
         machineApply = toString host.environment.etc."qubes-rpc/airlock.Ctrl.MachineApply".source;
         admissionCaller = host.airlock.poolAdmission.caller;
         builderService = ctrl.systemd.services.airlock-sys-ctrl-build-store.description;
+        bootDiagnostics = host.airlock.bootDiagnostics.enable;
       }}
     '''
     result = subprocess.run(
@@ -55,6 +56,7 @@ def test_controller_and_dom0_policy_wiring():
     )
     report = json.loads(result.stdout)
     assert report["admissionCaller"] == "sys-ctrl"
+    assert report["bootDiagnostics"] is True
     assert "sys-ctrl" in report["builderService"]
     assert all(report[key].startswith("/nix/store/") for key in
                ("controllerService", "planService", "applyService", "machinePlan", "machineApply"))
