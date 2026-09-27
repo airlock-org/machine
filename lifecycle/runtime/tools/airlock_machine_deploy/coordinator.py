@@ -633,6 +633,22 @@ class Coordinator:
                 "network PCI handoff found no assigned network controller"
             )
 
+    def verify_storage(self, name, backend):
+        generation = self.command("qvm-features", name, "airlock-store-generation")
+        if not generation.isdecimal() or int(generation) < 1:
+            raise DeploymentError(f"{name}: invalid selected store generation")
+        info = self.generation_info(name, int(generation))
+        expected = {
+            "system": backend["system"]["source"],
+            "root_source": backend["root"]["source"],
+            "kernel_name": backend["kernel"]["name"],
+            "closure_source": backend["store"]["source"],
+        }
+        if info.get("selected") is not True or any(
+            info.get(key) != value for key, value in expected.items()
+        ):
+            raise DeploymentError(f"{name}: selected pool generation differs from release boot identity")
+
     def verify(self, topology, expected_running):
         observed = {}
         running = self.running()
@@ -643,6 +659,7 @@ class Coordinator:
                 raise DeploymentError(
                     f"{name}: selected system {selected!r}, expected {expected}"
                 )
+            self.verify_storage(name, domain["backend"])
             actual = None
             if name in expected_running:
                 if name not in running:

@@ -342,6 +342,10 @@ class Machine(deploy.Coordinator):
         self.profiles = state / "test-profiles"
         self.hosts = set()
 
+    def verify_storage(self, name, backend):
+        # Pool identity verification has separate tests using the real method.
+        pass
+
     def volume_inventory(self):
         return deepcopy(self.volumes)
 
@@ -1581,3 +1585,34 @@ def test_guest_candidate_binds_changed_root(machine, tmp_path, topology):
     manifest, wanted = deploy.load_release(candidate)
     assert wanted["domains"]["usr-home"]["backend"]["root"]["source"] == receipt["root_source"]
     assert manifest["guestRootArtifacts"]["usr-home"] == receipt["root_artifact"]
+
+
+@pytest.mark.parametrize('damage', ['root', 'kernel', 'closure', 'unselected', 'generation'])
+def test_verify_rejects_pool_identity_mismatch_even_when_system_matches(tmp_path, topology, damage):
+    topology = deepcopy(topology)
+    topology['domains'] = {'usr-home': topology['domains']['usr-home']}
+    backend = topology['domains']['usr-home']['backend']
+    info = {'schema': deploy.GENERATION_INFO_SCHEMA, 'status': 'passed',
+            'selected': True, 'system': backend['system']['source'],
+            'root_source': backend['root']['source'],
+            'kernel_name': backend['kernel']['name'],
+            'closure_source': backend['store']['source']}
+    if damage == 'unselected':
+        info['selected'] = False
+    elif damage != 'generation':
+        info[{'root':'root_source', 'kernel':'kernel_name', 'closure':'closure_source'}[damage]] = 'stale'
+    def command(*args, **kwargs):
+        if args[0] == 'qvm-ls': return 'usr-home|Running'
+        if args[0] == 'qvm-features':
+            if args[2] == 'airlock-store-generation': return 'invalid' if damage == 'generation' else '1'
+            return backend['system']['source']
+        if args[0] == 'airlock-closure-store': return json.dumps(info)
+        if args[0] == 'qrexec-client': return backend['system']['source']
+        raise AssertionError(args)
+    coordinator = deploy.Coordinator(tmp_path/'state', command)
+    with pytest.raises(deploy.DeploymentError, match='generation'):
+        coordinator.verify(topology, {'usr-home'})
+    info.update(selected=True, root_source=backend['root']['source'],
+                kernel_name=backend['kernel']['name'], closure_source=backend['store']['source'])
+    damage = None
+    assert coordinator.verify(topology, {'usr-home'})['usr-home']['running'] == backend['system']['source']
