@@ -185,7 +185,12 @@ def test_interactive_transport_restores_terminal(terminal_config, tmp_path, fail
     if not script or not stty:
         pytest.skip("requires util-linux script and stty")
     remote = tmp_path / "remote.sh"
-    remote.write_text("stty rows 30 cols 100\nexec bash --noprofile --norc -i\n")
+    prompt = b'AIRLOCK_TEST_PROMPT> '
+    remote.write_text(
+        "stty rows 30 cols 100\n"
+        "export PS1='AIRLOCK_TEST_PROMPT> '\n"
+        "exec bash --noprofile --norc -i\n"
+    )
     relay = tmp_path / "relay.py"
     relay.write_text(
         "import os, select, subprocess, sys\n"
@@ -216,10 +221,10 @@ def test_interactive_transport_restores_terminal(terminal_config, tmp_path, fail
     )
     output = b""
 
-    def receive_until(marker):
+    def receive_until(marker, start=0):
         nonlocal output
         deadline = time.monotonic() + 10
-        while marker not in output:
+        while marker not in output[start:]:
             assert time.monotonic() < deadline, output.decode(errors="replace")
             if select.select([master], [], [], 0.2)[0]:
                 output += os.read(master, 65536)
@@ -231,7 +236,7 @@ def test_interactive_transport_restores_terminal(terminal_config, tmp_path, fail
             assert b"simulated connection failure" in output
             assert termios.tcgetattr(slave) == before
             return
-        receive_until(b"bash-")
+        receive_until(prompt)
         os.write(
             master, b"test -t 0 && test -t 1 && printf '\\nPTY_OK\\n'; stty size\n"
         )
@@ -245,11 +250,17 @@ def test_interactive_transport_restores_terminal(terminal_config, tmp_path, fail
         os.write(master, b"dummy-pty-secret\n")
         receive_until(b"\r\nPROMPT_OK\r\n")
         assert b"dummy-pty-secret" not in output
-        os.write(master, b"sleep 30\n")
-        receive_until(b"sleep 30")
+        # Terminal echo does not prove the foreground process has started.
+        # Wait for output from that process before sending the interrupt.
+        os.write(master, b"bash -c 'printf \"\\nSLEEP_READY\\n\"; exec sleep 30'\n")
+        receive_until(b"\r\nSLEEP_READY\r\n")
+        interrupted_at = len(output)
         os.write(master, b"\x03")
+        receive_until(prompt, start=interrupted_at)
         os.write(master, b"printf '\\nINT_OK\\n'; exit\n")
         receive_until(b"\r\nINT_OK\r\n")
+        # Keep draining the PTY until both transport and client have finished.
+        receive_until(b"You can close this window.")
         assert process.wait(timeout=5) == 0
         assert termios.tcgetattr(slave) == before
     finally:
