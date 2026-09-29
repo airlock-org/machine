@@ -72,7 +72,8 @@ def seal(root, esp):
         if descriptor.exists():
             # A retained entry must survive upstream menu regeneration even
             # when its system path is absent from the currently mounted view.
-            verify(root, esp, record)
+            selected = verify(root, esp, record)
+            remove_native_duplicates(esp, record["system"], selected)
             continue
         entries = inventory(esp, record["system"])
         if entries:
@@ -104,12 +105,15 @@ def seal(root, esp):
                 # Menu classification must not open an unmounted old store.
                 # Comments are ignored by systemd-boot and covered by our hash.
                 text += f"# airlock-system {record['system']}\n# airlock-role {role}\n"
-                if role == "normal":
-                    lines = text.splitlines()
-                    version = next((line.removeprefix("version ") for line in lines if line.startswith("version ")), "")
-                    parts = version.split()
-                    title = f"Airlock (generation {parts[1]})" if len(parts) > 1 and parts[0] == "Generation" else "Airlock (retained)"
-                    text = "\n".join("title " + title if line.startswith("title ") else line for line in lines) + "\n"
+                lines = text.splitlines()
+                version = next((line.removeprefix("version ") for line in lines if line.startswith("version ")), "")
+                parts = version.split()
+                generation = parts[1] if len(parts) > 1 and parts[0] == "Generation" and parts[1].isdigit() else str(record["generation"])
+                # systemd-boot adds versions only to distinguish equal titles.
+                # Keep those versions short; a fresh image has unique titles.
+                title = "Airlock (recovery)" if role == "recovery" else "Airlock"
+                lines = [line for line in lines if not line.startswith(("title ", "version "))]
+                text = f"title {title}\nversion Generation {generation}\n" + "\n".join(lines) + "\n"
                 core.atomic_write(target_entry, text)
                 files[str(target_entry.relative_to(esp))] = {
                     "size": target_entry.stat().st_size, "sha256": core.hash_file(target_entry)}
@@ -117,6 +121,28 @@ def seal(root, esp):
             core.atomic_json(descriptor,
                              {"schema": "airlock.host-boot-artifacts.v1", "system": record["system"],
                               "generation": record["generation"], "entries": retained})
+            selected = verify(root, esp, record)
+            remove_native_duplicates(esp, record["system"], selected)
+
+
+def remove_native_duplicates(esp, system, selected):
+    """Retire generated menu copies only after their independent copy verifies."""
+    esp = Path(esp)
+    entries = inventory(esp, system)
+    names = {entry["entry"].removesuffix(".conf") for entry in entries}
+    loader = esp / "loader/loader.conf"
+    if names and loader.exists():
+        lines = loader.read_text().splitlines()
+        for index, line in enumerate(lines):
+            fields = line.split()
+            if len(fields) == 2 and fields[0] in ("default", "preferred") and fields[1].removesuffix(".conf") in names:
+                lines[index] = f"{fields[0]} {selected.removesuffix('.conf')}"
+        # Commit the new default before removing any formerly selected entry.
+        core.atomic_write(loader, "\n".join(lines) + "\n")
+    for entry in entries:
+        (esp / "loader/entries" / entry["entry"]).unlink()
+    if entries:
+        core.fsync_dir(esp / "loader/entries")
 
 
 def forget(root, esp, system):

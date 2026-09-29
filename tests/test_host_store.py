@@ -182,12 +182,17 @@ def test_interrupted_database_rename_restores_previous_database(tmp_path):
     assert not previous.exists()
 
 
-def test_recovery_uses_xen_efi_binding_and_rejects_damaged_initramfs(tmp_path):
+@pytest.mark.parametrize('title', ['Airlock', 'Airlock (recovery)'])
+def test_recovery_uses_xen_efi_binding_and_rejects_damaged_initramfs(tmp_path, title):
     from airlock_qubes_storage import host_artifacts
     root, esp = tmp_path / "pool", tmp_path / "esp"
     entry = esp / "loader/entries/xen-generation-1.conf"
     entry.parent.mkdir(parents=True)
-    entry.write_text("efi /EFI/nixos/xen-generation-1.efi\n")
+    native_text = (f"title {title}\nversion Generation 1 NixOS long kernel and build details\n"
+                   "efi /EFI/nixos/xen-generation-1.efi\n")
+    entry.write_text(native_text)
+    loader = esp / 'loader/loader.conf'
+    loader.write_text(f'timeout 10\ndefault {entry.name}\npreferred {entry.stem}\n')
     directory = esp / "EFI/nixos"
     directory.mkdir(parents=True)
     (directory / "xen-generation-1.efi").write_bytes(b"xen")
@@ -198,10 +203,20 @@ def test_recovery_uses_xen_efi_binding_and_rejects_damaged_initramfs(tmp_path):
     core.atomic_json(root / "host/boots" / (host.key(A) + ".json"), record)
     host_artifacts.seal(root, esp)
     assert host_artifacts.verify(root, esp, record) == 'airlock-' + entry.name
+    retained = entry.with_name('airlock-' + entry.name)
+    sealed_text = retained.read_text()
+    assert f'title {title}\nversion Generation 1\n' in sealed_text
+    assert list(entry.parent.glob('*.conf')) == [retained]
+    assert loader.read_text() == (
+        f'timeout 10\ndefault {retained.stem}\npreferred {retained.stem}\n')
+    # Upstream can recreate the native copy on a subsequent boot installation.
+    entry.write_text(native_text)
+    host_artifacts.seal(root, esp)
+    assert not entry.exists()
+    assert retained.read_text() == sealed_text
     # Upstream regeneration can remove its own entry/files. Our retained
     # choice still has the exact kernel and initrd without mounting that host.
     import shutil
-    entry.unlink()
     shutil.rmtree(directory)
     host_artifacts.seal(root, esp)
     assert host_artifacts.verify(root, esp, record) == 'airlock-' + entry.name
@@ -393,6 +408,9 @@ def test_retiring_boot_entry_preserves_shared_kernel_for_other_generation(tmp_pa
     (directory / 'kernel.efi').write_bytes(b'shared kernel')
     (directory / 'initrd.efi').write_bytes(b'shared initrd')
     host_artifacts.seal(root, esp)
+    assert {line for path in entries.glob('airlock-*.conf')
+            for line in path.read_text().splitlines() if line.startswith('version ')} == {
+                'version Generation 1', 'version Generation 2'}
     host_artifacts.forget(root, esp, A)
     assert not (entries / 'airlock-xen-1.conf').exists()
     assert not (esp / 'EFI/airlock/xen-1.efi').exists()

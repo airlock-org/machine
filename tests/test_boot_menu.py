@@ -158,3 +158,28 @@ def test_retained_recovery_is_usable_without_its_store_view(boot_menu, tmp_path)
     assert retained.read_text() == text
     assert not (tmp_path / 'recovery-profile').exists()
     assert boot_menu.fields(esp / 'loader/loader.conf')['default'] == current.stem
+
+
+def test_regenerated_native_duplicates_keep_sealed_choices_and_default(boot_menu, tmp_path):
+    esp, store, current, recovery, previous, _ = menu_fixture(tmp_path)
+    loader = esp / 'loader/loader.conf'
+    loader.write_text(f'default {previous.stem}\npreferred {previous.stem}\n')
+    sealed = {}
+    for native, generation, role in ((current, 12, 'normal'),
+                                     (previous, 11, 'normal'),
+                                     (recovery, 12, 'recovery')):
+        target = native.with_name('airlock-' + native.name)
+        system = boot_menu.system_for_xen_entry(native, store)
+        title = 'Airlock (recovery)' if role == 'recovery' else 'Airlock'
+        text = (f'title {title}\nversion Generation {generation}\n'
+                f'efi /EFI/airlock/{target.stem}.efi\n'
+                f'# airlock-system /nix/store/{system.name}\n# airlock-role {role}\n')
+        target.write_text(text)
+        sealed[target] = text
+
+    boot_menu.configure(esp, store)
+
+    assert not any(path.exists() for path in (current, previous, recovery))
+    assert all(path.read_text() == text for path, text in sealed.items())
+    assert boot_menu.fields(loader)['default'] == 'airlock-' + previous.stem
+    assert boot_menu.fields(loader)['preferred'] == 'airlock-' + previous.stem

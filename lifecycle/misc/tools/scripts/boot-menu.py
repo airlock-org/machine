@@ -87,6 +87,7 @@ def choose_one_per_generation(entries, preferred):
         choices.sort(
             key=lambda entry: (
                 entry.path.stem != preferred,
+                not entry.path.name.startswith("airlock-"),
                 "usb-lab" not in fields(entry.path).get("title", ""),
                 entry.path.name,
             )
@@ -104,6 +105,14 @@ def configure(esp, store_root, recovery_profile=None, nix_env="nix-env"):
     loader = fields(loader_conf)
     preferred = loader.get("preferred", loader.get("default", "")).removesuffix(".conf")
     classified = classified_entries(entries_dir, store_root)
+    preferred_entry = next((entry for entry in classified if entry.path.stem == preferred), None)
+    if preferred_entry:
+        # Upstream may regenerate a native copy of an already sealed entry.
+        # Preserve the chosen system while preferring its independent copy.
+        preferred = next((entry.path.stem for entry in classified
+                          if entry.path.name.startswith("airlock-")
+                          and (entry.generation, entry.role, entry.system) ==
+                          (preferred_entry.generation, preferred_entry.role, preferred_entry.system)), preferred)
     normal = choose_one_per_generation(
         [entry for entry in classified if entry.role == "normal"], preferred
     )
