@@ -26,6 +26,12 @@ def check(command):
 def interrupted_transfers(work, pool, physical, domain, common):
     from airlock_qubes_storage._engine import artifacts, core, state
 
+    root_image = physical / ("d" * 32 + "-root") / "root.img"
+    root_image.parent.mkdir()
+    with root_image.open("wb") as stream:
+        stream.truncate(16 * 1024 * 1024)
+    check(["mkfs.ext4", "-q", "-F", str(root_image)])
+
     def exchange(kwargs, damage):
         client, server = socket.socketpair()
         client.settimeout(10)
@@ -63,8 +69,9 @@ def interrupted_transfers(work, pool, physical, domain, common):
         (source / "payload").write_bytes(b"transport-probe" * 8192)
         closure = work / f"transport-closure-{index}"
         closure.write_text(common + "\n" + new + "\n")
-        kwargs = dict(domain=domain, system=new, closure_source=closure, root_source="",
-                      kernel_name="", source_revision="1" * 40, lock_hash="2" * 64,
+        kwargs = dict(domain=domain, system=new, closure_source=closure,
+                      root_source="/nix/store/" + root_image.parent.name + "/root.img",
+                      kernel_name="test-kernel", source_revision="1" * 40, lock_hash="2" * 64,
                       physical_store_root=physical,
                       path_info={p: {"references": [], "narHash": "sha256-synthetic-test",
                                      "narSize": 1} for p in (common, new)})
@@ -74,8 +81,9 @@ def interrupted_transfers(work, pool, physical, domain, common):
         try:
             try:
                 exchange(kwargs, damage)
-            except core.EngineError:
-                pass
+            except core.EngineError as exc:
+                if damage.startswith("artifact-"):
+                    assert damage in str(exc), exc
             else:
                 raise AssertionError(f"damaged transfer was accepted: {damage}")
         finally:

@@ -8645,7 +8645,7 @@ def check_closure_store_linux_storage(repo_root: Path, log_dir: Path) -> None:
 
         pytest.skip("root is required for real loop/device-mapper storage coverage")
 
-    for command in ("dmsetup", "losetup", "mount", "umount", "unshare", "blockdev", "mkfs.erofs"):
+    for command in ("dmsetup", "losetup", "mount", "umount", "unshare", "blockdev", "mkfs.erofs", "mkfs.ext4"):
         if shutil.which(command) is None:
             raise AssertionError(f"missing required command: {command}")
     result = _run(
