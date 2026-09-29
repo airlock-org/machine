@@ -5,19 +5,89 @@ pool; device names include a random domain so concurrent checks cannot collide.
 """
 
 import errno
+import io
 import json
 import os
 from pathlib import Path
+import socket
 import subprocess
 import sys
 import tempfile
 import time
 from types import SimpleNamespace
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 
 
 def check(command):
     return subprocess.check_output(command, text=True).strip()
+
+
+def interrupted_transfers(work, pool, physical, domain, common):
+    from airlock_qubes_storage._engine import artifacts, core, state
+
+    def exchange(kwargs, damage):
+        client, server = socket.socketpair()
+        client.settimeout(10)
+        server.settimeout(10)
+        with client, server, client.makefile("rwb", buffering=0) as sender, server.makefile("rwb", buffering=0) as receiver:
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                pending = executor.submit(artifacts.receive_incremental, receiver, receiver,
+                                          pool_root=pool, expected_domain=domain, approved_by="pytest")
+
+                def negotiate(inventory):
+                    artifacts.write_message(sender, inventory)
+                    return artifacts.read_message(sender)
+
+                try:
+                    payload = io.BytesIO()
+                    artifacts.write_artifact(payload, negotiate=negotiate, **kwargs)
+                    data = payload.getvalue()
+                    if damage == "truncated":
+                        data = data[:len(data) // 2]
+                    elif damage == "corrupt":
+                        assert b"transport-probe" in data
+                        data = data.replace(b"transport-probe", b"transport-broke", 1)
+                    client.sendall(data)
+                finally:
+                    client.shutdown(socket.SHUT_WR)
+                return pending.result(timeout=10)
+
+    original = state.current_generation(pool, domain)
+    results = []
+    for index, damage in enumerate(("truncated", "corrupt", "artifact-after-object-import",
+                                    "artifact-before-generation-commit")):
+        new = "/nix/store/" + "c" * 32 + f"-transport-{index}"
+        source = physical / Path(new).name
+        source.mkdir()
+        (source / "payload").write_bytes(b"transport-probe" * 8192)
+        closure = work / f"transport-closure-{index}"
+        closure.write_text(common + "\n" + new + "\n")
+        kwargs = dict(domain=domain, system=new, closure_source=closure, root_source="",
+                      kernel_name="", source_revision="1" * 40, lock_hash="2" * 64,
+                      physical_store_root=physical,
+                      path_info={p: {"references": [], "narHash": "sha256-synthetic-test",
+                                     "narSize": 1} for p in (common, new)})
+        manifests = {p: p.read_bytes() for p in (pool / "domains").glob("*/generations/*/manifest.json")}
+        if damage.startswith("artifact-"):
+            os.environ["AIRLOCK_CLOSURE_STORE_FAILPOINT"] = damage
+        try:
+            try:
+                exchange(kwargs, damage)
+            except core.EngineError:
+                pass
+            else:
+                raise AssertionError(f"damaged transfer was accepted: {damage}")
+        finally:
+            os.environ.pop("AIRLOCK_CLOSURE_STORE_FAILPOINT", None)
+        assert {p: p.read_bytes() for p in (pool / "domains").glob("*/generations/*/manifest.json")} == manifests
+        assert not list((pool / "tmp").iterdir())
+        receipt = exchange(kwargs, None)
+        assert receipt["status"] == "passed" and receipt["activated"] is False
+        assert state.current_generation(pool, domain) == original
+        assert not list((pool / "tmp").iterdir())
+        results.append(damage)
+    return results
 
 
 def probe(work):
@@ -90,6 +160,8 @@ def probe(work):
                   "real_loop_dm_erofs": True, "shared_extents": extents,
                   "exact_closure_membership": True, "writes_rejected": True,
                   "peer_survives_detach": True}
+        result["interrupted_transfer_cleanup_and_retry"] = interrupted_transfers(
+            work, pool, physical, f"{domain}-0", common)
     finally:
         for mount in reversed(mounted):
             check(["umount", str(mount)])
