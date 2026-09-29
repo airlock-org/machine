@@ -11,6 +11,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import time
 from types import SimpleNamespace
 import uuid
 
@@ -100,7 +101,12 @@ def probe(work):
             loops = check(["losetup", "-j", str(blob), "--output", "NAME", "--noheadings"])
             for loop in loops.splitlines():
                 check(["losetup", "-d", loop.strip()])
-            assert not check(["losetup", "-j", str(blob), "--output", "NAME", "--noheadings"])
+            # Loop removal can finish after losetup returns (udev still has the
+            # device open). Bound the cleanup wait before asserting no leaks.
+            deadline = time.monotonic() + 5
+            while check(["losetup", "-j", str(blob), "--output", "NAME", "--noheadings"]):
+                assert time.monotonic() < deadline, f"loop cleanup did not finish: {blob}"
+                time.sleep(0.1)
     result["devices_cleaned_up"] = True
     return result
 
