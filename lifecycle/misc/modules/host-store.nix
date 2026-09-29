@@ -10,7 +10,7 @@ let
       ../../runtime/tools/pkgs/airlock-qubes-storage/src;
   };
   lower = "local%3Froot%3D%2Fvar%2Flib%2Fairlock%2Fhost-store%2Flower%26read-only%3Dtrue";
-  uri = "local-overlay://?lower-store=${lower}&upper-layer=/var/lib/airlock/host-store/upper";
+  uri = "local-overlay://?lower-store=${lower}&upper-layer=/var/lib/airlock/host-store/active/upper";
 in {
   imports = [ ./boot-diagnostics.nix ];
   options.airlock.hostStore.enable = lib.mkEnableOption "pool-backed dom0 Nix store";

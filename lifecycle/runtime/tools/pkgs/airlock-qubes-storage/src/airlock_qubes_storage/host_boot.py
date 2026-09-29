@@ -12,7 +12,7 @@ import traceback
 from ._engine import builder, core, host, state, views
 from ._engine.pool import admission_lock
 from ._engine.prepared import relocate
-from . import host_state
+from . import host_machine, host_state
 
 
 def progress(message):
@@ -23,6 +23,8 @@ def record_mount_failure(sysroot, error):
     """Save evidence before cleanup; diagnostics must not replace the failure."""
     try:
         report = {"error": repr(error), "traceback": traceback.format_exc()}
+        if isinstance(error, OSError):
+            report.update(errno=error.errno, filename=error.filename)
         if isinstance(error, subprocess.CalledProcessError):
             report.update(command=error.cmd, returncode=error.returncode,
                           stdout=error.stdout, stderr=error.stderr)
@@ -49,6 +51,20 @@ def record_mount_failure(sysroot, error):
         progress(f"could not save mount failure evidence: {diagnostic_error}")
 
 
+def mount_lower_view(base, scaffold, target):
+    """Expose the exact syscall errno, which mount(8)'s exit 32 loses."""
+    libc = ctypes.CDLL(None, use_errno=True)
+    mount = libc.mount
+    mount.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p,
+                      ctypes.c_ulong, ctypes.c_char_p]
+    mount.restype = ctypes.c_int
+    options = ("index=off,metacopy=off,redirect_dir=nofollow,"
+               f"lowerdir={base}:{scaffold}")
+    if mount(b"overlay", os.fsencode(target), b"overlay", 1, options.encode()) != 0:
+        error = ctypes.get_errno()
+        raise OSError(error, f"{os.strerror(error)}; options={options}", str(target))
+
+
 def mount_overlay_in_root(sysroot):
     """Mount in a chrooted child so saved OverlayFS options survive switch-root.
 
@@ -62,7 +78,7 @@ def mount_overlay_in_root(sysroot):
     mount.restype = ctypes.c_int
     options = ("index=off,metacopy=off,redirect_dir=nofollow,"
                f"lowerdir={host.HOST}/lower/nix/store,"
-               f"upperdir={host.HOST}/upper,workdir={host.HOST}/work")
+               f"upperdir={host.HOST}/active/upper,workdir={host.HOST}/active/work")
     os.chroot(sysroot)
     os.chdir("/")
     if mount(b"overlay", b"/nix/store", b"overlay", 0, options.encode()) != 0:
@@ -101,67 +117,47 @@ def assemble(sysroot, cmdline):
                 core.fail("boot specialisation has no published pool binding")
             system = aliases[system]
         selected = host.validate_boot(root, system, logical_root=host.POOL)
-        # Compute the lower objects needed by actual saved upper payloads.
-        # Cached lower metadata alone does not keep obsolete host generations.
-        previous_path = storage / "base.json"
-        previous = core.read_json(previous_path) if previous_path.exists() else {"systems": []}
-        progress("validated boot record; reading previous Nix database")
-        old_registration = host_state.dump_registration(sysroot)
-        old_records = builder.registration_records(old_registration)
-        upper = storage / "upper"
+        # The boot entry names one immutable view. Never enumerate other
+        # boot records here: an unrelated missing/corrupt view is not a boot
+        # dependency, even when retained for rollback.
+        generation = selected["generation"]
+        if type(generation) is not int or generation < 1:
+            core.fail("invalid host generation")
+        generation_root = storage / "generations" / str(generation)
+        generation_root.mkdir(parents=True, exist_ok=True, mode=0o700)
+        upper = generation_root / "upper"
+        work = generation_root / "work"
         upper.mkdir(exist_ok=True)
+        work.mkdir(exist_ok=True)
+        registration = physical(selected["registration"]).read_text()
+        registered_paths = builder.registration_paths(registration)
+        # Writable state belongs to this generation, too. In particular, do
+        # not open the database left by whichever generation ran most recently.
+        host_state.recover_database(generation_root)
+        old_registration = (host_state.dump_registration(generation_root)
+                            if (generation_root / "nix/var/nix/db/db.sqlite").exists() else "")
+        old_records = builder.registration_records(old_registration)
         saved = {"/nix/store/" + path.name for path in upper.iterdir()
                  if "/nix/store/" + path.name in old_records}
-        records = [selected]
-        for path in sorted((root / "host/boots").glob("*.json")):
-            record = core.read_json(path)
-            if not record.get("retired"):
-                records.append(host.validate_boot(root, record["system"], logical_root=host.POOL))
-        records = list({r["generation"]: r for r in records}.values())
-        registrations = [physical(record["registration"]).read_text() for record in records]
-        available = set().union(*(builder.registration_paths(text) for text in registrations))
-        # Published copies will be removed below. Only the remaining upper
-        # objects and their reference closure require persistent lower pins.
-        upper_needed = host_state.reference_closure(old_records, saved - available)
-        missing = upper_needed - saved - available
-        for item in previous["systems"]:
-            if not missing:
-                break
-            old = host.validate_boot(root, item, logical_root=host.POOL, allow_retired=True)
-            text = physical(old["registration"]).read_text()
-            paths = builder.registration_paths(text)
-            if paths & missing:
-                records.append(old)
-                registrations.append(text)
-                available.update(paths)
-                missing -= paths
-        if missing:
-            core.fail("saved host upper has no retained lower for its references")
-        records = list({r["generation"]: r for r in records}.values())
-        systems = [record["system"] for record in records]
-        registration = builder.merge_registration(*registrations)
-        registered_paths = builder.registration_paths(registration)
+        upper_needed = host_state.reference_closure(old_records, saved)
+        if upper_needed - saved - registered_paths:
+            core.fail("host generation upper has references outside its fixed view")
         upper_registration = "".join(old_records[path] for path in sorted(upper_needed))
-        new_registration = builder.merge_registration(registration, upper_registration) if upper_registration else registration
-        progress(f"validated {len(records)} bases and {len(registered_paths)} store paths")
+        new_registration = builder.merge_registration(registration, upper_registration)
+        progress(f"validated fixed base {generation} and {len(registered_paths)} store paths")
         mounts = []
         try:
-            bases = []
-            for record in records:
-                generation = record["generation"]
-                progress(f"mounting EROFS base {generation}")
-                target = storage / "bases" / str(generation)
-                target.mkdir(parents=True, exist_ok=True)
-                if os.path.ismount(target):
-                    core.fail("host base already mounted")
-                blob_map = core.read_json(physical(record["blob_map"]))
-                mapped = relocate(blob_map, host.POOL, str(root))
-                name = f"airlock-host-{generation}"
-                device = views.create_dm_view_for_blob_map(root, name, mapped)["device"]
-                host.command("mount", "-t", "erofs", "-o", f"ro,loop,device={device}",
-                             str(physical(record["metadata_image"])), str(target))
-                mounts.append(target)
-                bases.append(target)
+            target = storage / "bases" / str(generation)
+            target.mkdir(parents=True, exist_ok=True)
+            if os.path.ismount(target):
+                core.fail("host base already mounted")
+            blob_map = core.read_json(physical(selected["blob_map"]))
+            mapped = relocate(blob_map, host.POOL, str(root))
+            device = views.create_dm_view_for_blob_map(root, f"airlock-host-{generation}", mapped)["device"]
+            progress(f"mounting EROFS base {generation}")
+            host.command("mount", "-t", "erofs", "-o", f"ro,loop,device={device}",
+                         str(physical(selected["metadata_image"])), str(target))
+            mounts.append(target)
             lower = storage / "lower"
             lower_store = lower / "nix/store"
             lower_store.mkdir(parents=True, exist_ok=True)
@@ -171,9 +167,8 @@ def assemble(sysroot, cmdline):
             # this empty administrative directory outside sealed object views.
             scaffold = storage / "lower-scaffold"
             (scaffold / ".links").mkdir(parents=True, exist_ok=True)
-            host.command("mount", "-t", "overlay", "overlay", "-o",
-                         "ro,index=off,metacopy=off,redirect_dir=nofollow,lowerdir="
-                         + ":".join(map(str, [*bases, scaffold])), str(lower_store))
+            progress("mounting fixed lower view")
+            mount_lower_view(target, scaffold, lower_store)
             mounts.append(lower_store)
             # --load-db needs readable .drv contents, not just their records.
             progress("loading lower Nix database")
@@ -182,13 +177,16 @@ def assemble(sysroot, cmdline):
             host.command("mount", "--bind", str(db), str(db))
             mounts.append(db)
             host.command("mount", "-o", "remount,bind,ro", str(db))
-            upper, work = storage / "upper", storage / "work"
-            upper.mkdir(exist_ok=True)
-            work.mkdir(exist_ok=True)
+            # One bind mount keeps upper/work on the same mount, as required
+            # by OverlayFS, and gives the Nix daemon a stable store URI.
+            active = storage / "active"
+            active.mkdir(exist_ok=True)
+            host.command("mount", "--bind", str(generation_root), str(active))
+            mounts.append(active)
             # Remove identical published copies only with every overlay stopped.
             # Each rename is safe to repeat after power loss: the durable lower
             # and its registration already provide the very same store object.
-            trash = storage / "published-copies"
+            trash = generation_root / "published-copies"
             trash.mkdir(exist_ok=True)
             for path in upper.iterdir():
                 logical = "/nix/store/" + path.name
@@ -202,17 +200,15 @@ def assemble(sysroot, cmdline):
                     core.remove_path(destination)
                 path.rename(destination)
                 core.fsync_dir(upper)
-            # Persist the new base before removing duplicates. Its old physical
-            # references remain pinned even if this boot fails later.
-            for record in records:
-                blob_map = core.read_json(physical(record["blob_map"]))
-                refs = views.blob_map_physical_references(blob_map, "host-upper")
-                core.atomic_json(state.running_ref_path(root, "dom0", record["generation"], "host-upper"), {
-                    "schema": core.SCHEMA_RUNNING_REF, "status": "running", "domain": "dom0",
-                    "generation": record["generation"], "manifest": record["manifest"],
-                    "closure_hash": record["closure_hash"], "volume": "host-upper",
-                    "physical_references": [ref for group in refs.values() for ref in group],
-                })
+            # Pin just this active view. Retained generations have independent
+            # retention pins; they are never mounted as a side effect of boot.
+            refs = views.blob_map_physical_references(blob_map, "host-upper")
+            core.atomic_json(state.running_ref_path(root, "dom0", generation, "host-upper"), {
+                "schema": core.SCHEMA_RUNNING_REF, "status": "running", "domain": "dom0",
+                "generation": generation, "manifest": selected["manifest"],
+                "closure_hash": selected["closure_hash"], "volume": "host-upper",
+                "physical_references": [ref for group in refs.values() for ref in group],
+            })
             # Assemble payloads before staging registration: Nix reads saved
             # derivations while rebuilding the database. No stage-2 process is
             # running yet, and failure cleanup unmounts this view.
@@ -223,8 +219,18 @@ def assemble(sysroot, cmdline):
                          "--mount-overlay", "--sysroot", str(sysroot))
             mounts.append(merged)
             progress("replacing host Nix database")
-            host_state.replace_database(sysroot, new_registration)
-            core.atomic_json(previous_path, {"schema": "airlock.host-base.v1", "systems": systems})
+            own_database = generation_root / "nix/var/nix/db/db.sqlite"
+            metadata_source = own_database if own_database.exists() else generation_root / "seed-metadata.sqlite"
+            host_state.replace_database(sysroot, new_registration, state_root=generation_root,
+                                        metadata_source=metadata_source)
+            database = sysroot / "nix/var/nix/db"
+            database.mkdir(parents=True, exist_ok=True)
+            host.command("mount", "--bind", str(generation_root / "nix/var/nix/db"), str(database))
+            mounts.append(database)
+            core.atomic_json(storage / "base.json", {
+                "schema": "airlock.host-base.v2", "systems": [selected["system"]],
+                "generation": generation, "closure_hash": selected["closure_hash"],
+            })
             shutil.rmtree(trash)
             # Nix's optional optimizer can keep an otherwise unreferenced
             # inode in .links after its last published upper copy is removed.
@@ -236,18 +242,20 @@ def assemble(sysroot, cmdline):
                 core.fsync_dir(links)
             if not (physical(system) / "init").is_file():
                 core.fail("selected system init missing from assembled host view")
+            progress("restoring the booted generation's machine selection")
+            host_machine.restore(sysroot, selected)
             core.atomic_json(root / "host/running.json", selected)
             # Only after registration, mounts and base identity are committed
             # may GC release physical references from the previous lower view.
-            keep = {record["generation"] for record in records}
             for pin in (root / "running/dom0").glob("*/host-upper.json"):
-                if int(pin.parent.name) not in keep:
+                if int(pin.parent.name) != generation:
                     state.clear_running_ref(root, "dom0", int(pin.parent.name), "host-upper")
-            host.collect_retired(root)
+            # Retirement/GC belongs to explicit maintenance, never early boot.
             progress("assembly complete; ready for NixOS closure discovery and activation")
 
         except BaseException as error:
             record_mount_failure(sysroot, error)
+            error._airlock_mount_report_attempted = True
             for target in reversed(mounts):
                 try:
                     host.command("umount", str(target))
@@ -268,6 +276,8 @@ def main():
         assemble(args.sysroot, Path("/proc/cmdline").read_text())
     except BaseException as error:
         progress("FAILED during host store assembly")
+        if not getattr(error, "_airlock_mount_report_attempted", False):
+            record_mount_failure(args.sysroot, error)
         if isinstance(error, subprocess.CalledProcessError):
             print(f"Command: {error.cmd!r}\nstdout: {error.stdout}\nstderr: {error.stderr}", flush=True)
         traceback.print_exc()

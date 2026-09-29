@@ -354,7 +354,7 @@ class Machine(deploy.Coordinator):
 
     def execute(self, *args, **kwargs):
         self.calls.append(args)
-        if self.fail and args[0] == self.fail:
+        if self.fail and (args[0] == self.fail or args[:2] == self.fail):
             raise deploy.DeploymentError("simulated failure")
         if args[0] == "airlock-host-store":
             return json.dumps({"schema": "airlock.host-store.v1", "system": args[-1],
@@ -1275,7 +1275,7 @@ def test_prune_resumes_after_profile_deletion_without_touching_other_generations
     selected_host = deploy.load_release(machine.pointer()["release"])[0]["host"]
     (machine.profiles / "system-1-link").symlink_to(host)
     (machine.profiles / "system-2-link").symlink_to(selected_host)
-    machine.fail = selected_host + "/bin/switch-to-configuration"
+    machine.fail = ("airlock-host-store", "install-boot")
     with pytest.raises(deploy.DeploymentError, match="simulated"):
         machine.releases.prune_release(obsolete_release, str(obsolete_release))
     assert not (machine.profiles / "system-1-link").is_symlink()

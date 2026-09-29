@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import subprocess
 import tempfile
+import sys
 from urllib.parse import quote
 
 from . import builder, core, state, views
@@ -26,7 +27,7 @@ def command(*args, **kwargs):
 
 def overlay_uri():
     lower = f"local?root={HOST}/lower&read-only=true"
-    return f"local-overlay://?lower-store={quote(lower, safe='')}&upper-layer={HOST}/upper"
+    return f"local-overlay://?lower-store={quote(lower, safe='')}&upper-layer={HOST}/active/upper"
 
 
 def key(system):
@@ -169,18 +170,46 @@ def publish_live(system):
     with admission_lock(root):
         if (root / "host/boots" / (key(system) + ".json")).exists():
             record = validate_boot(root, system)
+            seed_generation_metadata(record)
             refresh_builder(root, "sys-ctrl", Path(record["registration"]).read_text())
             return record
     temporary = Path(HOST) / "publishing"
     temporary.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(dir=temporary) as directory:
         command("nix-store", "--add-root", directory + "/root", "--realise", system)
-        paths = command("nix-store", "--query", "--requisites", system).splitlines()
-        registration = command("nix-store", "--store", overlay_uri(), "--dump-db", *paths)
+        registration = publication_registration(system)
         with admission_lock(root):
             record = publish(root, system, registration)
+            seed_generation_metadata(record)
             refresh_builder(root, "sys-ctrl", registration)
             return record
+
+
+def seed_generation_metadata(record):
+    from ..host_state import seed_metadata
+    directory = Path(HOST) / "generations" / str(record["generation"])
+    # Existing generation state belongs to that generation; never overwrite it
+    # with the currently booted host's metadata during rollback/republication.
+    if not (directory / "nix/var/nix/db/db.sqlite").exists():
+        seed_metadata(Path("/nix/var/nix/db/db.sqlite"), directory / "seed-metadata.sqlite")
+
+
+def publication_registration(system):
+    """Freeze the target closure and existing host additions into one view.
+
+    References of writable objects may live in the current immutable base.
+    Include those objects now, while the current store is available, rather
+    than making a future boot discover and mount historical host views.
+    A failed/racing read aborts publication before exposing a boot record.
+    """
+    from ..host_state import reference_closure
+    records = builder.registration_records(
+        command("nix-store", "--store", overlay_uri(), "--dump-db"))
+    upper = Path(HOST) / "active/upper"
+    saved = {"/nix/store/" + path.name for path in upper.iterdir()
+             if "/nix/store/" + path.name in records}
+    paths = reference_closure(records, saved | {system})
+    return "".join(records[path] for path in sorted(paths))
 
 
 def select(system):
@@ -223,9 +252,13 @@ def retire(system):
                 core.fail(f"cannot retire {name} host")
         path = root / "host/boots" / (key(system) + ".json")
         if not path.exists():
+            from ..host_artifacts import forget
+            forget(root, "/boot", system)
             return {"system": system, "retired": True}
         record = validate_boot(root, system, allow_retired=True)
         core.atomic_json(path, dict(record, retired=True))
+        from ..host_artifacts import forget
+        forget(root, "/boot", system)
         collect_retired(root)
         return {"system": system, "retired": True}
 
@@ -246,12 +279,35 @@ def allocated(path):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("action", choices=("publish", "select", "seal-boot", "retire", "status", "recover"))
+    parser.add_argument("action", choices=("publish", "select", "seal-boot", "retire", "status", "recover",
+                                           "checkpoint-machine", "bind-machine", "install-boot"))
     parser.add_argument("system", nargs="?")
     args = parser.parse_args()
-    if args.action in ("publish", "select", "retire", "recover") and not args.system:
+    if args.action in ("publish", "select", "retire", "recover", "bind-machine", "install-boot") and not args.system:
         parser.error("system is required")
-    if args.action == "publish":
+    if args.action == "install-boot":
+        result = {"installed": args.system}
+        subprocess.run(["unshare", "--mount", "--propagation", "private", sys.executable,
+                        str(Path(__file__).resolve().parent.parent / "host_install.py"), args.system], check=True)
+    elif args.action in ("checkpoint-machine", "bind-machine"):
+        from .. import host_machine
+        with admission_lock(POOL):
+            if args.action == "bind-machine":
+                record = validate_boot(POOL, args.system)
+            else:
+                record = core.read_json(Path(POOL) / "host/running.json")
+                selection = Path(host_machine.MACHINE) / "selection.json"
+                if selection.exists():
+                    selected = core.read_json(selection)
+                    manifest = core.read_json(Path(selected["release"]) / "release.json")
+                    if manifest["host"] != record["system"]:
+                        # Another release was applied but not yet booted. Its
+                        # binding is already recorded; keep the running host's.
+                        print(json.dumps({"checkpoint": "unchanged", "system": record["system"]}))
+                        return
+            host_machine.save(POOL, HOST, host_machine.MACHINE, record)
+        result = {"bound": record["system"]}
+    elif args.action == "publish":
         result = publish_live(args.system)
     elif args.action == "select":
         result = select(args.system)
@@ -271,7 +327,8 @@ def main():
     else:
         result = {"schema": "airlock.host-store.status.v1",
                   "pool_allocated_bytes": allocated(POOL),
-                  "upper_allocated_bytes": allocated(Path(HOST) / "upper"),
+                  "upper_allocated_bytes": allocated(Path(HOST) / "active/upper"),
+                  "generation_state_allocated_bytes": allocated(Path(HOST) / "generations"),
                   "recovery_allocated_bytes": allocated("/var/lib/airlock/recovery-store")}
     print(json.dumps(result, sort_keys=True))
 

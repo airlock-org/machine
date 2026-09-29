@@ -142,3 +142,19 @@ def test_selected_rollback_generation_remains_the_airlock_default(boot_menu, tmp
     assert boot_menu.fields(previous)["title"] == "Airlock"
     assert boot_menu.fields(current)["title"] == "Airlock (generation 12)"
     assert boot_menu.fields(loader)["default"] == previous.stem
+
+
+def test_retained_recovery_is_usable_without_its_store_view(boot_menu, tmp_path):
+    esp, store, current, _, _, _ = menu_fixture(tmp_path)
+    import shutil
+    for system in store.glob('recovery*'):
+        shutil.rmtree(system)
+    retained = esp / 'loader/entries/airlock-xen-recovery.conf'
+    text = ('title Airlock (recovery)\nversion Generation 1 retained\n'
+            'efi /EFI/airlock/recovery.efi\n'
+            '# airlock-system /nix/store/recovery1\n# airlock-role recovery\n')
+    retained.write_text(text)
+    boot_menu.configure(esp, store, recovery_profile=tmp_path / 'recovery-profile')
+    assert retained.read_text() == text
+    assert not (tmp_path / 'recovery-profile').exists()
+    assert boot_menu.fields(esp / 'loader/loader.conf')['default'] == current.stem

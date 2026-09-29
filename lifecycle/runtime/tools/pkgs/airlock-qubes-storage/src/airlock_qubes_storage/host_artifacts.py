@@ -2,6 +2,7 @@
 from pathlib import Path
 import os
 import struct
+import shutil
 
 from ._engine import core
 
@@ -62,15 +63,86 @@ def inventory(esp, system):
 
 def seal(root, esp):
     root = Path(root)
+    esp = Path(esp)
     for path in (root / "host/boots").glob("*.json"):
         record = core.read_json(path)
         if record.get("retired"):
             continue
+        descriptor = root / "host/artifacts" / path.name
+        if descriptor.exists():
+            # A retained entry must survive upstream menu regeneration even
+            # when its system path is absent from the currently mounted view.
+            verify(root, esp, record)
+            continue
         entries = inventory(esp, record["system"])
         if entries:
-            core.atomic_json(root / "host/artifacts" / path.name,
+            retained = []
+            for entry in entries:
+                files = {}
+                source_entry = esp / "loader/entries" / entry["entry"]
+                name = "airlock-" + entry["entry"]
+                for relative, fingerprint in entry["files"].items():
+                    source = esp / relative
+                    if source == source_entry:
+                        continue
+                    target = esp / "EFI/airlock" / source.name
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    if target.exists():
+                        if core.hash_file(target) != fingerprint["sha256"]:
+                            core.fail("retained EFI filename collision")
+                    else:
+                        temporary = target.with_name(target.name + ".pending")
+                        shutil.copyfile(source, temporary)
+                        with temporary.open("rb") as stream:
+                            os.fsync(stream.fileno())
+                        temporary.replace(target)
+                        core.fsync_dir(target.parent)
+                    files[str(target.relative_to(esp))] = fingerprint
+                target_entry = esp / "loader/entries" / name
+                text = source_entry.read_text().replace("/EFI/nixos/", "/EFI/airlock/").rstrip("\n") + "\n"
+                role = "recovery" if "title Airlock (recovery)" in text else "normal"
+                # Menu classification must not open an unmounted old store.
+                # Comments are ignored by systemd-boot and covered by our hash.
+                text += f"# airlock-system {record['system']}\n# airlock-role {role}\n"
+                if role == "normal":
+                    lines = text.splitlines()
+                    version = next((line.removeprefix("version ") for line in lines if line.startswith("version ")), "")
+                    parts = version.split()
+                    title = f"Airlock (generation {parts[1]})" if len(parts) > 1 and parts[0] == "Generation" else "Airlock (retained)"
+                    text = "\n".join("title " + title if line.startswith("title ") else line for line in lines) + "\n"
+                core.atomic_write(target_entry, text)
+                files[str(target_entry.relative_to(esp))] = {
+                    "size": target_entry.stat().st_size, "sha256": core.hash_file(target_entry)}
+                retained.append({"entry": name, "files": files})
+            core.atomic_json(descriptor,
                              {"schema": "airlock.host-boot-artifacts.v1", "system": record["system"],
-                              "generation": record["generation"], "entries": entries})
+                              "generation": record["generation"], "entries": retained})
+
+
+def forget(root, esp, system):
+    """Remove only retired entry files not referenced by another descriptor."""
+    directory = Path(root) / "host/artifacts"
+    descriptor = directory / (core.store_entry(system) + ".json")
+    if not descriptor.exists():
+        return
+    retained = set()
+    for path in directory.glob("*.json"):
+        if path != descriptor:
+            for entry in core.read_json(path)["entries"]:
+                retained.update(entry["files"])
+    for entry in core.read_json(descriptor)["entries"]:
+        for name in entry["files"]:
+            relative = Path(name)
+            if relative.is_absolute() or ".." in relative.parts or not (
+                    name.startswith("EFI/airlock/") or name.startswith("loader/entries/airlock-")):
+                core.fail("invalid retained boot artifact path")
+            if name not in retained:
+                target = Path(esp) / relative
+                target.unlink(missing_ok=True)
+                if target.parent.exists():
+                    core.fsync_dir(target.parent)
+    descriptor.unlink()
+    core.fsync_dir(directory)
 
 
 def verify(root, esp, record):

@@ -52,6 +52,15 @@ def classified_entries(entries_dir, store_root):
         role = marker.read_text().strip()
         if role in ("normal", "recovery"):
             result.append(Entry(path, int(generation.group(1)), role, system))
+    for path in entries_dir.glob("airlock-xen-*.conf"):
+        metadata = fields(path)
+        generation = GENERATION.match(metadata.get("version", ""))
+        comments = dict(line[2:].split(" ", 1) for line in path.read_text().splitlines()
+                        if line.startswith("# airlock-") and " " in line[2:])
+        system = comments.get("airlock-system", "")
+        role = comments.get("airlock-role")
+        if generation and system.startswith("/nix/store/") and role in ("normal", "recovery"):
+            result.append(Entry(path, int(generation.group(1)), role, store_root / Path(system).name))
     return result
 
 
@@ -110,7 +119,7 @@ def configure(esp, store_root, recovery_profile=None, nix_env="nix-env"):
     current = selected or normal[0]
     history = [entry for entry in normal if entry != current]
     current_recovery = recovery[0]
-    if recovery_profile:
+    if recovery_profile and not current_recovery.path.name.startswith("airlock-"):
         recovery_profile.parent.mkdir(parents=True, exist_ok=True)
         subprocess.run(
             [
@@ -127,13 +136,17 @@ def configure(esp, store_root, recovery_profile=None, nix_env="nix-env"):
         if entry.name.startswith(("nixos-", "xen-")) and entry not in retained:
             entry.unlink()
 
-    replace_field(current.path, "title", "Airlock")
-    replace_field(current.path, "sort-key", "00-airlock")
-    replace_field(current_recovery.path, "title", "Airlock (recovery)")
-    replace_field(current_recovery.path, "sort-key", "01-airlock-recovery")
+    # Retained entries are checksum-bound boot artifacts. Preserve their bytes.
+    if not current.path.name.startswith("airlock-"):
+        replace_field(current.path, "title", "Airlock")
+        replace_field(current.path, "sort-key", "00-airlock")
+    if not current_recovery.path.name.startswith("airlock-"):
+        replace_field(current_recovery.path, "title", "Airlock (recovery)")
+        replace_field(current_recovery.path, "sort-key", "01-airlock-recovery")
     for entry in history:
-        replace_field(entry.path, "title", f"Airlock (generation {entry.generation})")
-        replace_field(entry.path, "sort-key", "02-airlock-generation")
+        if not entry.path.name.startswith("airlock-"):
+            replace_field(entry.path, "title", f"Airlock (generation {entry.generation})")
+            replace_field(entry.path, "sort-key", "02-airlock-generation")
 
     replace_field(loader_conf, "default", current.path.stem)
     if "preferred" in loader:

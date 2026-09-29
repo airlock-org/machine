@@ -197,8 +197,15 @@ def test_recovery_uses_xen_efi_binding_and_rejects_damaged_initramfs(tmp_path):
     record = {"system": A, "generation": 1}
     core.atomic_json(root / "host/boots" / (host.key(A) + ".json"), record)
     host_artifacts.seal(root, esp)
-    assert host_artifacts.verify(root, esp, record) == entry.name
-    (directory / "initrd.efi").write_bytes(b"broken")
+    assert host_artifacts.verify(root, esp, record) == 'airlock-' + entry.name
+    # Upstream regeneration can remove its own entry/files. Our retained
+    # choice still has the exact kernel and initrd without mounting that host.
+    import shutil
+    entry.unlink()
+    shutil.rmtree(directory)
+    host_artifacts.seal(root, esp)
+    assert host_artifacts.verify(root, esp, record) == 'airlock-' + entry.name
+    (esp / 'EFI/airlock/initrd.efi').write_bytes(b"broken")
     with pytest.raises(core.EngineError, match="corrupt boot artifact"):
         host_artifacts.verify(root, esp, record)
 
@@ -248,7 +255,7 @@ def test_host_overlay_mount_uses_post_switch_root_paths(monkeypatch, mount_resul
     assert (source, target, fstype, flags) == (b'overlay', b'/nix/store', b'overlay', 0)
     assert b'/sysroot' not in options
     assert b'lowerdir=/var/lib/airlock/host-store/lower/nix/store' in options
-    assert b'upperdir=/var/lib/airlock/host-store/upper' in options
+    assert b'upperdir=/var/lib/airlock/host-store/active/upper' in options
 
 
 @pytest.mark.parametrize('kernel_timeout', [False, True])
@@ -309,7 +316,8 @@ def test_registration_union_rejects_overflowing_nix_base32_hash():
 
 
 @pytest.mark.parametrize("invalid_registration", [False, True])
-def test_database_transition_preserves_saved_derivation(tmp_path, monkeypatch, invalid_registration):
+@pytest.mark.parametrize("isolated_state", [False, True])
+def test_database_transition_preserves_saved_derivation(tmp_path, monkeypatch, invalid_registration, isolated_state):
     """Exercise real Nix registration; emulate only privileged bind mounts."""
     import shutil
     import sqlite3
@@ -355,14 +363,37 @@ def test_database_transition_preserves_saved_derivation(tmp_path, monkeypatch, i
         return command(*args, **kwargs)
 
     monkeypatch.setattr(host, "command", mounted_command)
+    state_root = tmp_path / 'generation-state' if isolated_state else root
     if invalid_registration:
         with pytest.raises(subprocess.CalledProcessError):
-            host_state.replace_database(root, registration_text + "not-a-store-path\n")
+            host_state.replace_database(root, registration_text + "not-a-store-path\n", state_root=state_root)
     else:
-        host_state.replace_database(root, registration_text)
+        host_state.replace_database(root, registration_text, state_root=state_root)
     assert not mounts
     assert (root / drv.lstrip("/")).read_text() == recipe
-    db = root / "nix/var/nix/db/db.sqlite"
+    db = (root if invalid_registration else state_root) / "nix/var/nix/db/db.sqlite"
     with sqlite3.connect(db.as_uri() + "?mode=ro", uri=True) as connection:
         assert connection.execute("SELECT path FROM ValidPaths").fetchall() == [(drv,)]
         assert connection.execute("SELECT id,path FROM DerivationOutputs").fetchall() == [("out", output)]
+
+
+def test_retiring_boot_entry_preserves_shared_kernel_for_other_generation(tmp_path):
+    from airlock_qubes_storage import host_artifacts
+    root, esp = tmp_path / 'pool', tmp_path / 'esp'
+    directory = esp / 'EFI/nixos'
+    directory.mkdir(parents=True)
+    entries = esp / 'loader/entries'
+    entries.mkdir(parents=True)
+    for generation, system in ((1, A), (2, B)):
+        (entries / f'xen-{generation}.conf').write_text(f'efi /EFI/nixos/xen-{generation}.efi\n')
+        write_xen_efi(directory / f'xen-{generation}.efi',
+                      f'kernel=kernel.efi init={system}/init\nramdisk=initrd.efi\n')
+        core.atomic_json(root / 'host/boots' / (host.key(system) + '.json'),
+                         {'system': system, 'generation': generation})
+    (directory / 'kernel.efi').write_bytes(b'shared kernel')
+    (directory / 'initrd.efi').write_bytes(b'shared initrd')
+    host_artifacts.seal(root, esp)
+    host_artifacts.forget(root, esp, A)
+    assert not (entries / 'airlock-xen-1.conf').exists()
+    assert not (esp / 'EFI/airlock/xen-1.efi').exists()
+    assert host_artifacts.verify(root, esp, {'system': B, 'generation': 2}) == 'airlock-xen-2.conf'
