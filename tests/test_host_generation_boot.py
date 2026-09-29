@@ -147,10 +147,43 @@ def test_publication_freezes_additions_and_their_lower_dependencies(tmp_path, mo
     (upper / Path(C).name).write_text('saved output')
     (upper / 'unregistered-import').write_text('partial import')
     monkeypatch.setattr(host, 'command', lambda *a, **kw:
+                        '' if a[-1] == '--print-live' else
                         registration(A) + registration(B) + registration(C, [D]) + registration(D))
     frozen = host.publication_registration(B)
     assert builder.registration_paths(frozen) == {B, C, D}
     assert A not in frozen
+
+
+def test_repeated_publication_keeps_rooted_additions_after_they_move_to_lower(tmp_path, monkeypatch):
+    monkeypatch.setattr(host, 'HOST', str(tmp_path))
+    upper = tmp_path / 'active/upper'
+    upper.mkdir(parents=True)
+    saved = upper / Path(C).name
+    saved.write_text('rooted addition')
+    calls = []
+    def command(*args):
+        calls.append(args)
+        if args[-1] == '--print-live':
+            assert args[-2] == '--gc'
+            return C + '\n' + D + '\n'
+        assert args[-1] == '--dump-db'
+        return registration(A) + registration(B) + registration(C, [D]) + registration(D)
+    monkeypatch.setattr(host, 'command', command)
+    assert builder.registration_paths(host.publication_registration(B)) == {B, C, D}
+    # Booting the published view removes matching upper copies. The following
+    # publication must keep the same rooted object and its lower dependency.
+    saved.unlink()
+    assert builder.registration_paths(host.publication_registration(B)) == {B, C, D}
+    assert [c[-1] for c in calls] == ['--print-live', '--dump-db'] * 2
+
+
+def test_publication_rejects_live_path_missing_from_registration(tmp_path, monkeypatch):
+    monkeypatch.setattr(host, 'HOST', str(tmp_path))
+    (tmp_path / 'active/upper').mkdir(parents=True)
+    monkeypatch.setattr(host, 'command', lambda *a, **kw:
+                        C + '\n' if a[-1] == '--print-live' else registration(B))
+    with pytest.raises(core.EngineError):
+        host.publication_registration(B)
 
 
 def test_lower_mount_failure_reports_errno(monkeypatch):

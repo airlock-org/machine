@@ -203,12 +203,20 @@ def publication_registration(system):
     A failed/racing read aborts publication before exposing a boot record.
     """
     from ..host_state import reference_closure
+    # An addition published by a previous update now lives in the immutable
+    # lower view, so enumerating the upper alone loses it on the next update.
+    # Retain the current store's live roots (including user profiles) regardless
+    # of their physical layer. --print-live only queries; it collects nothing.
+    # Query before dumping registration so a concurrently registered live root
+    # cannot be omitted from the registration snapshot used below.
+    live = set(command("nix-store", "--store", overlay_uri(),
+                       "--gc", "--print-live").splitlines())
     records = builder.registration_records(
         command("nix-store", "--store", overlay_uri(), "--dump-db"))
     upper = Path(HOST) / "active/upper"
     saved = {"/nix/store/" + path.name for path in upper.iterdir()
              if "/nix/store/" + path.name in records}
-    paths = reference_closure(records, saved | {system})
+    paths = reference_closure(records, saved | live | {system})
     return "".join(records[path] for path in sorted(paths))
 
 
