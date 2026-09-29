@@ -251,6 +251,42 @@ def test_host_overlay_mount_uses_post_switch_root_paths(monkeypatch, mount_resul
     assert b'upperdir=/var/lib/airlock/host-store/upper' in options
 
 
+@pytest.mark.parametrize('kernel_timeout', [False, True])
+def test_boot_mount_failure_evidence_survives_kernel_capture_failure(tmp_path, monkeypatch, kernel_timeout):
+    import subprocess
+    from airlock_qubes_storage import host_boot
+
+    def capture(args, **kwargs):
+        assert kwargs['timeout'] == 5
+        if kernel_timeout:
+            raise subprocess.TimeoutExpired(args, 5)
+        return subprocess.CompletedProcess(args, 0, 'kernel mount rejection\n', '')
+
+    monkeypatch.setattr(host_boot.subprocess, 'run', capture)
+    failure = subprocess.CalledProcessError(32, ['mount', '-t', 'overlay'], stderr='mount failed')
+    host_boot.record_mount_failure(tmp_path, failure)
+    path, = (tmp_path / 'var/log/airlock-boot').glob('*-host-store-failure.json')
+    report = json.loads(path.read_text())
+    assert report['command'] == failure.cmd
+    assert report['returncode'] == 32 and report['stderr'] == 'mount failed'
+    assert report['/proc/self/mountinfo']
+    assert path.stat().st_mode & 0o777 == 0o600
+    if kernel_timeout:
+        assert 'TimeoutExpired' in report['kernel_error']
+    else:
+        assert report['kernel'] == 'kernel mount rejection\n'
+
+
+def test_boot_mount_diagnostic_write_failure_is_best_effort(tmp_path, monkeypatch, capsys):
+    import subprocess
+    from airlock_qubes_storage import host_boot
+    monkeypatch.setattr(host_boot.subprocess, 'run', lambda *a, **kw:
+                        subprocess.CompletedProcess(a, 0, '', ''))
+    (tmp_path / 'var').write_text('cannot create log directory')
+    host_boot.record_mount_failure(tmp_path, OSError('original mount failure'))
+    assert 'could not save mount failure evidence' in capsys.readouterr().out
+
+
 def test_registration_union_compares_hash_bytes_and_reference_sets():
     # Same real glibc-locales NAR hash from image closureInfo and live dump-db.
     encoded = "sha256:1cxkagflgwsvbq4yw595lmg6vmcvr0rhippi2zqf1wvlp0i4rkz9"

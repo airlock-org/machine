@@ -19,6 +19,36 @@ def progress(message):
     print(f"Airlock host store [{time.monotonic():.3f}s]: {message}", flush=True)
 
 
+def record_mount_failure(sysroot, error):
+    """Save evidence before cleanup; diagnostics must not replace the failure."""
+    try:
+        report = {"error": repr(error), "traceback": traceback.format_exc()}
+        if isinstance(error, subprocess.CalledProcessError):
+            report.update(command=error.cmd, returncode=error.returncode,
+                          stdout=error.stdout, stderr=error.stderr)
+        for name in ("/proc/self/mountinfo", "/proc/filesystems", "/proc/cmdline"):
+            try:
+                report[name] = Path(name).read_text()
+            except OSError as diagnostic_error:
+                report[name] = repr(diagnostic_error)
+        try:
+            result = subprocess.run(["dmesg", "--color=never"], capture_output=True,
+                                    text=True, errors="replace", timeout=5)
+            report["kernel"] = result.stdout[-65536:]
+            report["kernel_stderr"] = result.stderr[-4096:]
+            report["kernel_returncode"] = result.returncode
+        except (OSError, subprocess.TimeoutExpired) as diagnostic_error:
+            report["kernel_error"] = repr(diagnostic_error)
+        boot_id = Path("/proc/sys/kernel/random/boot_id").read_text().strip()
+        directory = Path(sysroot) / "var/log/airlock-boot"
+        directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+        path = directory / f"{boot_id}-host-store-failure.json"
+        core.atomic_json(path, report, mode=0o600)
+        progress(f"saved mount failure evidence to {path}")
+    except Exception as diagnostic_error:
+        progress(f"could not save mount failure evidence: {diagnostic_error}")
+
+
 def mount_overlay_in_root(sysroot):
     """Mount in a chrooted child so saved OverlayFS options survive switch-root.
 
@@ -216,9 +246,13 @@ def assemble(sysroot, cmdline):
             host.collect_retired(root)
             progress("assembly complete; ready for NixOS closure discovery and activation")
 
-        except BaseException:
+        except BaseException as error:
+            record_mount_failure(sysroot, error)
             for target in reversed(mounts):
-                host.command("umount", str(target))
+                try:
+                    host.command("umount", str(target))
+                except Exception as cleanup_error:
+                    progress(f"cleanup failed for {target}: {cleanup_error}")
             raise
 
 
