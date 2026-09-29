@@ -273,7 +273,9 @@ def test_nix_selection_drives_reservation_assignment_and_start():
         inputEvents = {{ inherit (lab.systemd.services.airlock-gui-input-events) wantedBy requires wants after serviceConfig; }};
         inputConnect = lab.systemd.services.airlock-gui-input-connect.serviceConfig // {{
           script = builtins.readFile lab.systemd.services.airlock-gui-input-connect.serviceConfig.ExecStart;
+          requires = lab.systemd.services.airlock-gui-input-connect.requires;
         }};
+        inputGuard = {{ inherit (lab.systemd.services.airlock-input-boot-guard) before after unitConfig serviceConfig; }};
         inputReceiverReady = builtins.readFile guestBase.config.environment.etc."qubes-rpc/airlock.InputReceiverReady".source;
         inputReceiverReadyConfig = guestBase.config.environment.etc."qubes/rpc-config/airlock.InputReceiverReady".text;
         inputPolicy = let
@@ -389,6 +391,16 @@ def test_nix_selection_drives_reservation_assignment_and_start():
     assert report["inputEvents"]["serviceConfig"]["Restart"] == "on-failure"
     assert report["inputConnect"]["Type"] == "oneshot"
     assert report["inputConnect"]["TimeoutStartSec"] == 75
+    assert "airlock-input-boot-guard.service" in report["inputConnect"]["requires"]
+    assert "airlock-input-boot-guard.service" in report["service"]["requires"]
+    assert "airlock-input-boot-guard.service" in report["service"]["after"]
+    guard = report["inputGuard"]
+    assert "airlock-start-gui-gpu.service" in guard["before"]
+    assert "airlock-setup-config.service" in guard["after"]
+    assert guard["serviceConfig"]["Restart"] == "no"
+    assert guard["serviceConfig"]["TimeoutStartSec"] == 75
+    assert "--finalize" in guard["serviceConfig"]["ExecStopPost"]
+    assert guard["unitConfig"]["OnFailure"] == ["airlock-boot-failure@%n.service"]
     assert "airlock-connect-gui-input" in report["inputConnect"]["ExecStart"]
     connect_script = report["inputConnect"]["script"]
     assert connect_script.count("airlock.InputReceiverReady dom0") == 1

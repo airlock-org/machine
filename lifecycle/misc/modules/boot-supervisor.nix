@@ -32,12 +32,13 @@ let
     echo
     echo "  Airlock | Boot failed"
     echo
-    echo "  A required VM did not become ready. Airlock has not accepted this boot."
+    echo "  A hardware check or required VM failed. Airlock has not accepted this boot."
     echo "  The failed stage and diagnostics have been saved."
     echo
     echo "  Evidence:     /var/log/airlock/boot-attempts/$boot_id"
     echo "  Attempt state: /var/lib/airlock/boot-attempts/$boot_id/state.json"
     echo "  Failed units:  systemctl --failed"
+    echo "  Input report:  /var/log/airlock/boot-attempts/$boot_id/input-controller.json"
     echo
     echo "  Log in below to inspect the failure."
     echo
@@ -195,6 +196,12 @@ in
       unitConfig.OnFailure = failureTarget;
       serviceConfig.ExecCondition = [ gate ];
       serviceConfig.TimeoutStartSec = 300;
+    };
+    systemd.services.airlock-input-boot-guard = lib.mkIf config.airlock.inputProxy.sender.enable {
+      requires = [ "airlock-boot-attempt-prepare.service" ];
+      after = [ "airlock-boot-attempt-prepare.service" ];
+      unitConfig.OnFailure = failureTarget;
+      serviceConfig.ExecCondition = [ gate ];
     };
     systemd.services.airlock-machine-autostart = {
       # All hardware/GUI guards have succeeded before this service runs.

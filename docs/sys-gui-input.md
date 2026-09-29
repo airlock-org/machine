@@ -141,3 +141,39 @@ sudo systemctl stop airlock-gui-input-keyboard.service \
 
 The running setup is not a persistent boot workflow. The VBIOS/assignment
 experiment also remains manual; see [its lifecycle limits](amd-gpu-vbios.md).
+
+## Boot-time keyboard initialization guard
+
+Physical sender profiles run `airlock-input-boot-guard.service` after topology
+and network setup, before GPU handoff and input connection. It reads this boot's
+kernel journal and reacts only to the explicit atkbd "Failed to enable keyboard"
+error on the physical i8042 port. A missing TrackPoint, idle keyboard, or zero
+interrupt counter does not itself trigger a reset. Machines without i8042 are
+unaffected.
+
+The guard records the kernel evidence and an attempted marker before performing
+one i8042 driver unbind/bind. It waits for the keyboard driver to bind and checks
+new kernel messages for another initialization failure. The reset child has a
+20-second timeout, driver observation has a 10-second limit, journal operations
+have 10-second limits, and the whole service has a 75-second startup limit.
+Service restarts cannot repeat a failed or interrupted reset within the same boot.
+Timeouts are subject to the kernel being able to terminate a blocked sysfs writer.
+
+Reports and before/after kernel evidence are saved under
+`/var/log/airlock/boot-attempts/<boot-id>/input-controller.json` and adjacent
+`input-kernel-*.json` files. Outcomes distinguish no detected failure,
+not-applicable hardware, reinitialization, and failure. They always report
+`physical_input_verified=false`: successful initialization and forwarding do
+not establish that the user can type or click.
+
+On failure, the GPU startup dependency cannot proceed. With boot supervision
+enabled, the existing failure handler preserves diagnostics and shows the boot
+failure console, including the input report path. It does not silently accept
+the boot, repeatedly reset hardware, or add any VM control capability. A failed
+built-in keyboard can still require an external keyboard at that console.
+Independent text recovery has physical forwarding and this guard disabled.
+
+This implements a bounded recovery for the 2026-09-29 observed failure. A manual
+controller rebind restored both keyboard and TrackPoint, and the user confirmed
+keyboard and clicks worked. The underlying reason for intermittent initialization
+failure remains unproven; automated recovery still needs physical boot evidence.

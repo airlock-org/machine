@@ -160,9 +160,35 @@ in
         wants = [ "airlock-gui-input-discovery.service" ];
       };
       systemd.services = {
+        airlock-input-boot-guard = {
+          description = "Check kernel input initialization and attempt one bounded recovery";
+          wantedBy = [ "multi-user.target" ];
+          after = [
+            "systemd-udev-trigger.service"
+            "airlock-setup-config.service"
+            "airlock-start-network-providers.service"
+          ];
+          before = [ "airlock-start-gui-gpu.service" "airlock-gui-input-connect.service" ];
+          path = [ pkgs.systemd ];
+          serviceConfig = {
+            Type = "oneshot";
+            RemainAfterExit = true;
+            ExecStart = "${pkgs.python3}/bin/python3 ${../../runtime/tools/scripts/input-boot-guard.py}";
+            ExecStopPost = "${pkgs.python3}/bin/python3 ${../../runtime/tools/scripts/input-boot-guard.py} --finalize";
+            TimeoutStartSec = 75;
+            TimeoutStopSec = 5;
+            Restart = "no";
+            UMask = "0077";
+          };
+        };
+        airlock-start-gui-gpu = lib.mkIf (config.airlock.guiGpu.startOnBoot or false) {
+          requires = [ "airlock-input-boot-guard.service" ];
+          after = [ "airlock-input-boot-guard.service" ];
+        };
         airlock-gui-input-connect = {
           description = "Connect physical input after the GUI domain is ready";
-          after = [ "qubesd.service" ];
+          requires = [ "airlock-input-boot-guard.service" ];
+          after = [ "qubesd.service" "airlock-input-boot-guard.service" ];
           serviceConfig = {
             Type = "oneshot";
             ExecStart = connectInput;
