@@ -8641,17 +8641,22 @@ def check_closure_store_linux_storage(repo_root: Path, log_dir: Path) -> None:
             + "\n",
             encoding="utf-8",
         )
-        return
+        import pytest
 
-    # The privileged path needs real loop, device-mapper, and mount namespace
-    # operations. Keep the pytest entry explicit rather than silently faking that
-    # integration coverage.
-    for command in ("dmsetup", "losetup", "mount", "unshare", "findmnt"):
+        pytest.skip("root is required for real loop/device-mapper storage coverage")
+
+    for command in ("dmsetup", "losetup", "mount", "umount", "unshare", "blockdev", "mkfs.erofs"):
         if shutil.which(command) is None:
             raise AssertionError(f"missing required command: {command}")
-    raise AssertionError(
-        "privileged closure-store-linux-storage pytest migration is not implemented"
+    result = _run(
+        ["unshare", "--mount", "--propagation", "private", sys.executable,
+         str(repo_root / "tests/closure_store_linux_probe.py"),
+         str(repo_root / "lifecycle/runtime/tools/pkgs/airlock-qubes-storage/src")],
+        cwd=repo_root,
     )
+    report = json.loads(result.stdout)
+    assert report["status"] == "passed" and report["devices_cleaned_up"]
+    result_path.write_text(json.dumps(report, sort_keys=True) + "\n", encoding="utf-8")
 
 
 def _nix_eval_json(repo_root: Path, attr: str, *extra: str) -> object:
