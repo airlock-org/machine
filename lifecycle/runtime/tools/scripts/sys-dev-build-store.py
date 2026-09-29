@@ -116,9 +116,18 @@ def start(args):
         )
         record_base(state, identity)
         lower = runtime / "lower"
-        # --load-db registers metadata, never imports package payloads. State is
-        # rebuilt from the immutable combined index each boot, not trusted from
-        # guest-writable Nix state. Initialize before covering the empty store.
+        # Nix reads .drv contents during --load-db. Expose the sealed objects
+        # first, with the empty .links directory required by LocalStore outside
+        # the immutable pool, just as in dom0's lower store.
+        scaffold = runtime / "lower-scaffold"
+        (scaffold / ".links").mkdir(parents=True, exist_ok=True)
+        mount(
+            lower / "nix/store",
+            "-t", "overlay", "overlay", "-o",
+            f"ro,nodev,nosuid,index=off,metacopy=off,redirect_dir=nofollow,lowerdir={pool}:{scaffold}",
+        )
+        # Register metadata only; package bytes remain in the shared pool.
+        # The lower database is rebuilt from its approved index each boot.
         checked(
             args.nix_store,
             "--store",
@@ -126,8 +135,6 @@ def start(args):
             "--load-db",
             input=registration.decode(),
         )
-        mount(lower / "nix/store", "--bind", str(pool))
-        checked("mount", "-o", "remount,bind,ro", str(lower / "nix/store"))
         db = lower / "nix/var/nix/db"
         checked("mount", "--bind", str(db), str(db))
         mounts.append(str(db))
