@@ -49,6 +49,7 @@ DeploymentPhase = Literal[
 
 class DeploymentRecord(TypedDict):
     id: str
+    boot_id: str
     release: str
     previous: str
     revision: str

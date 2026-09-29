@@ -612,6 +612,64 @@ def test_boot_start_refuses_missing_gpu_guard(machine):
     assert not any(call[0] == "qvm-start" for call in machine.calls)
 
 
+@pytest.mark.parametrize("action", ["verify", "apply"])
+@pytest.mark.parametrize("rebooted", [False, True])
+def test_verification_scopes_manually_running_guests_to_apply_boot(
+    machine, tmp_path, topology, monkeypatch, action, rebooted
+):
+    monkeypatch.setattr(deploy, "boot_id", lambda: "apply-boot")
+    topology["domains"]["usr-browser"]["prefs"]["autostart"] = False
+    release = new_release(tmp_path, topology)
+    applied = machine.apply(release)
+    assert "usr-browser" in applied["plan"]["start"]
+    machine.live.remove("usr-browser")
+    if rebooted:
+        # Same release/host: even a reboot without a host upgrade resets the
+        # previous session's manually running set.
+        monkeypatch.setattr(deploy, "boot_id", lambda: "next-boot")
+        machine.boot_start("/missing-image", ["sys-gui"])
+
+    def check():
+        return machine.verify_selected() if action == "verify" else machine.apply(release)
+
+    if not rebooted:
+        with pytest.raises(deploy.DeploymentError, match="usr-browser: failed to start"):
+            check()
+        return
+    check()
+    assert "usr-browser" not in machine.live
+    assert machine.status()["boot_id"] == "apply-boot"
+    # A repeated check must retain cold-boot semantics.
+    check()
+    machine.live.remove("usr-home")
+    with pytest.raises(deploy.DeploymentError, match="usr-home: failed to start"):
+        check()
+
+
+def test_post_reboot_verification_checks_autostart_dependencies_and_manual_guests(
+    machine, tmp_path, topology, monkeypatch
+):
+    monkeypatch.setattr(deploy, "boot_id", lambda: "apply-boot")
+    topology["domains"]["sys-dev"]["prefs"]["autostart"] = False
+    topology["domains"]["usr-home"]["prefs"]["autostart"] = False
+    machine.apply(new_release(tmp_path, topology))
+    monkeypatch.setattr(deploy, "boot_id", lambda: "next-boot")
+    machine.live.remove("sys-dev")
+    with pytest.raises(deploy.DeploymentError, match="sys-dev: failed to start"):
+        machine.verify_selected()
+    machine.live.add("sys-dev")
+    command = machine.command
+
+    def wrong_manual_guest(*args, **kwargs):
+        if args[:3] == ("qrexec-client", "-d", "usr-home"):
+            return "/nix/store/wrong-running-system"
+        return command(*args, **kwargs)
+
+    monkeypatch.setattr(machine, "command", wrong_manual_guest)
+    with pytest.raises(deploy.DeploymentError, match="usr-home: running system differs"):
+        machine.verify_selected()
+
+
 @pytest.mark.parametrize("reason", ["profile", "interrupted"])
 def test_boot_start_fails_closed(machine, tmp_path, topology, monkeypatch, reason):
     machine.apply(new_release(tmp_path, topology))
@@ -1602,12 +1660,16 @@ def test_verify_rejects_pool_identity_mismatch_even_when_system_matches(tmp_path
     elif damage != 'generation':
         info[{'root':'root_source', 'kernel':'kernel_name', 'closure':'closure_source'}[damage]] = 'stale'
     def command(*args, **kwargs):
-        if args[0] == 'qvm-ls': return 'usr-home|Running'
+        if args[0] == 'qvm-ls':
+            return 'usr-home|Running'
         if args[0] == 'qvm-features':
-            if args[2] == 'airlock-store-generation': return 'invalid' if damage == 'generation' else '1'
+            if args[2] == 'airlock-store-generation':
+                return 'invalid' if damage == 'generation' else '1'
             return backend['system']['source']
-        if args[0] == 'airlock-closure-store': return json.dumps(info)
-        if args[0] == 'qrexec-client': return backend['system']['source']
+        if args[0] == 'airlock-closure-store':
+            return json.dumps(info)
+        if args[0] == 'qrexec-client':
+            return backend['system']['source']
         raise AssertionError(args)
     coordinator = deploy.Coordinator(tmp_path/'state', command)
     with pytest.raises(deploy.DeploymentError, match='generation'):

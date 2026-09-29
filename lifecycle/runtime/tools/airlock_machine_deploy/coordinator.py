@@ -41,6 +41,10 @@ def run(*args, **kwargs):
     ).stdout.strip()
 
 
+def boot_id():
+    return Path("/proc/sys/kernel/random/boot_id").read_text().strip()
+
+
 def active_profile():
     marker = Path("/etc/airlock/machine-profile")
     if marker.exists():
@@ -669,6 +673,16 @@ class Coordinator:
             observed[name] = {"selected": selected, "running": actual}
         return observed
 
+    def expected_running(self, topology, record):
+        # Apply preserves VMs that were manually running. That expectation ends
+        # at reboot, when the declared autostart policy (and dependencies) wins.
+        if record["boot_id"] == boot_id():
+            required = set(record["plan"]["start"])
+        else:
+            required = set(plan(topology, topology, set())["start"])
+        # Also verify manually started guests without requiring them next boot.
+        return required | (self.running() & set(topology["domains"]))
+
     def apply(self, release, recover=False, expected_state=None) -> DeploymentRecord:
         release = Path(release).resolve()
         self.releases.require_available_release(release)
@@ -684,7 +698,7 @@ class Coordinator:
                 if existing["phase"] in ("complete", "reboot-required") and existing[
                     "release"
                 ] == str(release):
-                    self.verify(topology, set(existing["plan"]["start"]))
+                    self.verify(topology, self.expected_running(topology, existing))
                     self.retirement.enforce_trash()
                     return existing
             if (
@@ -743,6 +757,7 @@ class Coordinator:
             directory.mkdir(parents=True)
             record: DeploymentRecord = {
                 "id": transaction,
+                "boot_id": boot_id(),
                 "release": str(release),
                 "previous": str(baseline),
                 "revision": manifest["revision"],
@@ -918,7 +933,9 @@ class Coordinator:
             if record["phase"] not in ("complete", "reboot-required"):
                 raise DeploymentError("unfinished deployment; resume or rollback first")
             manifest, topology = load_release(selected["release"])
-            record["observed"] = self.verify(topology, set(record["plan"]["start"]))
+            record["observed"] = self.verify(
+                topology, self.expected_running(topology, record)
+            )
             record["trash_active"] = [
                 entry["id"] for entry in self.retirement.enforce_trash()
             ]
