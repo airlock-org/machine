@@ -132,6 +132,9 @@ def start(args):
             args.nix_store,
             "--store",
             str(lower),
+            # No builds run here. Avoid LocalStore trying to chown the sealed
+            # mount to nixbld while creating this metadata-only database.
+            "--option", "build-users-group", "",
             "--load-db",
             input=registration.decode(),
         )
