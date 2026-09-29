@@ -40,6 +40,9 @@ def boot_tree(tmp_path, monkeypatch):
                         'paths': [system], 'closure_hash': f'closure-{generation}',
                         'canonical_metadata_image': str(metadata), 'canonical_blob_map': str(blob)}}
         core.atomic_json(directory / 'manifest.json', manifest)
+        # The mocked admission must persist the registration, as host.admit
+        # does before publication checks and flushes the generation files.
+        core.atomic_write(directory / 'registration', registration(system), mode=0o444)
         monkeypatch.setattr(host, 'admit', lambda *a, directory=directory, **kw:
                             {'manifest': str(directory / 'manifest.json')})
         host.publish(root, system, registration(system))
