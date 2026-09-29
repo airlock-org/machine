@@ -17,8 +17,11 @@ from .state import read_json
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="action", required=True)
-    for action in ("plan", "apply"):
-        sub.add_parser(action).add_argument("release", type=Path)
+    for action in ("plan", "apply", "prepared-check"):
+        action_parser = sub.add_parser(action)
+        action_parser.add_argument("release", type=Path)
+        if action == "apply":
+            action_parser.add_argument("--expected-state")
     bind = sub.add_parser("machine-bind")
     bind.add_argument("release", type=Path)
     bind.add_argument("receipts")
@@ -61,11 +64,14 @@ def main(argv=None):
     try:
         if args.action == "machine-bind":
             receipts = json.load(sys.stdin) if args.receipts == "-" else read_json(args.receipts)
-            result = {"candidate": str(coordinator.machine_candidate(args.release, receipts))}
+            result = {"candidate": str(coordinator.machine_candidate(args.release, receipts)),
+                      "timings": coordinator.binding_timings}
         elif args.action == "plan":
             result = coordinator.inspect(args.release)
+        elif args.action == "prepared-check":
+            result = coordinator.check_prepared(args.release)
         elif args.action == "apply":
-            result = coordinator.apply(args.release)
+            result = coordinator.apply(args.release, expected_state=args.expected_state)
         elif args.action in ("guest-plan", "guest-apply"):
             receipt = (
                 json.load(sys.stdin) if args.receipt == "-" else read_json(args.receipt)

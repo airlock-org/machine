@@ -69,3 +69,69 @@ def test_machine_response_preserves_dom0_failure(stage):
                                           "error": "specific admission failure"}), stage)
     with pytest.raises(ValueError, match="closed the machine"):
         DEPLOY.machine_response(b"", stage)
+
+
+def test_machine_metadata_queries_shared_paths_only_once(tmp_path, monkeypatch):
+    monkeypatch.setattr(DEPLOY, 'BUILDER_STORE', tmp_path)
+    topology = {'domains': {}}
+    for vm in ['one', 'two']:
+        closure = tmp_path / 'nix/store' / (vm + '-closure')
+        closure.mkdir(parents=True)
+        (closure / 'store-paths').write_text('/nix/store/shared\n/nix/store/' + vm + '\n')
+        topology['domains'][vm] = {'backend': {'type': 'nix-closure',
+            'system': {'source': '/nix/store/' + vm}, 'store': {'source': '/nix/store/' + vm + '-closure'}}}
+    seen = []
+    def output(*args):
+        assert args[:3] == ('airlock-config-nix', 'path-info', '--json')
+        seen.extend(args[3:])
+        return json.dumps({path: {'narHash': 'hash'} for path in args[3:]})
+    monkeypatch.setattr(DEPLOY, 'output', output)
+    result = DEPLOY.machine_metadata(topology)
+    assert len(seen) == len(set(seen)) == 3
+    assert set(result) == set(seen)
+
+
+def test_cached_build_requires_matching_source_and_retained_output(tmp_path, monkeypatch):
+    revision, lock_hash = 'a' * 40, 'b' * 64
+    release = '/nix/store/' + 'c' * 32 + '-release'
+    monkeypatch.setattr(DEPLOY, 'BUILDER_STORE', tmp_path / 'store')
+    monkeypatch.setattr(DEPLOY, 'BUILD_RECORDS', tmp_path / 'records')
+    monkeypatch.setattr(DEPLOY, 'identity', lambda _: (revision, lock_hash))
+    physical = DEPLOY.BUILDER_STORE / release.lstrip('/')
+    physical.mkdir(parents=True)
+    (physical / 'release.json').write_text(json.dumps({'schema': 'airlock.machine-release.v1',
+        'profile': 'usb-lab', 'revision': revision, 'lockHash': lock_hash}))
+    directory = DEPLOY.BUILD_RECORDS / revision
+    directory.mkdir(parents=True)
+    (directory / 'release').symlink_to(release)
+    (directory / 'build.json').write_text(json.dumps({'release': release, 'revision': revision, 'lock_hash': lock_hash}))
+    monkeypatch.setattr(DEPLOY, 'output', lambda *_: pytest.fail('release reevaluated'))
+    assert DEPLOY.build_machine_release(revision, lock_hash) == release
+    assert json.loads((directory / 'build.json').read_text())['build_reused'] is True
+    def rebuilding(*_):
+        raise RuntimeError('build required')
+    monkeypatch.setattr(DEPLOY, 'output', rebuilding)
+    (directory / 'release').unlink()
+    with pytest.raises(RuntimeError, match='build required'):
+        DEPLOY.build_machine_release(revision, lock_hash)
+
+
+def test_planned_apply_skips_all_inventories_and_transfers(tmp_path, monkeypatch):
+    revision, lock_hash = 'a' * 40, 'b' * 64
+    release = '/nix/store/' + 'c' * 32 + '-release'
+    transport = '/nix/store/' + 'd' * 32 + '-transport'
+    monkeypatch.setattr(DEPLOY, 'BUILDER_STORE', tmp_path / 'store')
+    monkeypatch.setattr(DEPLOY, 'STATE', tmp_path / 'controller')
+    physical = DEPLOY.BUILDER_STORE / release.lstrip('/')
+    physical.mkdir(parents=True)
+    for name in ['topology.json', 'root-artifacts.json']:
+        (physical / name).write_text('{}')
+    (physical / 'transport').symlink_to(transport)
+    DEPLOY.record(DEPLOY.STATE / 'candidates' / revision / 'plan.json',
+                  {'prepared': 'token', 'source_release': transport})
+    calls = []
+    monkeypatch.setattr(DEPLOY, 'send_prepared', lambda *args: calls.append(args))
+    monkeypatch.setattr(DEPLOY, 'machine_metadata', lambda *_: pytest.fail('inventory queried'))
+    DEPLOY.send_machine_release('apply', release, revision, lock_hash)
+    assert len(calls) == 1
+    assert calls[0][:3] == (release, revision, lock_hash)

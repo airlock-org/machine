@@ -35,7 +35,7 @@ from .state import (
     mark_running_ref,
     switch_current,
 )
-from .views import materialize_view
+from .views import materialize_view, verify_reusable_view
 from .root_images import admit_root_source, verify_generation_root
 
 
@@ -86,6 +86,8 @@ def find_generation(args):
         }
     generation, manifest_path, manifest = max(matches, key=lambda item: item[0])
     verify_generation_root(root, manifest)
+    if manifest.get("store", {}).get("integrity"):
+        verify_reusable_view(root, manifest)
     return {
         "schema": "airlock.closure-store.generation-match.v1",
         "status": "found",

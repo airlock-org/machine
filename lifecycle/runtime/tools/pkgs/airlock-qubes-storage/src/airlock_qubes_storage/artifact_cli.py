@@ -7,6 +7,7 @@ import time
 
 from ._engine.artifacts import (
     SCHEMA_ERROR,
+    SCHEMA_PROBE,
     read_message,
     receive_artifact,
     receive_incremental,
@@ -124,6 +125,8 @@ def send_main(argv=None):
     parser = argparse.ArgumentParser(prog="airlock-pool-send")
     add_prepare_arguments(parser)
     parser.add_argument("--qrexec-client", default="qrexec-client-vm")
+    parser.add_argument("--reuse-generation", action="store_true")
+    parser.add_argument("--path-info-file")
     args = parser.parse_args(argv)
     process = None
     try:
@@ -148,7 +151,40 @@ def send_main(argv=None):
                 time.monotonic() - started - timings["sender_inventory_seconds"])
             return response
 
-        inventory = write_artifact(process.stdin, negotiate=negotiate, **prepare_kwargs(args))
+        if args.reuse_generation:
+            write_message(process.stdin, {
+                "schema": SCHEMA_PROBE, "domain": args.domain, "system": args.system,
+                "closure_source": args.closure_source, "root_source": args.root_source,
+                "kernel_name": args.kernel_name, "source_revision": args.source_revision,
+                "lock_hash": args.lock_hash,
+            })
+            probe = read_receiver_message(process.stdout)
+            if probe.get("schema") != SCHEMA_PROBE:
+                if (probe.get("status") != "passed" or probe.get("domain") != args.domain
+                        or probe.get("system") != args.system or not probe.get("generation_reused")
+                        or probe.get("activated") is not False or probe.get("retained") is not True
+                        or probe.get("root_source") != args.root_source
+                        or probe.get("kernel_name") != args.kernel_name):
+                    raise EngineError("invalid generation reuse response")
+                process.stdin.close()
+                if process.wait():
+                    raise EngineError("generation reuse receiver failed")
+                probe.setdefault("timings", {})["sender_total_seconds"] = time.monotonic() - started
+                print(json.dumps(probe, sort_keys=True))
+                return 0
+            if probe.get("reuse") is not False:
+                raise EngineError("invalid generation reuse response")
+        kwargs = prepare_kwargs(args)
+        if args.path_info_file:
+            # One metadata query for the union of all machine closures.
+            from pathlib import Path
+            from ._engine.core import read_store_paths, physical_store_path
+            all_metadata = json.loads(Path(args.path_info_file).read_text())
+            source = (physical_store_path(args.closure_source, args.physical_store_root)
+                      if args.closure_source.startswith("/nix/store/") else Path(args.closure_source))
+            paths = read_store_paths(source, args.system)
+            kwargs["path_info"] = {path: all_metadata[path] for path in paths}
+        inventory = write_artifact(process.stdin, negotiate=negotiate, **kwargs)
         timings["sender_payload_seconds"] = time.monotonic() - started - sum(timings.values())
         process.stdin.close()
         result = read_receiver_message(process.stdout)

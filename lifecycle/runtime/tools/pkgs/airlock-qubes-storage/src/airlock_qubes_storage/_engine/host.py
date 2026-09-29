@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import subprocess
 import tempfile
+import time
 import sys
 from urllib.parse import quote
 
@@ -164,25 +165,39 @@ def refresh_builder(root, role, host_registration, *, incremental=True):
 
 
 def publish_live(system):
+    timings = {}
+    started = time.monotonic()
     # Temporary Nix root prevents ordinary Nix GC racing with verification and
     # admission. Pool serialization is independent of the Nix GC lock.
     root = Path(POOL)
     with admission_lock(root):
         if (root / "host/boots" / (key(system) + ".json")).exists():
             record = validate_boot(root, system)
+            timings["host_validation_seconds"] = time.monotonic() - started
+            started = time.monotonic()
             seed_generation_metadata(record)
+            timings["host_database_seconds"] = time.monotonic() - started
+            started = time.monotonic()
             refresh_builder(root, "sys-ctrl", Path(record["registration"]).read_text())
-            return record
+            timings["controller_base_seconds"] = time.monotonic() - started
+            return dict(record, timings=timings)
     temporary = Path(HOST) / "publishing"
     temporary.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(dir=temporary) as directory:
         command("nix-store", "--add-root", directory + "/root", "--realise", system)
         registration = publication_registration(system)
+        timings["host_registration_seconds"] = time.monotonic() - started
         with admission_lock(root):
+            started = time.monotonic()
             record = publish(root, system, registration)
+            timings["host_pool_publication_seconds"] = time.monotonic() - started
+            started = time.monotonic()
             seed_generation_metadata(record)
+            timings["host_database_seconds"] = time.monotonic() - started
+            started = time.monotonic()
             refresh_builder(root, "sys-ctrl", registration)
-            return record
+            timings["controller_base_seconds"] = time.monotonic() - started
+            return dict(record, timings=timings)
 
 
 def seed_generation_metadata(record):
@@ -287,7 +302,7 @@ def allocated(path):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("action", choices=("publish", "select", "seal-boot", "retire", "status", "recover",
+    parser.add_argument("action", choices=("validate", "publish", "select", "seal-boot", "retire", "status", "recover",
                                            "checkpoint-machine", "bind-machine", "install-boot"))
     parser.add_argument("system", nargs="?")
     args = parser.parse_args()
@@ -315,6 +330,11 @@ def main():
                         return
             host_machine.save(POOL, HOST, host_machine.MACHINE, record)
         result = {"bound": record["system"]}
+    elif args.action == "validate":
+        if not args.system:
+            parser.error("system is required")
+        with admission_lock(POOL):
+            result = validate_boot(POOL, args.system)
     elif args.action == "publish":
         result = publish_live(args.system)
     elif args.action == "select":

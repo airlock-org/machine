@@ -3,6 +3,7 @@
 
 import argparse
 import gzip
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -30,6 +31,51 @@ class CountingReader:
         return data
 
 
+def prepared_record(candidate, coordinator, release, revision, lock_hash):
+    checked = subprocess.run([coordinator, "prepared-check", candidate], check=True,
+                             text=True, capture_output=True)
+    result = json.loads(checked.stdout)
+    payload = {"candidate": candidate, "coordinator": coordinator, "release": release,
+               "revision": revision, "lock_hash": lock_hash, **result}
+    token = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+    directory = STATE / "prepared"
+    directory.mkdir(parents=True, exist_ok=True)
+    target = directory / (token + ".json")
+    temporary = directory / (token + ".new")
+    with temporary.open("w") as stream:
+        json.dump(payload, stream, sort_keys=True)
+        stream.flush()
+        os.fsync(stream.fileno())
+    temporary.replace(target)
+    return token, payload
+
+
+def apply_prepared(header):
+    token = header.get("prepared")
+    if not isinstance(token, str) or not re.fullmatch(r"[0-9a-f]{64}", token):
+        raise ValueError("invalid prepared candidate token")
+    saved = json.loads((STATE / "prepared" / (token + ".json")).read_text())
+    if hashlib.sha256(json.dumps(saved, sort_keys=True).encode()).hexdigest() != token:
+        raise ValueError("prepared candidate record checksum mismatch")
+    if any(saved[key] != header[key] for key in ("release", "revision", "lock_hash")):
+        raise ValueError("prepared candidate identity mismatch")
+    started = time.monotonic()
+    checked = json.loads(subprocess.run(
+        [saved["coordinator"], "prepared-check", saved["candidate"]],
+        check=True, text=True, capture_output=True).stdout)
+    if checked != {key: saved[key] for key in ("plan", "state")}:
+        raise ValueError("prepared candidate is stale; run machine-plan again")
+    unit = "airlock-machine-deploy-" + uuid.uuid4().hex[:12]
+    subprocess.run(["systemd-run", "--unit=" + unit, "--collect", "--property=Type=exec",
+                    saved["coordinator"], "apply", saved["candidate"],
+                    "--expected-state", saved["state"]], check=True, stdout=subprocess.DEVNULL)
+    print(json.dumps({"schema": SCHEMA, "release": saved["candidate"],
+                      "source_release": saved["release"], "plan": saved["plan"],
+                      "prepared": token, "prepared_reused": True, "unit": unit,
+                      "paths_transferred": 0, "nar_bytes": 0, "compressed_bytes": 0,
+                      "timings": {"prepared_check_seconds": time.monotonic() - started}}), flush=True)
+
+
 def receive(action):
     started = time.monotonic()
     line = sys.stdin.buffer.readline(MAX_HEADER + 1)
@@ -48,6 +94,11 @@ def receive(action):
         raise ValueError("invalid lock hash")
     if header.get("profile") != "usb-lab":
         raise ValueError("unsupported machine profile")
+    if "prepared" in header:
+        if action != "apply":
+            raise ValueError("prepared tokens are only accepted for apply")
+        apply_prepared(header)
+        return
     paths = header.get("paths")
     if not isinstance(paths, dict) or release not in paths or len(paths) > 100000:
         raise ValueError("invalid release inventory")
@@ -113,7 +164,8 @@ def receive(action):
     bound = subprocess.run([coordinator, "machine-bind", release, "-"],
                            input=json.dumps(header.get("receipts")),
                            check=True, text=True, capture_output=True)
-    candidate = json.loads(bound.stdout)["candidate"]
+    binding = json.loads(bound.stdout)
+    candidate = binding["candidate"]
     binding_seconds = time.monotonic() - started
     started = time.monotonic()
     plan = subprocess.run([coordinator, "plan", candidate], check=True,
@@ -133,6 +185,13 @@ def receive(action):
                           "import_finish_seconds": import_finish_seconds,
                           "binding_validation_seconds": binding_seconds,
                           "plan_and_pin_seconds": time.monotonic() - started}}
+    if action == "plan":
+        prepare_started = time.monotonic()
+        token, prepared = prepared_record(candidate, coordinator, release, revision, lock_hash)
+        result["prepared"] = token
+        result["plan"] = prepared["plan"]
+        result["timings"]["prepared_record_seconds"] = time.monotonic() - prepare_started
+    result["timings"].update(binding.get("timings", {}))
     if action == "apply":
         unit = "airlock-machine-deploy-" + uuid.uuid4().hex[:12]
         subprocess.run(["systemd-run", "--unit=" + unit, "--collect",

@@ -187,6 +187,30 @@ class Coordinator:
         result["revision"] = desired["revision"]
         return result
 
+    def preparation_state(self):
+        """Cheap mutable-state guard, checked again under the apply lock."""
+        latest = self.state / "latest.json"
+        live = self.command("nix-store", "--gc", "--print-live")
+        payload = {"selection": self.pointer(),
+                   "latest": read_json(latest) if latest.exists() else None,
+                   "running": sorted(self.running()),
+                   "host_live_paths": sorted(live.splitlines()),
+                   "booted_host": str(Path("/run/current-system").resolve())}
+        return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+
+    def check_prepared(self, release):
+        with self.locked():
+            self.releases.require_no_pruning()
+            self.releases.require_available_release(release)
+            manifest, topology = load_release(release)
+            for name, generation in manifest.get("stagedGenerations", {}).items():
+                validate_staged_generation(self.generation_info(name, generation), name,
+                    generation, topology["domains"][name]["backend"], manifest)
+            record = json.loads(self.command("airlock-host-store", "validate", manifest["host"]))
+            if record != manifest.get("hostPool"):
+                raise DeploymentError("prepared host view differs from release")
+            return {"plan": self.inspect(release), "state": self.preparation_state()}
+
     def generation_info(self, domain, generation):
         result = json.loads(
             self.command(
@@ -221,15 +245,18 @@ class Coordinator:
             roots = read_json(Path(release) / "root-artifacts.json")
             if not isinstance(roots, dict) or set(roots) != set(domains):
                 raise DeploymentError("root artifact catalog differs from release guests")
-            manifest = dict(manifest, guestRootArtifacts=roots)
+            manifest = dict(manifest, guestRootArtifacts=roots, guestProvenance={})
             staged = {}
+            timings = {}
+            started = time.monotonic()
             for name, backend in domains.items():
                 receipt = receipts[name]
                 domain, generation, revision, lock_hash = validate_admission_receipt(receipt)
-                if (domain, revision, lock_hash) != (
-                    name, manifest["revision"], manifest["lockHash"]
-                ):
+                if domain != name:
+                    raise DeploymentError("admission domain differs from release")
+                if (revision, lock_hash) != (manifest["revision"], manifest["lockHash"]) and not receipt.get("generation_reused"):
                     raise DeploymentError("admission provenance differs from release")
+                manifest["guestProvenance"][name] = {"revision": revision, "lockHash": lock_hash}
                 info = self.generation_info(name, generation)
                 validate_staged_generation(info, name, generation, backend, manifest)
                 if info.get("approval", {}).get("approved_by") != "sys-ctrl":
@@ -243,12 +270,14 @@ class Coordinator:
             # Verify and retain dom0's objects before a candidate is reviewable.
             # This also publishes an approved controller base for its next
             # stopped setup; the running controller keeps its existing view.
-            host_pool = json.loads(self.command("airlock-host-store", "publish", manifest["host"]))
+            timings["guest_binding_seconds"] = time.monotonic() - started
+            started = time.monotonic()
+            publication = json.loads(self.command("airlock-host-store", "publish", manifest["host"]))
+            timings["host_publication_seconds"] = time.monotonic() - started
+            timings.update(publication.pop("timings", {}))
+            host_pool = publication
             manifest = dict(manifest, hostPool=host_pool)
-            manifest = dict(manifest, stagedGenerations=staged, sourceRelease=str(release),
-                            guestProvenance={name: {"revision": manifest["revision"],
-                                                    "lockHash": manifest["lockHash"]}
-                                             for name in staged})
+            manifest = dict(manifest, stagedGenerations=staged, sourceRelease=str(release))
             identity = hashlib.sha256(json.dumps(
                 {"release": manifest, "topology": topology}, sort_keys=True
             ).encode()).hexdigest()
@@ -277,6 +306,7 @@ class Coordinator:
                         os.close(fd)
                 finally:
                     shutil.rmtree(temporary, ignore_errors=True)
+            self.binding_timings = timings
             return candidate
 
     def guest_candidate(self, receipt):
@@ -639,13 +669,15 @@ class Coordinator:
             observed[name] = {"selected": selected, "running": actual}
         return observed
 
-    def apply(self, release, recover=False) -> DeploymentRecord:
+    def apply(self, release, recover=False, expected_state=None) -> DeploymentRecord:
         release = Path(release).resolve()
         self.releases.require_available_release(release)
         manifest, topology = load_release(release)
         with self.locked():
             self.releases.require_no_pruning()
             self.releases.require_available_release(release)
+            if expected_state is not None and self.preparation_state() != expected_state:
+                raise DeploymentError("prepared candidate is stale; run machine-plan again")
             latest = self.state / "latest.json"
             if latest.exists() and not recover:
                 existing = read_json(latest)
@@ -748,7 +780,7 @@ class Coordinator:
                     self.pin("host-" + transaction, manifest.get("sourceRelease", manifest["host"]))
                 # An applied candidate is now protected by its transaction root.
                 (self.state / "roots" / ("pending-" + release.name)).unlink(missing_ok=True)
-                self.command("airlock-host-store", "publish", manifest["host"])
+                self.command("airlock-host-store", "validate" if manifest.get("hostPool") else "publish", manifest["host"])
                 self.install_boot_hook(release, baseline)
                 self.stage(release, topology, changes["stage"], directory)
                 trash_plan = [

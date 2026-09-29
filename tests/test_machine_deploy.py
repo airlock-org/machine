@@ -1616,3 +1616,24 @@ def test_verify_rejects_pool_identity_mismatch_even_when_system_matches(tmp_path
                 kernel_name=backend['kernel']['name'], closure_source=backend['store']['source'])
     damage = None
     assert coordinator.verify(topology, {'usr-home'})['usr-home']['running'] == backend['system']['source']
+
+
+def test_reused_guest_keeps_actual_provenance_in_new_release(machine, tmp_path, topology):
+    release, receipts = direct_candidate_fixture(machine, tmp_path, topology)
+    receipts['usr-home'].update(generation_reused=True, source_revision='f' * 40)
+    machine.generation_details['provenance']['source_revision'] = 'f' * 40
+    candidate = machine.machine_candidate(release, receipts)
+    manifest, _ = deploy.load_release(candidate)
+    assert manifest['guestProvenance']['usr-home']['revision'] == 'f' * 40
+    assert manifest['revision'] != 'f' * 40
+    machine.generation_details['system'] = '/nix/store/wrong-system'
+    with pytest.raises(deploy.DeploymentError, match='identity mismatch'):
+        machine.machine_candidate(release, receipts)
+
+
+def test_prepared_apply_rechecks_state_under_lock_before_mutation(machine, monkeypatch):
+    monkeypatch.setattr(machine, 'preparation_state', lambda: 'changed')
+    machine.calls.clear()
+    with pytest.raises(deploy.DeploymentError, match='stale'):
+        machine.apply(machine.initial, expected_state='planned')
+    assert machine.calls == []

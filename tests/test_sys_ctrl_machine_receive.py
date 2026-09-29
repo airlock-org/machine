@@ -80,9 +80,10 @@ def test_imported_release_is_checked_before_coordinator_action(monkeypatch, tmp_
 
     def run(args, **_kwargs):
         calls.append(args)
-        return SimpleNamespace(stdout=json.dumps(
-            {"candidate": str(tmp_path / "candidate")} if args[1] == "machine-bind"
-            else {"status": "ready"}) + "\n")
+        result = ({"candidate": str(tmp_path / "candidate")} if args[1] == "machine-bind"
+                  else {"plan": {"status": "ready"}, "state": "stable"} if args[1] == "prepared-check"
+                  else {"status": "ready"})
+        return SimpleNamespace(stdout=json.dumps(result) + "\n")
 
     monkeypatch.setattr(RECEIVER.subprocess, "run", run)
     RECEIVER.receive(action)
@@ -96,7 +97,8 @@ def test_imported_release_is_checked_before_coordinator_action(monkeypatch, tmp_
         assert calls[4][0] == "systemd-run"
         assert calls[4][-3:] == [coordinator, "apply", candidate]
     else:
-        assert len(calls) == 4
+        assert calls[4] == [coordinator, "prepared-check", candidate]
+        assert len(calls) == 5
 
 
 def test_machine_failure_returns_bounded_coordinator_error(monkeypatch, capsys):
@@ -113,3 +115,39 @@ def test_machine_failure_returns_bounded_coordinator_error(monkeypatch, capsys):
     assert reply["schema"] == RECEIVER.SCHEMA
     assert "specific admission failure" in reply["error"]
     assert len(reply["error"]) <= 4096
+
+
+@pytest.mark.parametrize('change', ['none', 'state', 'plan', 'identity', 'tamper', 'pruned'])
+def test_prepared_apply_checks_state_without_import_or_binding(monkeypatch, tmp_path, capsys, change):
+    monkeypatch.setattr(RECEIVER, 'STATE', tmp_path)
+    checked = {'plan': {'changed': ['sys-dev']}, 'state': 'before'}
+    calls = []
+    def run(args, **kwargs):
+        calls.append(args)
+        if change == 'pruned' and len(calls) > 1 and args[1] == 'prepared-check':
+            raise RECEIVER.subprocess.CalledProcessError(1, args)
+        return SimpleNamespace(stdout=json.dumps(checked))
+    monkeypatch.setattr(RECEIVER.subprocess, 'run', run)
+    monkeypatch.setattr(RECEIVER.subprocess, 'Popen', lambda *_a, **_k: pytest.fail('import started'))
+    token, saved = RECEIVER.prepared_record('/candidate', '/coordinator', '/release', 'r', 'l')
+    header = {'prepared': token, 'release': '/release', 'revision': 'r', 'lock_hash': 'l'}
+    if change == 'state':
+        checked['state'] = 'after'
+    if change == 'plan':
+        checked['plan'] = {'changed': ['sys-gui']}
+    if change == 'identity':
+        header['revision'] = 'other'
+    if change == 'tamper':
+        saved['coordinator'] = '/malicious'
+        (tmp_path / 'prepared' / (token + '.json')).write_text(json.dumps(saved))
+    if change == 'none':
+        RECEIVER.apply_prepared(header)
+        result = json.loads(capsys.readouterr().out)
+        assert result['prepared_reused'] is True
+        assert result['paths_transferred'] == 0
+        assert calls[-1][-2:] == ['--expected-state', 'before']
+    else:
+        with pytest.raises((ValueError, RECEIVER.subprocess.CalledProcessError)):
+            RECEIVER.apply_prepared(header)
+        assert not any(call[0] == 'systemd-run' for call in calls)
+    assert not any('machine-bind' in call for call in calls)

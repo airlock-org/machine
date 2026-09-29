@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 import subprocess
@@ -19,6 +20,7 @@ from .core import (
     dm_path,
     fail,
     fsync_dir,
+    hash_file,
     maybe_failpoint,
     read_json,
     remove_path,
@@ -34,11 +36,57 @@ from .objects import ensure_tar_eof_extent
 from .pool import ensure_pool
 from .segments import (
     object_blob_meta_path,
+    segment_blob_path,
+    tar_eof_meta_path,
     object_extent_from_meta,
     read_segment_meta,
     validate_segment_id,
 )
 from .state import generation_is_committed, generation_manifest_path
+
+
+def blob_layout_hash(blob_map):
+    # Compaction changes physical locations, never the logical tar stream.
+    layout = {"logical_size": blob_map.get("logical_size"), "extents": [
+        {key: extent.get(key) for key in ("object", "object_sha256", "logical_offset", "length")}
+        for extent in blob_map.get("extents", [])]}
+    return hashlib.sha256(json.dumps(layout, sort_keys=True).encode()).hexdigest()
+
+
+def view_integrity(store):
+    return {"metadata_sha256": hash_file(store["canonical_metadata_image"]),
+            "layout_sha256": blob_layout_hash(read_json(store["canonical_blob_map"]))}
+
+
+def verify_reusable_view(root, manifest):
+    """Check view metadata and backing ranges without rereading package bytes."""
+    store = manifest["store"]
+    for key in ("canonical_metadata_image", "canonical_blob_map"):
+        path = Path(store[key])
+        if not path.is_relative_to(root) or ".." in path.parts or path.is_symlink():
+            fail("retained guest view escapes pool")
+    if view_integrity(store) != store.get("integrity"):
+        fail("retained guest view checksum mismatch")
+    blob_map = read_json(store["canonical_blob_map"])
+    paths = segment_path_map_from_blob_map(blob_map)
+    sizes = {}
+    for extent in blob_map.get("extents", []):
+        path = Path(paths[extent["segment_id"]])
+        if path != segment_blob_path(root, extent["segment_id"]):
+            fail("retained guest backing identity mismatch")
+        entry = extent["object"]
+        meta = read_json(tar_eof_meta_path(root) if entry == ".tar-eof" else object_blob_meta_path(root, entry))
+        wanted = (extent["segment_id"], extent["segment_offset"], extent["length"], extent["object_sha256"])
+        if not any(wanted == (loc["segment_id"], loc["segment_offset"], loc["size"], loc["sha256"])
+                   for loc in [meta, *meta.get("locations", [])]):
+            fail("retained guest extent differs from admitted object")
+        if not path.is_relative_to(root) or ".." in path.parts or path.is_symlink():
+            fail("retained guest backing escapes pool")
+        if path not in sizes:
+            sizes[path] = path.stat().st_size
+        offset, length = extent["segment_offset"], extent["length"]
+        if type(offset) is not int or type(length) is not int or offset < 0 or length <= 0 or offset + length > sizes[path]:
+            fail("retained guest backing is truncated")
 
 
 def segment_path_map_from_blob_map(blob_map):

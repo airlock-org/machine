@@ -35,12 +35,13 @@ from .objects import admit_prebuilt_object, create_tar_fragment, reusable_object
 from .pool import admission_lock, ensure_pool
 from .segments import configured_segment_target_bytes
 from .state import current_generation, generation_is_committed, generation_manifest_path
-from .views import materialize_view
+from .views import materialize_view, view_integrity, verify_reusable_view
 from ..root_format import encode, validate_descriptor
 from .root_images import install_root, reusable_root, source_artifact, verify_generation_root
 
 SCHEMA_ARTIFACT = "airlock.pool-artifact.full.v2"
-SCHEMA_INCREMENTAL = "airlock.pool-artifact.v3"
+SCHEMA_INCREMENTAL = "airlock.pool-artifact.v4"
+SCHEMA_PROBE = "airlock.pool-generation-probe.v1"
 SCHEMA_REQUEST = "airlock.pool-artifact-request.v2"
 SCHEMA_ERROR = "airlock.pool-artifact-error.v1"
 MAX_MANIFEST_BYTES = 64 * 1024 * 1024
@@ -158,7 +159,7 @@ def write_artifact(
                 "references": info.get("references", []),
                 "nar_hash": info.get("narHash", ""),
                 "nar_size": int(info.get("narSize", 0)),
-                "tree_hash": tree_hash(source),
+                **({} if negotiate else {"tree_hash": tree_hash(source)}),
                 "fragment": f"objects/{store_entry(logical_path)}.tar",
             }
         )
@@ -194,6 +195,18 @@ def write_artifact(
             fail("invalid missing-object request")
         missing = set(requested)
         missing_root = request["missing_root"]
+        reused_hashes = request.get("reused_tree_hashes", {})
+        if (not isinstance(reused_hashes, dict)
+                or set(reused_hashes) != set(paths) - missing
+                or any(not isinstance(value, str) or not LOCK_HASH_RE.fullmatch(value)
+                       for value in reused_hashes.values())):
+            fail("invalid reused-object identities")
+        # The pool owns already admitted bytes. Only additions require reading
+        # the builder's filesystem; immutable shared packages are never rehashed.
+        for record in objects:
+            path = record["path"]
+            record["tree_hash"] = (tree_hash(physical_store_path(path, physical_store_root))
+                                   if path in missing else reused_hashes[path])
     with tempfile.TemporaryDirectory(prefix="airlock-pool-artifact-") as temp_name:
         temp = Path(temp_name)
         with tarfile.open(
@@ -419,8 +432,8 @@ def _validate_received(
             fail(f"pool artifact fragment is missing: {path}")
         if path in objects:
             fail(f"duplicate pool artifact object: {path}")
-        if not isinstance(item.get("tree_hash"), str) or not LOCK_HASH_RE.fullmatch(
-            item["tree_hash"]
+        if not (inventory and manifest["schema"] == SCHEMA_INCREMENTAL and "tree_hash" not in item) and (
+            not isinstance(item.get("tree_hash"), str) or not LOCK_HASH_RE.fullmatch(item["tree_hash"])
         ):
             fail(f"invalid object tree hash: {path}")
         if not inventory:
@@ -518,7 +531,8 @@ def _admit_received(manifest, fragments, root, approved_by, *, reused=None, root
     # Incremental negotiation has already checked the payload identities.
     for existing_path in sorted(generations_dir.glob("*/manifest.json")):
         existing = read_json(existing_path)
-        if (not generation_is_committed(root, existing)
+        if (not existing.get("store", {}).get("integrity")
+                or not generation_is_committed(root, existing)
                 or existing.get("system") != system
                 or existing.get("root", {}).get("source") != root_source
                 or existing.get("root", {}).get("artifact") != root_artifact
@@ -646,6 +660,7 @@ def _admit_received(manifest, fragments, root, approved_by, *, reused=None, root
                 "canonical_image": view["canonical_image"],
                 "metadata_image": view["metadata_image"],
                 "canonical_metadata_image": view["canonical_metadata_image"],
+                "integrity": view_integrity(view),
                 "blob_map": view["blob_map"],
                 "canonical_blob_map": view["canonical_blob_map"],
                 "object_refs": view.get("object_refs"),
@@ -762,10 +777,68 @@ def read_message(stream):
         fail("invalid pool protocol JSON")
 
 
+def reuse_generation(root, probe, expected_domain, approved_by):
+    """Reuse an exact immutable closure; keep its original admission provenance."""
+    if probe.get("domain") != expected_domain:
+        fail("pool artifact target mismatch")
+    _validate_store_path(probe.get("system"))
+    _validate_provenance(probe.get("source_revision"), probe.get("lock_hash"))
+    for path in sorted((root / "domains" / expected_domain / "generations").glob("*/manifest.json"),
+                       key=lambda p: int(p.parent.name), reverse=True):
+        manifest = read_json(path)
+        store = manifest.get("store", {})
+        if (not store.get("integrity")
+                or not generation_is_committed(root, manifest)
+                or manifest.get("system") != probe["system"]
+                or store.get("source") != probe.get("closure_source")
+                or manifest.get("root", {}).get("source") != probe.get("root_source")
+                or manifest.get("kernel", {}).get("name") != probe.get("kernel_name")
+                or manifest.get("approval") != {"approved_by": approved_by,
+                    "source": probe.get("closure_source"), "transport": "qrexec"}
+                or manifest.get("verification", {}).get("status") != "passed"
+                or manifest.get("retention", {}).get("retain") is not True):
+            continue
+        # Check committed metadata and backing availability without rereading
+        # every package. Explicit pool scrubbing remains responsible for bit rot.
+        verify_reusable_view(root, manifest)
+        if any(reusable_object(root, item) is None for item in store["paths"]):
+            fail("retained guest object is missing")
+        verify_generation_root(root, manifest)
+        artifact = manifest["root"]["artifact"]
+        image = reusable_root(root, artifact)
+        return {
+            "schema": SCHEMA_ADMISSION, "status": "passed", "transport": "qrexec",
+            "domain": expected_domain, "generation": manifest["generation"],
+            "previous_generation": manifest.get("previous_generation"),
+            "current_generation": current_generation(root, expected_domain),
+            "activated": False, "retained": True, "manifest": str(path),
+            "system": manifest["system"], "root_source": probe["root_source"],
+            "kernel_name": probe["kernel_name"], "closure_hash": store["closure_hash"],
+            "objects_total": len(store["paths"]), "objects_reused": len(store["paths"]),
+            "objects_admitted": 0, "objects_transferred": 0, "payload_bytes_transferred": 0,
+            "root_artifact": artifact, "root_reused": True,
+            "root_payload_bytes_transferred": 0, "root_logical_bytes": artifact["logical_bytes"],
+            "root_allocated_bytes": image.stat().st_blocks * 512,
+            "source_revision": manifest["provenance"]["source_revision"],
+            "lock_hash": manifest["provenance"]["lock_hash"], "generation_reused": True,
+        }
+    return None
+
+
 def receive_incremental(stream, output, *, pool_root, expected_domain, approved_by):
     """Keep reusable objects protected from GC until generation publication."""
     expected_domain = safe_domain_name(expected_domain)
     inventory = read_message(stream)
+    if isinstance(inventory, dict) and inventory.get("schema") == SCHEMA_PROBE:
+        root = ensure_pool(pool_root)
+        started = time.monotonic()
+        with admission_lock(root):
+            receipt = reuse_generation(root, inventory, expected_domain, approved_by)
+            if receipt is not None:
+                receipt["timings"] = {"generation_reuse_seconds": time.monotonic() - started}
+                return receipt
+        write_message(output, {"schema": SCHEMA_PROBE, "reuse": False})
+        inventory = read_message(stream)
     if not isinstance(inventory, dict) or inventory.get("schema") != SCHEMA_INCREMENTAL:
         fail("unsupported incremental inventory schema")
     _, _, objects = _validate_received(inventory, {}, expected_domain, inventory=True)
@@ -781,7 +854,7 @@ def receive_incremental(stream, output, *, pool_root, expected_domain, approved_
         for path, record in objects.items():
             existing = reusable_object(root, path)
             if existing is not None:
-                if existing["tree_hash"] != record["tree_hash"]:
+                if "tree_hash" in record and existing["tree_hash"] != record["tree_hash"]:
                     fail(f"existing object hash mismatch for {path}")
                 reused[path] = existing
         root_descriptor = inventory.get("root_artifact")
@@ -798,6 +871,7 @@ def receive_incremental(stream, output, *, pool_root, expected_domain, approved_
                 "schema": SCHEMA_REQUEST,
                 "missing": sorted(set(objects) - set(reused)),
                 "missing_root": root_descriptor is not None and not root_reused,
+                "reused_tree_hashes": {path: obj["tree_hash"] for path, obj in reused.items()},
             },
         )
         staging = Path(tempfile.mkdtemp(prefix="incoming-", dir=root / "tmp"))
@@ -823,6 +897,7 @@ def receive_incremental(stream, output, *, pool_root, expected_domain, approved_
                     key: value
                     for key, value in record.items()
                     if key not in ("fragment_size", "fragment_sha256")
+                    and (key != "tree_hash" or "tree_hash" in objects.get(record["path"], {}))
                 }
                 for record in manifest.get("objects", [])
             ]

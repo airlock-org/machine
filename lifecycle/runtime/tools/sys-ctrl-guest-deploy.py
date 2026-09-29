@@ -20,6 +20,8 @@ TARGETS = {"sys-dev", "sys-ctrl", "sys-gui", "sys-net", "sys-firewall", "usr-hom
 REPO = Path("/home/user/dev/airlock-machine")
 MACHINE_SCHEMA = "airlock.sys-ctrl-machine-release.v2"
 STATE = Path.home() / ".local/share/airlock/controller"
+BUILDER_STORE = Path("/rw/airlock-builder/merged")
+BUILD_RECORDS = Path.home() / ".local/share/airlock/machine-deploy"
 
 
 def record(path, value):
@@ -182,9 +184,26 @@ def serve():
 
 def build_machine_release(revision, lock_hash):
     started = time.monotonic()
+    build_record = BUILD_RECORDS / revision / "build.json"
+    if build_record.exists():
+        saved = json.loads(build_record.read_text())
+        release = saved.get("release", "")
+        physical = BUILDER_STORE / release.lstrip("/")
+        if (saved.get("revision") == revision and saved.get("lock_hash") == lock_hash
+                and (physical / "release.json").is_file()
+                and (build_record.parent / "release").is_symlink()
+                and os.readlink(build_record.parent / "release") == release):
+            manifest = json.loads((physical / "release.json").read_text())
+            if (manifest.get("schema") == "airlock.machine-release.v1"
+                    and manifest.get("profile") == "usb-lab"
+                    and manifest.get("revision") == revision and manifest.get("lockHash") == lock_hash
+                    and identity(REPO) == (revision, lock_hash)):
+                saved.update(build_seconds=time.monotonic() - started, build_reused=True)
+                record(build_record, saved)
+                return release
     release = output("airlock-sys-dev-machine-build", "build",
                      ".#airlock-machine-release-usb-lab")
-    physical = Path("/rw/airlock-builder/merged") / release.lstrip("/")
+    physical = BUILDER_STORE / release.lstrip("/")
     manifest = json.loads((physical / "release.json").read_text())
     if (manifest.get("schema") != "airlock.machine-release.v1"
             or manifest.get("revision") != revision
@@ -193,11 +212,11 @@ def build_machine_release(revision, lock_hash):
         raise ValueError("built release provenance differs from submitted source")
     if identity(REPO) != (revision, lock_hash):
         raise ValueError("controller checkout changed during release build")
-    record = Path.home() / ".local/share/airlock/machine-deploy" / revision
-    record.mkdir(parents=True, exist_ok=True)
+    directory = BUILD_RECORDS / revision
+    directory.mkdir(parents=True, exist_ok=True)
     subprocess.run(["airlock-config-nix", "build", release,
-                    "--out-link", str(record / "release")], check=True)
-    (record / "build.json").write_text(json.dumps({
+                    "--out-link", str(directory / "release")], check=True)
+    (directory / "build.json").write_text(json.dumps({
         "schema": MACHINE_SCHEMA, "release": release,
         "build_seconds": time.monotonic() - started,
         "revision": revision, "lock_hash": lock_hash,
@@ -216,18 +235,53 @@ def machine_response(data, stage):
     return result
 
 
-def send_machine_release(action, release, revision, lock_hash):
-    started = time.monotonic()
-    physical = Path("/rw/airlock-builder/merged") / release.lstrip("/")
-    topology = json.loads((physical / "topology.json").read_text())
-    roots = json.loads((physical / "root-artifacts.json").read_text())
+def send_prepared(release, revision, lock_hash, saved):
+    header = {"schema": MACHINE_SCHEMA, "release": saved["source_release"],
+              "revision": revision, "lock_hash": lock_hash, "profile": "usb-lab",
+              "prepared": saved["prepared"]}
+    result = subprocess.run(["qrexec-client-vm", "dom0", "airlock.Ctrl.MachineApply"],
+                            input=json.dumps(header) + "\n", text=True, capture_output=True)
+    payload = machine_response(result.stdout, "prepared apply")
+    if result.returncode:
+        raise ValueError("prepared machine apply failed")
+    payload["build_seconds"] = 0
+    record(STATE / "candidates" / revision / "apply.json", payload)
+    print(json.dumps(payload, sort_keys=True))
+
+
+def machine_metadata(topology):
+    """Query each unique store path once for the whole submission."""
+    paths = set()
+    for domain in topology["domains"].values():
+        backend = domain["backend"]
+        if backend["type"] != "nix-closure":
+            continue
+        source = BUILDER_STORE / backend["store"]["source"].lstrip("/")
+        candidates = [source / "store-paths", source / "closure/store-paths"] if source.is_dir() else [source]
+        closure = next((path for path in candidates if path.is_file()), None)
+        if closure is None:
+            raise ValueError("machine closure is missing store-paths")
+        paths.update(line.strip() for line in closure.read_text().splitlines() if line.strip())
+        paths.add(backend["system"]["source"])
+    metadata = {}
+    # Bound argv length for large machines, without querying duplicates.
+    paths = sorted(paths)
+    for offset in range(0, len(paths), 512):
+        raw = json.loads(output("airlock-config-nix", "path-info", "--json", *paths[offset:offset+512]))
+        metadata.update({entry["path"]: entry for entry in raw} if isinstance(raw, list) else raw)
+    if set(metadata) != set(paths):
+        raise ValueError("machine package metadata differs from requested paths")
+    return metadata
+
+
+def admit_machine_guests(topology, roots, revision, lock_hash, metadata_file):
     receipts = {}
     for name, domain in sorted(topology["domains"].items()):
         backend = domain["backend"]
         if backend["type"] != "nix-closure":
             continue
         receipt = json.loads(output(
-            "airlock-pool-send", "--domain", name,
+            "airlock-pool-send", "--reuse-generation", "--path-info-file", str(metadata_file), "--domain", name,
             "--system", backend["system"]["source"],
             "--closure-source", backend["store"]["source"],
             "--root-source", backend["root"]["source"],
@@ -238,6 +292,29 @@ def send_machine_release(action, release, revision, lock_hash):
             raise ValueError("admitted root differs from built release")
         receipts[name] = receipt
         record(STATE / "candidates" / revision / "admissions.json", receipts)
+    return receipts
+
+
+def send_machine_release(action, release, revision, lock_hash):
+    started = time.monotonic()
+    physical = BUILDER_STORE / release.lstrip("/")
+    topology = json.loads((physical / "topology.json").read_text())
+    roots = json.loads((physical / "root-artifacts.json").read_text())
+    plan_record = STATE / "candidates" / revision / "plan.json"
+    if action == "apply" and plan_record.exists():
+        saved = json.loads(plan_record.read_text())
+        if (saved.get("prepared") and saved.get("source_release") == os.readlink(physical / "transport")):
+            send_prepared(release, revision, lock_hash, saved)
+            return
+    receipts = {}
+    metadata_started = time.monotonic()
+    metadata = machine_metadata(topology)
+    metadata_seconds = time.monotonic() - metadata_started
+    # Operation-scoped metadata is never reused across builder mutations.
+    with tempfile.TemporaryDirectory(prefix="airlock-machine-metadata-") as metadata_dir:
+        metadata_file = Path(metadata_dir) / "paths.json"
+        metadata_file.write_text(json.dumps(metadata))
+        receipts = admit_machine_guests(topology, roots, revision, lock_hash, metadata_file)
     transport = os.readlink(physical / "transport")
     raw = json.loads(output("airlock-config-nix", "path-info", "--recursive", "--json", transport))
     metadata = {entry["path"]: entry for entry in raw} if isinstance(raw, list) else raw
@@ -275,11 +352,12 @@ def send_machine_release(action, release, revision, lock_hash):
         if receiver.wait():
             raise ValueError("machine release transfer or dom0 validation failed")
         result["elapsed_seconds"] = time.monotonic() - started
-        build_record = Path.home() / ".local/share/airlock/machine-deploy" / revision / "build.json"
+        result.setdefault("timings", {})["machine_metadata_seconds"] = metadata_seconds
+        build_record = BUILD_RECORDS / revision / "build.json"
         result["build_seconds"] = json.loads(build_record.read_text())["build_seconds"]
         result["guest_transfer"] = {
             name: {key: receipt.get(key) for key in
-                   ("objects_total", "objects_reused", "objects_transferred", "payload_bytes_transferred",
+                   ("generation_reused", "objects_total", "objects_reused", "objects_transferred", "payload_bytes_transferred",
                     "root_artifact", "root_reused", "root_payload_bytes_transferred",
                     "root_logical_bytes", "root_allocated_bytes", "timings")}
             for name, receipt in receipts.items()

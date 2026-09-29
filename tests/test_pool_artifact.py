@@ -904,3 +904,110 @@ def test_sender_cli_negotiates_and_prints_only_final_response(
     assert response["objects_transferred"] == 0
     assert response["objects_reused"] == 2
     assert response["activated"] is False
+
+
+def test_reused_packages_are_not_read_before_or_after_negotiation(artifact_input, monkeypatch):
+    receive(artifact_input)
+    monkeypatch.setattr(artifacts, 'tree_hash', lambda *_: pytest.fail('existing packages were read'))
+    result, request, _ = incremental_exchange(artifact_input)
+    assert result['objects_transferred'] == 0
+    assert set(request['reused_tree_hashes']) == {artifact_input['common'], artifact_input['system']}
+
+
+def generation_probe(case, **changes):
+    probe = {key: str(case['kwargs'][key]) for key in
+             ('domain', 'system', 'closure_source', 'root_source', 'kernel_name', 'source_revision', 'lock_hash')}
+    probe.update(schema=artifacts.SCHEMA_PROBE, source_revision='f' * 40)
+    probe.update(changes)
+    return probe
+
+
+def test_unchanged_generation_reuses_original_provenance_without_inventory(artifact_input, monkeypatch):
+    first = receive(artifact_input)
+    monkeypatch.setattr(artifacts, '_receive_members', lambda *_a, **_k: pytest.fail('payload read'))
+    result = artifacts.receive_incremental(io.BytesIO(json.dumps(generation_probe(artifact_input)).encode()+b'\n'),
+        io.BytesIO(), pool_root=artifact_input['pool'], expected_domain='usr-home', approved_by='sys-dev')
+    assert result['generation'] == first['generation']
+    assert result['source_revision'] == '1' * 40
+    assert result['generation_reused'] is True
+    assert result['objects_transferred'] == 0
+    assert len(list((artifact_input['pool'] / 'domains/usr-home/generations').iterdir())) == 1
+
+
+@pytest.mark.parametrize('field', ['system', 'closure_source', 'root_source', 'kernel_name'])
+def test_changed_guest_identity_cannot_reuse_generation(artifact_input, field):
+    receive(artifact_input)
+    probe = generation_probe(artifact_input)
+    probe[field] += '-changed'
+    assert artifacts.reuse_generation(artifact_input['pool'], probe, 'usr-home', 'sys-dev') is None
+
+
+@pytest.mark.parametrize('damage', ['metadata', 'missing-map', 'unretained', 'authority'])
+def test_generation_reuse_rejects_damaged_or_unapproved_state(artifact_input, damage):
+    first = receive(artifact_input)
+    manifest_path = Path(first['manifest'])
+    manifest = core.read_json(manifest_path)
+    if damage == 'metadata':
+        Path(manifest['store']['canonical_metadata_image']).write_bytes(b'corrupt')
+    elif damage == 'missing-map':
+        Path(manifest['store']['canonical_blob_map']).unlink()
+    elif damage == 'unretained':
+        manifest['retention']['retain'] = False
+    else:
+        manifest['approval']['approved_by'] = 'other'
+    core.atomic_json(manifest_path, manifest)
+    if damage in {'metadata', 'missing-map'}:
+        with pytest.raises((core.EngineError, FileNotFoundError)):
+            artifacts.reuse_generation(artifact_input['pool'], generation_probe(artifact_input), 'usr-home', 'sys-dev')
+    else:
+        assert artifacts.reuse_generation(artifact_input['pool'], generation_probe(artifact_input), 'usr-home', 'sys-dev') is None
+
+
+def test_sender_rejects_incomplete_reuse_identities(artifact_input):
+    with pytest.raises(core.EngineError, match='reused-object identities'):
+        artifacts.write_artifact(io.BytesIO(), **artifact_input['kwargs'], negotiate=lambda _: {
+            'schema': artifacts.SCHEMA_REQUEST, 'missing': [], 'missing_root': False, 'reused_tree_hashes': {}})
+
+
+def test_reuse_checks_extent_identity_and_accepts_compaction_locations(artifact_input):
+    from airlock_qubes_storage._engine import views, segments
+    receipt = receive(artifact_input)
+    manifest = core.read_json(receipt['manifest'])
+    root = artifact_input['pool']
+    entry = Path(artifact_input['common']).name
+    meta_path = segments.object_blob_meta_path(root, entry)
+    meta = core.read_json(meta_path)
+    location = segments.current_location_from_meta(meta, entry)
+    blob_map = {'segments': [{'id': location['segment_id'], 'blob': str(segments.segment_blob_path(root, location['segment_id']))}],
+        'logical_size': location['size'], 'extents': [{
+        'object': entry, 'object_sha256': location['sha256'], 'logical_offset': 0,
+        'segment_id': location['segment_id'], 'segment_offset': location['segment_offset'], 'length': location['size']}]}
+    map_path = manifest['store']['canonical_blob_map']
+    core.atomic_json(map_path, blob_map)
+    manifest['store']['integrity'] = views.view_integrity(manifest['store'])
+    views.verify_reusable_view(root, manifest)
+    # Relocation within a backing segment preserves the logical checksum but
+    # must correspond to a recorded admitted location.
+    moved = dict(location, segment_offset=location['segment_offset'] + 512)
+    blob_map['extents'][0]['segment_offset'] = moved['segment_offset']
+    core.atomic_json(map_path, blob_map)
+    with pytest.raises(core.EngineError, match='extent differs'):
+        views.verify_reusable_view(root, manifest)
+    meta.setdefault('locations', []).append(moved)
+    core.atomic_json(meta_path, meta)
+    backing = segments.segment_blob_path(root, moved['segment_id'])
+    with backing.open('ab') as stream:
+        stream.write(bytes(512))
+    views.verify_reusable_view(root, manifest)
+
+
+def test_generation_without_reuse_proof_takes_normal_admission(artifact_input):
+    first = receive(artifact_input)
+    manifest = core.read_json(first['manifest'])
+    del manifest['store']['integrity']
+    core.atomic_json(first['manifest'], manifest)
+    assert artifacts.reuse_generation(artifact_input['pool'], generation_probe(artifact_input), 'usr-home', 'sys-dev') is None
+    second, _, _ = incremental_exchange(artifact_input)
+    assert second['generation'] != first['generation']
+    assert second['objects_transferred'] == 0
+    assert core.read_json(second['manifest'])['store']['integrity']
