@@ -94,6 +94,28 @@ def test_broken_selected_view_still_fails_closed(boot_tree):
     assert not commands and not databases
 
 
+def test_existing_database_without_saved_upper_uses_fixed_registration(boot_tree, monkeypatch):
+    sysroot, _, _, databases, _ = boot_tree
+    own = sysroot / 'host/generations/1'
+    db = own / 'nix/var/nix/db/db.sqlite'
+    db.parent.mkdir(parents=True)
+    db.write_bytes(b'own database')
+    monkeypatch.setattr(host_state, 'dump_registration', lambda root: registration(A))
+    host_boot.assemble(sysroot, f'init={A}/init')
+    assert databases == [(own, {A})]
+
+
+def test_existing_empty_database_registration_is_rejected(boot_tree, monkeypatch):
+    sysroot, _, commands, databases, _ = boot_tree
+    db = sysroot / 'host/generations/1/nix/var/nix/db/db.sqlite'
+    db.parent.mkdir(parents=True)
+    db.write_bytes(b'existing database')
+    monkeypatch.setattr(host_state, 'dump_registration', lambda root: '')
+    with pytest.raises(core.EngineError, match='reference-complete'):
+        host_boot.assemble(sysroot, f'init={A}/init')
+    assert not commands and not databases
+
+
 def test_returning_generation_uses_its_own_writable_state(boot_tree, monkeypatch):
     sysroot, _, commands, databases, _ = boot_tree
     own = sysroot / 'host/generations/1'

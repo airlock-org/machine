@@ -134,16 +134,18 @@ def assemble(sysroot, cmdline):
         # Writable state belongs to this generation, too. In particular, do
         # not open the database left by whichever generation ran most recently.
         host_state.recover_database(generation_root)
-        old_registration = (host_state.dump_registration(generation_root)
-                            if (generation_root / "nix/var/nix/db/db.sqlite").exists() else "")
-        old_records = builder.registration_records(old_registration)
+        # First boot has no previous database. Keep validation strict when a
+        # database does exist, without parsing an absent one as a closure.
+        old_records = (builder.registration_records(host_state.dump_registration(generation_root))
+                       if (generation_root / "nix/var/nix/db/db.sqlite").exists() else {})
         saved = {"/nix/store/" + path.name for path in upper.iterdir()
                  if "/nix/store/" + path.name in old_records}
         upper_needed = host_state.reference_closure(old_records, saved)
         if upper_needed - saved - registered_paths:
             core.fail("host generation upper has references outside its fixed view")
         upper_registration = "".join(old_records[path] for path in sorted(upper_needed))
-        new_registration = builder.merge_registration(registration, upper_registration)
+        new_registration = (builder.merge_registration(registration, upper_registration)
+                            if upper_needed else registration)
         progress(f"validated fixed base {generation} and {len(registered_paths)} store paths")
         mounts = []
         try:
