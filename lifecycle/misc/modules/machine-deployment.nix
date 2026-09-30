@@ -29,8 +29,10 @@ let
     set -eu
     [ "$#" -eq 0 ] || exit 2
     export PATH=${lib.makeBinPath [ pkgs.nix pkgs.systemd ]}:"$PATH"
-    exec ${pkgs.python3}/bin/python3 ${../../runtime/tools/sys-ctrl-machine-receive.py} ${action}
+    exec ${pkgs.python3}/bin/python3 ${../../runtime/tools/sys-ctrl-machine-receive.py} ${action} \
+      --engine ${engine}/bin/airlock-machine-deploy
   '';
+  machinePrepare = machineControl "prepare";
   machinePlan = machineControl "plan";
   machineApply = machineControl "apply";
   control = pkgs.writeShellScript "airlock-machine-control" ''
@@ -49,6 +51,16 @@ let
     [ "''${QREXEC_REMOTE_DOMAIN:-}" = sys-ctrl ] || exit 1
     exec /run/wrappers/bin/sudo -n ${helper}
   '';
+  candidateAdmission = pkgs.writeShellScript "airlock-candidate-admission" ''
+    set -eu
+    [ "$#" -eq 1 ] || exit 2
+    exec ${engine}/bin/airlock-machine-deploy admission-receive "$1" --caller sys-ctrl
+  '';
+  candidateHandler = pkgs.writeShellScript "airlock-candidate-admission-qrexec" ''
+    set -eu
+    [ "''${QREXEC_REMOTE_DOMAIN:-}" = sys-ctrl ] || exit 1
+    exec /run/wrappers/bin/sudo -n ${candidateAdmission} "''${QREXEC_SERVICE_ARGUMENT:-}"
+  '';
   guestPolicy = pkgs.writeTextDir "etc/qubes/policy.d/43-airlock-ctrl-guest.policy" ''
     airlock.Ctrl.MachineControl + sys-dev dom0 allow
     airlock.Ctrl.MachineControl + sys-ctrl dom0 allow
@@ -63,6 +75,10 @@ let
     airlock.Ctrl.MachinePlan * @anyvm @anyvm deny
     airlock.Ctrl.MachineApply * sys-ctrl dom0 allow
     airlock.Ctrl.MachineApply * @anyvm @anyvm deny
+    airlock.Ctrl.MachinePrepare + sys-ctrl dom0 allow
+    airlock.Ctrl.MachinePrepare * @anyvm @anyvm deny
+    airlock.Pool.AdmitCandidate * sys-ctrl dom0 allow
+    airlock.Pool.AdmitCandidate * @anyvm @anyvm deny
   '';
   bootPrerequisites = [
     "airlock-setup-config.service"
@@ -108,6 +124,14 @@ in
       source = guestHandler "machine-apply" machineApply;
       mode = "0555";
     };
+    environment.etc."qubes-rpc/airlock.Ctrl.MachinePrepare" = {
+      source = guestHandler "machine-prepare" machinePrepare;
+      mode = "0555";
+    };
+    environment.etc."qubes-rpc/airlock.Pool.AdmitCandidate" = {
+      source = candidateHandler;
+      mode = "0555";
+    };
     environment.etc."qubes-rpc/airlock.Ctrl.MachineControl" = {
       source = controlHandler;
       mode = "0555";
@@ -120,6 +144,8 @@ in
         { command = "${guestApply}"; options = [ "NOPASSWD" ]; }
         { command = "${machinePlan}"; options = [ "NOPASSWD" ]; }
         { command = "${machineApply}"; options = [ "NOPASSWD" ]; }
+        { command = "${machinePrepare}"; options = [ "NOPASSWD" ]; }
+        { command = "${candidateAdmission}"; options = [ "NOPASSWD" ]; }
       ];
     }];
     environment.etc."airlock/machine-profile".text = cfg.profile + "\n";

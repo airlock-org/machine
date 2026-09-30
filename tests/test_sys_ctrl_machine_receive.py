@@ -36,7 +36,7 @@ def test_invalid_release_header_fails_before_import(monkeypatch, change):
         RECEIVER.receive("plan")
 
 
-@pytest.mark.parametrize("action", ["plan", "apply"])
+@pytest.mark.parametrize("action", ["prepare", "plan", "apply"])
 def test_imported_release_is_checked_before_coordinator_action(monkeypatch, tmp_path, capsys, action):
     release = "/nix/store/" + "a" * 32 + "-release"
     coordinator = "/nix/store/" + "d" * 32 + "-coordinator/bin/airlock-machine-deploy"
@@ -52,6 +52,8 @@ def test_imported_release_is_checked_before_coordinator_action(monkeypatch, tmp_
     real_path = Path
     monkeypatch.setattr(RECEIVER, "Path", lambda value: tmp_path if value == release else real_path(value))
     monkeypatch.setattr(RECEIVER, "STATE", tmp_path / "state")
+    installed = "/installed/bin/airlock-machine-deploy"
+    monkeypatch.setattr(RECEIVER, "ENGINE", installed)
     monkeypatch.setattr(RECEIVER.subprocess, "check_output", lambda *_a, **_k: "")
     monkeypatch.setattr(RECEIVER.os, "statvfs", lambda _: SimpleNamespace(
         f_bavail=10**12, f_frsize=1))
@@ -89,6 +91,10 @@ def test_imported_release_is_checked_before_coordinator_action(monkeypatch, tmp_
     RECEIVER.receive(action)
     assert imported == [b"exported NAR"]
     assert calls[0] == ["nix-store", "--import"]
+    if action == "prepare":
+        assert calls[1] == [installed, "admission-prepare", release, "--caller", "sys-ctrl"]
+        assert len(calls) == 2
+        return
     candidate = str(tmp_path / "candidate")
     assert calls[1] == [coordinator, "machine-bind", release, "-"]
     assert calls[2] == [coordinator, "plan", candidate]

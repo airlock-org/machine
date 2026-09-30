@@ -135,3 +135,54 @@ def test_planned_apply_skips_all_inventories_and_transfers(tmp_path, monkeypatch
     DEPLOY.send_machine_release('apply', release, revision, lock_hash)
     assert len(calls) == 1
     assert calls[0][:3] == (release, revision, lock_hash)
+
+
+@pytest.mark.parametrize("change", [None, "domain", "activation", "token", "release"])
+def test_machine_prepares_candidate_before_new_guest_payload(tmp_path, monkeypatch, capsys, change):
+    revision, lock_hash = "a" * 40, "b" * 64
+    release, transport = "/nix/store/release", "/nix/store/transport"
+    monkeypatch.setattr(DEPLOY, "BUILDER_STORE", tmp_path / "store")
+    monkeypatch.setattr(DEPLOY, "STATE", tmp_path / "state")
+    monkeypatch.setattr(DEPLOY, "BUILD_RECORDS", tmp_path / "records")
+    physical = DEPLOY.BUILDER_STORE / release.lstrip("/")
+    physical.mkdir(parents=True)
+    (physical / "transport").symlink_to(transport)
+    (physical / "topology.json").write_text(json.dumps({"domains": {"usr-new": {}}}))
+    (physical / "root-artifacts.json").write_text('{}')
+    DEPLOY.record(DEPLOY.BUILD_RECORDS / revision / "build.json", {"build_seconds": 1})
+    authorization = {"schema": "airlock.machine-admission.v1", "release": transport,
+                     "admission": "c" * 64, "domains": ["usr-new"], "activated": False,
+                     "paths_transferred": 3, "nar_bytes": 7, "compressed_bytes": 5}
+    if change == "domain":
+        authorization["domains"] = ["usr-other"]
+    elif change == "activation":
+        authorization["activated"] = True
+    elif change == "token":
+        authorization["admission"] = "../invalid"
+    elif change == "release":
+        authorization["release"] = "other"
+    calls = []
+    def transport_request(action, *_args):
+        calls.append(action)
+        if action == "prepare":
+            return authorization
+        return {"paths_transferred": 0, "nar_bytes": 0, "compressed_bytes": 1}
+    monkeypatch.setattr(DEPLOY, "send_machine_transport", transport_request)
+    monkeypatch.setattr(DEPLOY, "machine_metadata", lambda *_: {})
+    def admit(*args):
+        assert calls == ["prepare"]
+        assert args[-1] == "c" * 64
+        calls.append("guest-payload")
+        return {}
+    monkeypatch.setattr(DEPLOY, "admit_machine_guests", admit)
+    if change:
+        with pytest.raises(ValueError, match="authorization"):
+            DEPLOY.send_machine_release("plan", release, revision, lock_hash)
+        assert calls == ["prepare"]
+    else:
+        DEPLOY.send_machine_release("plan", release, revision, lock_hash)
+        assert calls == ["prepare", "guest-payload", "plan"]
+        response = json.loads(capsys.readouterr().out)
+        assert response["paths_transferred"] == 3
+        assert response["nar_bytes"] == 7
+        assert response["compressed_bytes"] == 6

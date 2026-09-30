@@ -826,22 +826,38 @@ def reuse_generation(root, probe, expected_domain, approved_by):
     return None
 
 
-def receive_incremental(stream, output, *, pool_root, expected_domain, approved_by):
+def validate_candidate_identity(inventory, identity, *, probe=False):
+    if identity is None:
+        return
+    keys = ("domain", "system", "closure_source", "root_source", "kernel_name",
+            "source_revision", "lock_hash")
+    if not probe:
+        keys += ("root_artifact",)
+    if not isinstance(inventory, dict) or any(inventory.get(key) != identity[key] for key in keys):
+        fail("artifact differs from prepared candidate")
+
+
+def receive_incremental(stream, output, *, pool_root, expected_domain, approved_by,
+                        expected_identity=None):
     """Keep reusable objects protected from GC until generation publication."""
     expected_domain = safe_domain_name(expected_domain)
     inventory = read_message(stream)
     if isinstance(inventory, dict) and inventory.get("schema") == SCHEMA_PROBE:
+        validate_candidate_identity(inventory, expected_identity, probe=True)
         root = ensure_pool(pool_root)
         started = time.monotonic()
         with admission_lock(root):
             receipt = reuse_generation(root, inventory, expected_domain, approved_by)
             if receipt is not None:
+                if expected_identity is not None and receipt["root_artifact"] != expected_identity["root_artifact"]:
+                    fail("reused root differs from prepared candidate")
                 receipt["timings"] = {"generation_reuse_seconds": time.monotonic() - started}
                 return receipt
         write_message(output, {"schema": SCHEMA_PROBE, "reuse": False})
         inventory = read_message(stream)
     if not isinstance(inventory, dict) or inventory.get("schema") != SCHEMA_INCREMENTAL:
         fail("unsupported incremental inventory schema")
+    validate_candidate_identity(inventory, expected_identity)
     _, _, objects = _validate_received(inventory, {}, expected_domain, inventory=True)
     root = ensure_pool(pool_root)
     with admission_lock(root):

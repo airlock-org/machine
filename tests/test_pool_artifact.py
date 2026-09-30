@@ -457,7 +457,7 @@ def test_interrupted_admission_is_invisible_and_retryable(artifact_input, monkey
     assert result["objects_admitted"] == 1
 
 
-def incremental_exchange(case, transform=lambda data: data):
+def incremental_exchange(case, transform=lambda data: data, expected_identity=None):
     """Exercise the inventory/response/payload handshake over real duplex I/O."""
     client, server = socket.socketpair()
     client.settimeout(5)
@@ -477,6 +477,7 @@ def incremental_exchange(case, transform=lambda data: data):
                 pool_root=case["pool"],
                 expected_domain="usr-home",
                 approved_by="sys-dev",
+                expected_identity=expected_identity,
             )
 
             def negotiate(inventory):
@@ -493,6 +494,53 @@ def incremental_exchange(case, transform=lambda data: data):
             finally:
                 client.shutdown(socket.SHUT_WR)
             return pending.result(timeout=5), request, payload.getvalue()
+
+
+def candidate_inventory(case):
+    with tarfile.open(fileobj=io.BytesIO(case["bytes"]), mode="r:*") as source:
+        result = json.load(source.extractfile("manifest.json"))
+    result["schema"] = artifacts.SCHEMA_INCREMENTAL
+    return result
+
+
+def test_candidate_bound_incremental_admission_is_inactive_and_retryable(artifact_input):
+    identity = candidate_inventory(artifact_input)
+    first, _, _ = incremental_exchange(artifact_input, expected_identity=identity)
+    second, _, _ = incremental_exchange(artifact_input, expected_identity=identity)
+    assert first["activated"] is False
+    assert first["retained"] is True
+    assert second["objects_transferred"] == 0
+    assert second["system"] == identity["system"]
+    assert second["root_artifact"] == identity["root_artifact"]
+
+
+@pytest.mark.parametrize("probe", [False, True])
+@pytest.mark.parametrize("field", ["domain", "system", "closure_source", "root_source",
+                                   "kernel_name", "source_revision", "lock_hash", "root_artifact"])
+def test_candidate_rejects_artifact_substitution_before_touching_pool(artifact_input, monkeypatch, field, probe):
+    identity = candidate_inventory(artifact_input)
+    if probe and field == "root_artifact":
+        return  # Probe has no root descriptor; reuse checks the stored root instead.
+    inventory = dict(identity)
+    inventory["schema"] = artifacts.SCHEMA_PROBE if probe else artifacts.SCHEMA_INCREMENTAL
+    inventory[field] = "substituted"
+    monkeypatch.setattr(artifacts, "ensure_pool", lambda *_: pytest.fail("rejected artifact touched pool"))
+    with pytest.raises(core.EngineError, match="prepared candidate"):
+        artifacts.receive_incremental(io.BytesIO((json.dumps(inventory) + "\n").encode()), io.BytesIO(),
+            pool_root=artifact_input["pool"], expected_domain="usr-home", approved_by="sys-ctrl",
+            expected_identity=identity)
+
+
+def test_candidate_probe_cannot_bypass_next_inventory_check(artifact_input):
+    identity = candidate_inventory(artifact_input)
+    probe = dict(identity, schema=artifacts.SCHEMA_PROBE)
+    inventory = dict(identity, system="substituted")
+    wire = "\n".join(json.dumps(value) for value in (probe, inventory)) + "\n"
+    with pytest.raises(core.EngineError, match="prepared candidate"):
+        artifacts.receive_incremental(io.BytesIO(wire.encode()), io.BytesIO(),
+            pool_root=artifact_input["pool"], expected_domain="usr-home", approved_by="sys-ctrl",
+            expected_identity=identity)
+    assert not list((artifact_input["pool"] / "domains").glob("*/generations/*/manifest.json"))
 
 
 def test_incremental_empty_pool_then_no_payload_on_repeat(artifact_input, monkeypatch):
@@ -822,8 +870,9 @@ def test_maintenance_serializes_with_negotiated_admission(
     assert not locked
 
 
+@pytest.mark.parametrize("candidate", [None, "a" * 64])
 def test_sender_cli_negotiates_and_prints_only_final_response(
-    artifact_input, monkeypatch, capsys, tmp_path
+    artifact_input, monkeypatch, capsys, tmp_path, candidate
 ):
     from airlock_qubes_storage import artifact_cli
 
@@ -870,7 +919,8 @@ def test_sender_cli_negotiates_and_prints_only_final_response(
                 assert argv == [
                     "qrexec-client-vm",
                     "dom0",
-                    "airlock.Pool.AdmitIncremental+usr-home",
+                    (f"airlock.Pool.AdmitCandidate+{candidate}.usr-home" if candidate
+                     else "airlock.Pool.AdmitIncremental+usr-home"),
                 ]
                 return SimpleNamespace(
                     stdin=SimpleNamespace(
@@ -884,7 +934,7 @@ def test_sender_cli_negotiates_and_prints_only_final_response(
 
             monkeypatch.setattr(artifact_cli.subprocess, "Popen", popen)
             result = artifact_cli.send_main(
-                [
+                (["--candidate-admission", candidate] if candidate else []) + [
                     "--domain",
                     "usr-home",
                     "--system",

@@ -127,6 +127,7 @@ def send_main(argv=None):
     parser.add_argument("--qrexec-client", default="qrexec-client-vm")
     parser.add_argument("--reuse-generation", action="store_true")
     parser.add_argument("--path-info-file")
+    parser.add_argument("--candidate-admission")
     args = parser.parse_args(argv)
     process = None
     try:
@@ -134,7 +135,8 @@ def send_main(argv=None):
             [
                 args.qrexec_client,
                 "dom0",
-                f"airlock.Pool.AdmitIncremental+{args.domain}",
+                (f"airlock.Pool.AdmitCandidate+{args.candidate_admission}.{args.domain}"
+                 if args.candidate_admission else f"airlock.Pool.AdmitIncremental+{args.domain}"),
             ],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,

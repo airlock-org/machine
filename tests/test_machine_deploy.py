@@ -13,6 +13,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "lifecycle/runtime/tools"))
+sys.path.insert(0, str(ROOT / "lifecycle/runtime/tools/pkgs/airlock-qubes-storage/src"))
 deploy = importlib.import_module("airlock_machine_deploy.coordinator")
 planning = importlib.import_module("airlock_machine_deploy.planning")
 releases = importlib.import_module("airlock_machine_deploy.releases")
@@ -1054,6 +1055,135 @@ def test_rollback_after_vm_addition_keeps_new_vm_halted(machine, tmp_path, topol
     assert machine.retirement.active_trash()["usr-extra"]["status"] == "trashed"
     assert machine.tags["usr-extra"] == {"airlock-retired"}
     assert all(call[0] != "qvm-remove" for call in machine.calls)
+
+
+@pytest.mark.parametrize("autostart", [False, True])
+def test_vm_addition_applies_before_host_reboot_and_survives_boot(
+    machine, tmp_path, topology, autostart
+):
+    new = deepcopy(topology)
+    new["domains"]["usr-extra"] = domain("usr-extra", guivm="sys-gui")
+    new["domains"]["usr-extra"]["prefs"]["autostart"] = autostart
+    release = write_release(tmp_path / "extra", new)
+    original_running = set(machine.live)
+    result = machine.apply(release)
+    assert result["phase"] == "reboot-required"
+    assert result["plan"]["stop"] == []
+    assert original_running <= machine.live
+    assert ("usr-extra" in machine.live) is autostart
+    assert machine.selected["usr-extra"] == new["domains"]["usr-extra"]["backend"]["system"]["source"]
+    private = deepcopy(machine.volumes["usr-extra"])
+    # An explicitly started non-autostart VM is usable during this boot.
+    machine.command("qvm-start", "usr-extra")
+    assert machine.verify(new, machine.live)["usr-extra"]["running"] == machine.selected["usr-extra"]
+    # Boot convergence consumes the selection, not the original image topology.
+    machine.live.clear()
+    machine.boot_start("/missing-image")
+    assert ("usr-extra" in machine.live) is autostart
+    assert machine.volumes["usr-extra"] == private
+    machine.apply(machine.initial, recover=True)
+    assert "usr-extra" not in machine.live
+    assert machine.volumes["usr-extra"] == private
+    machine.calls.clear()
+    machine.apply(release, recover=True)
+    assert machine.volumes["usr-extra"] == private
+
+
+def admission_release(tmp_path, topology):
+    new = deepcopy(topology)
+    new["domains"]["usr-extra"] = domain("usr-extra", guivm="sys-gui")
+    for name, entry in new["domains"].items():
+        backend = entry["backend"]
+        backend["system"]["source"] = "/nix/store/" + "a" * 32 + "-" + name
+        backend["store"]["source"] = "/nix/store/" + "b" * 32 + "-" + name + "-closure"
+        backend["root"]["source"] = "/nix/store/" + "c" * 32 + "-root/root.img"
+    release = write_release(tmp_path / "candidate", new, revision="d" * 40)
+    manifest = deploy.read_json(release / "release.json")
+    manifest.update(guestTransport="direct-pool-v1", lockHash="e" * 64)
+    deploy.atomic_json(release / "release.json", manifest)
+    deploy.atomic_json(release / "root-artifacts.json", {name: {
+        "schema": "airlock.root-artifact.v1", "sha256": "f" * 64,
+        "format": "ext4", "boot_abi": "airlock.nix-closure-root.v1",
+        "logical_bytes": 1024 * 1024, "payload_bytes": 100,
+    } for name in new["domains"]})
+    return release
+
+
+def test_candidate_admission_authorizes_new_name_without_activation(machine, tmp_path, topology):
+    from airlock_machine_deploy.admission import AdmissionManager
+    admission = AdmissionManager(machine)
+    release = admission_release(tmp_path, topology)
+    before = deepcopy(machine.volumes)
+    result = admission.prepare(release, "sys-ctrl", "boot")
+    assert result["activated"] is False
+    assert "usr-extra" in result["domains"]
+    assert machine.pointer() is None
+    assert machine.volumes == before
+    assert "usr-extra" not in machine.selected
+    assert not any(call[0] in ("qvm-start", "qvm-shutdown", "nix-env", "airlock-host-store")
+                   for call in machine.calls)
+    identity = admission.identity(result["admission"], "usr-extra", "sys-ctrl", "boot")
+    assert identity["source_revision"] == "d" * 40
+    assert identity["lock_hash"] == "e" * 64
+    assert identity["system"].endswith("-usr-extra")
+    assert identity["root_artifact"]["sha256"] == "f" * 64
+
+
+@pytest.mark.parametrize("change", ["caller", "domain", "boot", "selection", "latest", "tamper", "pruned"])
+def test_candidate_admission_rejects_stale_or_unbound_request(machine, tmp_path, topology, change):
+    from airlock_machine_deploy.admission import AdmissionManager
+    admission = AdmissionManager(machine)
+    release = admission_release(tmp_path, topology)
+    token = admission.prepare(release, "sys-ctrl", "boot")["admission"]
+    caller, name, boot = "sys-ctrl", "usr-extra", "boot"
+    if change == "caller":
+        caller = "usr-extra"
+    elif change == "domain":
+        name = "usr-other"
+    elif change == "boot":
+        boot = "new-boot"
+    elif change == "selection":
+        deploy.atomic_json(machine.state / "selection.json", {"release": "other"})
+    elif change == "latest":
+        deploy.atomic_json(machine.state / "latest.json", {"phase": "configuring"})
+    elif change == "tamper":
+        record = machine.state / "admissions" / (token + ".json")
+        value = deploy.read_json(record)
+        value["guests"]["usr-other"] = value["guests"]["usr-extra"]
+        deploy.atomic_json(record, value)
+    elif change == "pruned":
+        deploy.atomic_json(machine.releases.prune_record_path(release), {"status": "pruned"})
+    with pytest.raises(deploy.DeploymentError):
+        admission.identity(token, name, caller, boot)
+
+
+@pytest.mark.parametrize("change", ["caller", "name", "dependency", "cycle", "root", "revision", "backend"])
+def test_candidate_preparation_rejects_invalid_release_before_authorizing(machine, tmp_path, topology, change):
+    from airlock_machine_deploy.admission import AdmissionManager
+    release = admission_release(tmp_path, topology)
+    new = deploy.read_json(release / "topology.json")
+    manifest = deploy.read_json(release / "release.json")
+    caller = "sys-ctrl"
+    if change == "caller":
+        caller = "usr-extra"
+    elif change == "name":
+        new["domains"]["../escape"] = new["domains"].pop("usr-extra")
+    elif change == "dependency":
+        new["domains"]["usr-extra"]["netvm"] = "missing"
+    elif change == "cycle":
+        new["domains"]["sys-gui"]["prefs"]["guivm"] = "usr-extra"
+    elif change == "root":
+        deploy.atomic_json(release / "root-artifacts.json", {})
+    elif change == "revision":
+        manifest["revision"] = "dirty"
+    elif change == "backend":
+        new["domains"]["usr-extra"]["backend"]["store"]["mode"] = "private"
+    deploy.atomic_json(release / "topology.json", new)
+    deploy.atomic_json(release / "release.json", manifest)
+    with pytest.raises(deploy.DeploymentError):
+        AdmissionManager(machine).prepare(release, caller, "boot")
+    assert not list((machine.state / "admissions").glob("*.json"))
+    assert not any(call[0] in ("qvm-start", "qvm-shutdown", "nix-env") for call in machine.calls)
 
 
 def retirement_release(tmp_path, topology, name="usr-home"):

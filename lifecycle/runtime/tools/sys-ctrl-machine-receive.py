@@ -18,6 +18,7 @@ STORE_PATH = re.compile(r"/nix/store/[0-9a-df-np-sv-z]{32}-[A-Za-z0-9+._?=-]+")
 HEX = re.compile(r"[0-9a-f]+")
 MAX_HEADER = 16 * 1024 * 1024
 STATE = Path("/var/lib/airlock/machine")
+ENGINE = None
 
 
 class CountingReader:
@@ -156,6 +157,18 @@ def receive(action):
             or manifest.get("lockHash") != lock_hash
             or manifest.get("profile") != "usb-lab"):
         raise ValueError("imported release provenance differs from request")
+    if action == "prepare":
+        if ENGINE is None:
+            raise ValueError("candidate preparation requires the installed coordinator")
+        prepared = subprocess.run([ENGINE, "admission-prepare", release, "--caller", "sys-ctrl"],
+                                  check=True, text=True, capture_output=True)
+        result = json.loads(prepared.stdout)
+        result.update(paths_transferred=len(missing), nar_bytes=transferred,
+                      compressed_bytes=wire.count,
+                      timings={"inventory_validation_seconds": inventory_seconds,
+                               "transfer_decompress_import_seconds": import_seconds})
+        print(json.dumps(result, sort_keys=True), flush=True)
+        return
     coordinator = manifest.get("coordinator")
     if not isinstance(coordinator, str) or not re.fullmatch(
         STORE_PATH.pattern + r"/bin/airlock-machine-deploy", coordinator
@@ -201,9 +214,12 @@ def receive(action):
 
 
 def main():
+    global ENGINE
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("plan", "apply"))
+    parser.add_argument("action", choices=("prepare", "plan", "apply"))
+    parser.add_argument("--engine")
     args = parser.parse_args()
+    ENGINE = args.engine
     try:
         receive(args.action)
         return 0

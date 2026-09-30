@@ -4,11 +4,16 @@
   python3,
   nix,
   systemd,
+  e2fsprogs,
+  erofs-utils,
+  gnutar,
+  lvm2,
+  util-linux,
   ...
 }:
 let
   storage = python3.pkgs.callPackage ../airlock-qubes-storage { };
-  python = python3.withPackages (ps: [ ps.qubes-core-admin-client ]);
+  python = python3.withPackages (ps: [ ps.qubes-core-admin-client storage ]);
   source = lib.fileset.toSource {
     root = ../..;
     fileset = lib.fileset.unions [
@@ -24,6 +29,11 @@ writeShellApplication {
     nix
     systemd
     storage
+    e2fsprogs
+    erofs-utils
+    gnutar
+    lvm2
+    util-linux
     python3.pkgs.qubes-core-admin-client
     python3.pkgs.qubes-core-qrexec.dom0
   ];

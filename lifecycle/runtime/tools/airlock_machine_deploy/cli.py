@@ -10,7 +10,8 @@ import subprocess
 import sys
 
 from .common import DeploymentError, TRASH_SCHEMA
-from .coordinator import Coordinator
+from .coordinator import Coordinator, boot_id
+from .admission import AdmissionManager
 from .state import read_json
 
 
@@ -25,6 +26,12 @@ def main(argv=None):
     bind = sub.add_parser("machine-bind")
     bind.add_argument("release", type=Path)
     bind.add_argument("receipts")
+    admission = sub.add_parser("admission-prepare")
+    admission.add_argument("release", type=Path)
+    admission.add_argument("--caller", required=True)
+    receive = sub.add_parser("admission-receive")
+    receive.add_argument("argument")
+    receive.add_argument("--caller", required=True)
     for action in ("guest-plan", "guest-apply"):
         sub.add_parser(action).add_argument("receipt")
     for action in (
@@ -62,7 +69,25 @@ def main(argv=None):
     args = parser.parse_args(argv)
     coordinator = Coordinator()
     try:
-        if args.action == "machine-bind":
+        if args.action == "admission-prepare":
+            result = AdmissionManager(coordinator).prepare(args.release, args.caller, boot_id())
+        elif args.action == "admission-receive":
+            from airlock_qubes_storage._engine.artifacts import receive_incremental
+            from airlock_qubes_storage._engine.core import EngineError
+            token, separator, domain = args.argument.partition(".")
+            if not separator:
+                raise DeploymentError("candidate admission requires token and domain")
+            # Match apply's lock order: machine, then pool. The candidate cannot
+            # become stale halfway through publication of an inactive generation.
+            with coordinator.locked():
+                identity = AdmissionManager(coordinator).identity(token, domain, args.caller, boot_id())
+                try:
+                    result = receive_incremental(sys.stdin.buffer, sys.stdout.buffer,
+                        pool_root="/var/lib/airlock/closure-store", expected_domain=domain,
+                        approved_by=args.caller, expected_identity=identity)
+                except EngineError as exc:
+                    raise DeploymentError(str(exc)) from exc
+        elif args.action == "machine-bind":
             receipts = json.load(sys.stdin) if args.receipts == "-" else read_json(args.receipts)
             result = {"candidate": str(coordinator.machine_candidate(args.release, receipts)),
                       "timings": coordinator.binding_timings}
@@ -119,9 +144,15 @@ def main(argv=None):
             result = coordinator.releases.retain_release(args.release, args.retain == "true")
         else:
             result = coordinator.status()
-        print(json.dumps(result, sort_keys=True, indent=2))
+        print(json.dumps(result, sort_keys=True, indent=None if args.action == "admission-receive" else 2))
         return 0
-    except (DeploymentError, OSError, subprocess.SubprocessError, ValueError) as exc:
+    except (DeploymentError, OSError, subprocess.SubprocessError, ValueError, KeyError, TypeError) as exc:
+        if args.action == "admission-receive":
+            from airlock_qubes_storage._engine.artifacts import SCHEMA_ERROR, write_message
+            try:
+                write_message(sys.stdout.buffer, {"schema": SCHEMA_ERROR, "error": str(exc)[:4096]})
+            except OSError:
+                pass
         print(f"airlock-machine-deploy: {exc}", file=sys.stderr)
         return 1
 

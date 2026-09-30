@@ -7,6 +7,7 @@ import gzip
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -274,14 +275,15 @@ def machine_metadata(topology):
     return metadata
 
 
-def admit_machine_guests(topology, roots, revision, lock_hash, metadata_file):
+def admit_machine_guests(topology, roots, revision, lock_hash, metadata_file, admission):
     receipts = {}
     for name, domain in sorted(topology["domains"].items()):
         backend = domain["backend"]
         if backend["type"] != "nix-closure":
             continue
         receipt = json.loads(output(
-            "airlock-pool-send", "--reuse-generation", "--path-info-file", str(metadata_file), "--domain", name,
+            "airlock-pool-send", "--reuse-generation", "--candidate-admission", admission,
+            "--path-info-file", str(metadata_file), "--domain", name,
             "--system", backend["system"]["source"],
             "--closure-source", backend["store"]["source"],
             "--root-source", backend["root"]["source"],
@@ -306,6 +308,16 @@ def send_machine_release(action, release, revision, lock_hash):
         if (saved.get("prepared") and saved.get("source_release") == os.readlink(physical / "transport")):
             send_prepared(release, revision, lock_hash, saved)
             return
+    transport = os.readlink(physical / "transport")
+    authorization = send_machine_transport("prepare", transport, revision, lock_hash, {})
+    expected_domains = set(topology["domains"])
+    if (authorization.get("schema") != "airlock.machine-admission.v1"
+            or authorization.get("release") != transport
+            or authorization.get("activated") is not False
+            or set(authorization.get("domains", [])) != expected_domains
+            or not re.fullmatch(r"[0-9a-f]{64}", authorization.get("admission", ""))):
+        raise ValueError("invalid candidate admission authorization")
+    record(STATE / "candidates" / revision / "admission-prepare.json", authorization)
     receipts = {}
     metadata_started = time.monotonic()
     metadata = machine_metadata(topology)
@@ -314,8 +326,34 @@ def send_machine_release(action, release, revision, lock_hash):
     with tempfile.TemporaryDirectory(prefix="airlock-machine-metadata-") as metadata_dir:
         metadata_file = Path(metadata_dir) / "paths.json"
         metadata_file.write_text(json.dumps(metadata))
-        receipts = admit_machine_guests(topology, roots, revision, lock_hash, metadata_file)
-    transport = os.readlink(physical / "transport")
+        receipts = admit_machine_guests(topology, roots, revision, lock_hash, metadata_file,
+                                       authorization["admission"])
+    result = send_machine_transport(action, transport, revision, lock_hash, receipts)
+    result["candidate_preparation"] = authorization
+    for key in ("paths_transferred", "nar_bytes", "compressed_bytes"):
+        result[key] += authorization[key]
+    result["elapsed_seconds"] = time.monotonic() - started
+    result.setdefault("timings", {})["machine_metadata_seconds"] = metadata_seconds
+    build_record = BUILD_RECORDS / revision / "build.json"
+    result["build_seconds"] = json.loads(build_record.read_text())["build_seconds"]
+    result["guest_transfer"] = {
+        name: {key: receipt.get(key) for key in
+               ("generation_reused", "objects_total", "objects_reused", "objects_transferred", "payload_bytes_transferred",
+                "root_artifact", "root_reused", "root_payload_bytes_transferred",
+                "root_logical_bytes", "root_allocated_bytes", "timings")}
+        for name, receipt in receipts.items()
+    }
+    result["root_inventory"] = {
+        receipt["root_artifact"]["sha256"]: {
+            "logical_bytes": receipt["root_logical_bytes"],
+            "allocated_bytes": receipt["root_allocated_bytes"],
+        } for receipt in receipts.values()
+    }
+    record(STATE / "candidates" / revision / (action + ".json"), result)
+    print(json.dumps(result, sort_keys=True))
+
+
+def send_machine_transport(action, transport, revision, lock_hash, receipts):
     raw = json.loads(output("airlock-config-nix", "path-info", "--recursive", "--json", transport))
     metadata = {entry["path"]: entry for entry in raw} if isinstance(raw, list) else raw
     header = {"schema": MACHINE_SCHEMA, "release": transport, "revision": revision,
@@ -351,25 +389,7 @@ def send_machine_release(action, release, revision, lock_hash):
         result = machine_response(receiver.stdout.read(), "planning")
         if receiver.wait():
             raise ValueError("machine release transfer or dom0 validation failed")
-        result["elapsed_seconds"] = time.monotonic() - started
-        result.setdefault("timings", {})["machine_metadata_seconds"] = metadata_seconds
-        build_record = BUILD_RECORDS / revision / "build.json"
-        result["build_seconds"] = json.loads(build_record.read_text())["build_seconds"]
-        result["guest_transfer"] = {
-            name: {key: receipt.get(key) for key in
-                   ("generation_reused", "objects_total", "objects_reused", "objects_transferred", "payload_bytes_transferred",
-                    "root_artifact", "root_reused", "root_payload_bytes_transferred",
-                    "root_logical_bytes", "root_allocated_bytes", "timings")}
-            for name, receipt in receipts.items()
-        }
-        result["root_inventory"] = {
-            receipt["root_artifact"]["sha256"]: {
-                "logical_bytes": receipt["root_logical_bytes"],
-                "allocated_bytes": receipt["root_allocated_bytes"],
-            } for receipt in receipts.values()
-        }
-        record(STATE / "candidates" / revision / (action + ".json"), result)
-        print(json.dumps(result, sort_keys=True))
+        return result
     finally:
         for process in (exporter, receiver):
             if process is not None and process.poll() is None:
