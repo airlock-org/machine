@@ -279,7 +279,7 @@ def admit_generation(args):
                 "image_contains_materialized_store_copy"
             ],
             "segment_target_bytes": target_bytes,
-            "index_depth": view.get("index_depth", 0),
+            "index_depth": view["index_depth"],
             "integrity": view_integrity(view),
         },
         "verification": verification,

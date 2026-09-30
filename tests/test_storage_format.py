@@ -51,3 +51,13 @@ def test_unsupported_pool_fails_before_creating_or_rewriting_files(tmp_path, lay
 def test_single_blob_maps_are_rejected(blob_map):
     with pytest.raises(core.EngineError, match='obsolete single-blob'):
         views.segment_path_map_from_blob_map(blob_map)
+
+
+@pytest.mark.parametrize('previous', [
+    {'paths': [], 'index_depth': 0},
+    {'paths': [], 'integrity': {'metadata_sha256': 'unused'}},
+    {'paths': [], 'integrity': {'metadata_sha256': 'unused'}, 'index_depth': -1},
+])
+def test_missing_predecessor_metadata_is_rejected_without_reading_backings(tmp_path, previous):
+    with pytest.raises(core.EngineError, match='integrity|index_depth'):
+        views.index_predecessor(tmp_path, [], previous)

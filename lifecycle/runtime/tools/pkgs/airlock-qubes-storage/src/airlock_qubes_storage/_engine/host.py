@@ -72,12 +72,6 @@ def publish(root, system, registration, systems=None, *, incremental=True, stati
     if running.exists():
         previous = validate_boot(root, core.read_json(running)["system"])
         previous_index = dict(core.read_json(previous["manifest"])["store"])
-        # Legacy host indexes already have authenticated boot-record hashes.
-        # Controller bases without integrity metadata use one full build first.
-        previous_index["integrity"] = {
-            "metadata_sha256": previous["metadata_image_sha256"],
-            "layout_sha256": views.blob_layout_hash(core.read_json(previous["blob_map"])),
-        }
     result = admit(root, "dom0", system, registration, incremental=incremental,
                    previous_index=previous_index)
     if statistics is not None:

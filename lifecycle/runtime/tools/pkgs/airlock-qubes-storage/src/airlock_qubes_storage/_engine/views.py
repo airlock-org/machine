@@ -225,6 +225,13 @@ def create_erofs_tar_index_image(root, blob_map, metadata_path, closure_id, txid
     os.chmod(metadata_path, 0o444)
 
 
+def index_depth(metadata):
+    depth = metadata.get("index_depth")
+    if type(depth) is not int or depth < 0:
+        fail("unsupported index metadata: non-negative index_depth is required")
+    return depth
+
+
 def index_predecessor(root, paths, previous):
     """Reuse only authenticated, additive layouts; old views remain immutable.
 
@@ -233,9 +240,12 @@ def index_predecessor(root, paths, previous):
     """
     from .core import image_building
 
-    if (image_building() or not previous or not previous.get("integrity")
-            or previous.get("index_depth", 0) >= 16
-            or not set(previous["paths"]) <= set(paths)):
+    if image_building() or not previous:
+        return None
+    if not previous.get("integrity"):
+        fail("unsupported predecessor index: integrity metadata is required")
+    depth = index_depth(previous)
+    if depth >= 16 or not set(previous["paths"]) <= set(paths):
         return None
     verify_reusable_view(root, {"store": previous})
     blob_map = read_json(previous["canonical_blob_map"])
@@ -250,7 +260,7 @@ def index_predecessor(root, paths, previous):
         offset += extent["length"]
     return {"store": previous, "objects": [extent["object"] for extent in entries],
             "extents": {extent["object"]: extent for extent in entries},
-            "offset": offset, "depth": previous.get("index_depth", 0) + 1}
+            "offset": offset, "depth": depth + 1}
 
 
 def ensure_loop_for_blob(blob_path):
@@ -702,6 +712,7 @@ def materialize_erofs_objectmap_view(
         fsync_dir(view_root)
         view_created = True
 
+    depth = index_depth(read_json(view_manifest))
     blob_map_payload = read_json(blob_map)
     generation_metadata = generation_dir / "store.erofs"
     generation_blob_map = generation_dir / "store.blob-map.json"
@@ -736,7 +747,7 @@ def materialize_erofs_objectmap_view(
         "segment_count": blob_map_payload.get("segment_count", 0),
         "segments": blob_map_payload.get("segments", []),
         "image_created": view_created,
-        "index_depth": read_json(view_manifest).get("index_depth", 0),
+        "index_depth": depth,
         "preparation": preparation,
         "sizing": {
             "metadata_image_bytes": os.path.getsize(metadata_image),

@@ -74,16 +74,13 @@ def test_additive_index_reads_old_and_new_bytes_without_mutating_base(index_stor
     assert (extract(first, 'previous') / Path(old).name / 'payload').read_bytes() == b'original' * 99
 
 
-@pytest.mark.parametrize('reason', ['removed-object', 'legacy', 'depth'])
+@pytest.mark.parametrize('reason', ['removed-object', 'depth'])
 def test_incompatible_predecessor_uses_full_index(index_store, reason):
     _, add, build, extract = index_store
     a = add('a', b'keep')
     b = add('b', b'remove')
     first = build([a, b], 1)
     paths = [a]
-    if reason == 'legacy':
-        first.pop('integrity')
-        paths = [a, b]
     if reason == 'depth':
         first['index_depth'] = 16
         paths = [a, b]
@@ -93,6 +90,21 @@ def test_incompatible_predecessor_uses_full_index(index_store, reason):
     files = extract(second, 'full')
     assert (files / Path(a).name / 'payload').read_bytes() == b'keep'
     assert (files / Path(b).name).exists() == (b in paths)
+
+
+@pytest.mark.parametrize('field', ['integrity', 'index_depth'])
+def test_obsolete_predecessor_metadata_is_rejected(index_store, field):
+    root, add, build, _ = index_store
+    a = add('a', b'retained')
+    first = build([a], 1)
+    before = Path(first['canonical_metadata_image']).read_bytes()
+    first.pop(field)
+    b = add('b', b'new')
+    with pytest.raises(core.EngineError, match=field):
+        build([a, b], 2, first)
+    target = root / 'views/by-closure' / hashlib.sha256(b'2').hexdigest()
+    assert not (target / 'store.erofs').exists()
+    assert Path(first['canonical_metadata_image']).read_bytes() == before
 
 
 def test_corrupt_predecessor_fails_before_publishing_new_index(index_store):
