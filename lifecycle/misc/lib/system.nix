@@ -170,19 +170,14 @@ let
     path: attrs:
     let
       hasSource = hasAttr "source" attrs && attrs.source != null;
-      hasCamelSourceRef = hasAttr "sourceRef" attrs && attrs.sourceRef != null;
-      hasSnakeSourceRef = hasAttr "source_ref" attrs && attrs.source_ref != null;
+      hasSourceRef = hasAttr "sourceRef" attrs && attrs.sourceRef != null;
       rawSource =
-        if hasCamelSourceRef && hasSnakeSourceRef then
-          fail path "sourceRef and source_ref cannot both be set"
-        else if hasSource && (hasCamelSourceRef || hasSnakeSourceRef) then
+        if hasSource && hasSourceRef then
           fail path "source and sourceRef cannot both be set"
         else if hasSource then
           attrs.source
-        else if hasCamelSourceRef then
+        else if hasSourceRef then
           attrs.sourceRef
-        else if hasSnakeSourceRef then
-          attrs.source_ref
         else
           null;
     in
@@ -194,7 +189,6 @@ let
       profile = expectOptions "dom0.profile" [
         "source"
         "sourceRef"
-        "source_ref"
         "activationCommand"
         "activation_command"
         "activationAction"
@@ -266,7 +260,6 @@ let
             "reason"
             "source"
             "sourceRef"
-            "source_ref"
             "switchAction"
             "switch_action"
           ] value;
@@ -322,7 +315,6 @@ let
             "reason"
             "source"
             "sourceRef"
-            "source_ref"
           ] value;
       sourceInfo = normalizeSourceOption path componentValue;
       enable = expectBool "${path}.enable" (get componentValue "enable" (sourceIsSet sourceInfo));

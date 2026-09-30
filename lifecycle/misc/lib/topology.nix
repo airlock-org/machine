@@ -163,19 +163,14 @@ let
     path: attrs:
     let
       hasSource = hasAttr "source" attrs && attrs.source != null;
-      hasCamelSourceRef = hasAttr "sourceRef" attrs && attrs.sourceRef != null;
-      hasSnakeSourceRef = hasAttr "source_ref" attrs && attrs.source_ref != null;
+      hasSourceRef = hasAttr "sourceRef" attrs && attrs.sourceRef != null;
       rawSource =
-        if hasCamelSourceRef && hasSnakeSourceRef then
-          fail path "sourceRef and source_ref cannot both be set"
-        else if hasSource && (hasCamelSourceRef || hasSnakeSourceRef) then
+        if hasSource && hasSourceRef then
           fail path "source and sourceRef cannot both be set"
         else if hasSource then
           attrs.source
-        else if hasCamelSourceRef then
+        else if hasSourceRef then
           attrs.sourceRef
-        else if hasSnakeSourceRef then
-          attrs.source_ref
         else
           null;
     in
@@ -436,28 +431,11 @@ let
         "import"
         "source"
         "sourceRef"
-        "source_ref"
         "skipStart"
         "skip_start"
       ] value;
       importTemplate = expectBool "templates.${checkedName}.import" (get template "import" false);
-      hasSource = hasAttr "source" template && template.source != null;
-      hasCamelSourceRef = hasAttr "sourceRef" template && template.sourceRef != null;
-      hasSnakeSourceRef = hasAttr "source_ref" template && template.source_ref != null;
-      rawSource =
-        if hasCamelSourceRef && hasSnakeSourceRef then
-          fail "templates.${checkedName}" "sourceRef and source_ref cannot both be set"
-        else if hasSource && (hasCamelSourceRef || hasSnakeSourceRef) then
-          fail "templates.${checkedName}" "source and sourceRef cannot both be set"
-        else if hasSource then
-          template.source
-        else if hasCamelSourceRef then
-          template.sourceRef
-        else if hasSnakeSourceRef then
-          template.source_ref
-        else
-          null;
-      sourceInfo = normalizeSource "templates.${checkedName}.source" rawSource;
+      sourceInfo = normalizeSourceOption "templates.${checkedName}" template;
       hasCamelSkip = hasAttr "skipStart" template;
       hasSnakeSkip = hasAttr "skip_start" template;
       camelSkip =
@@ -508,7 +486,6 @@ let
         system = expectOptions path [
           "source"
           "sourceRef"
-          "source_ref"
         ] value;
         sourceInfo = normalizeSourceOption path system;
       in
@@ -529,7 +506,6 @@ let
             "name"
             "source"
             "sourceRef"
-            "source_ref"
           ] value;
       sourceInfo = normalizeSourceOption path componentValue;
       componentName =
@@ -557,7 +533,6 @@ let
           "mode"
           "source"
           "sourceRef"
-          "source_ref"
           "mountpoint"
           "device"
           "blobDevice"
@@ -638,7 +613,6 @@ let
             "mode"
             "source"
             "sourceRef"
-            "source_ref"
             "readOnly"
             "read_only"
           ] value;
