@@ -8,7 +8,7 @@
   nix,
   makeWrapper,
   setuptools,
-  systemd,
+  pkgs,
   util-linux,
 }:
 
@@ -26,7 +26,7 @@ buildPythonPackage {
 
   postFixup = ''
     wrapProgram "$out/bin/airlock-host-store" \
-      --prefix PATH : ${lib.makeBinPath [ nix erofs-utils gnutar lvm2 util-linux systemd ]}
+      --prefix PATH : ${lib.makeBinPath [ nix erofs-utils gnutar lvm2 util-linux pkgs.systemd ]}
     wrapProgram "$out/bin/airlock-closure-store" \
       --prefix PATH : ${lib.makeBinPath [
         e2fsprogs
