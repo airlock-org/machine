@@ -8,7 +8,7 @@ import St from 'gi://St';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
-import {FocusState, LOCAL, UNKNOWN} from './state.js';
+import {FocusState, WindowIdentityCache, LOCAL, UNKNOWN} from './state.js';
 
 const READER = '@identityReader@';
 
@@ -16,6 +16,7 @@ export default class FocusedVMExtension extends Extension {
     enable() {
         this._signals = [];
         this._windowSignals = [];
+        this._cache = new WindowIdentityCache();
         this._indicator = new PanelMenu.Button(0.0, 'Focused VM', true);
         this._indicator.reactive = false;
         this._indicator.can_focus = false;
@@ -93,11 +94,16 @@ export default class FocusedVMExtension extends Extension {
         const window = this._focused;
         const suppressed = this._suppressed();
         const state = this._state;
-        const revision = state.begin(window, suppressed);
+        // Native Wayland windows are local in this GUI path; no reader is needed.
+        const cached = this._cache.get(window) ??
+            (window?.get_client_type() === Meta.WindowClientType.WAYLAND ? LOCAL : null);
+        const revision = state.begin(window, suppressed, cached ?? UNKNOWN);
         if (!window || suppressed || [Meta.WindowType.DESKTOP, Meta.WindowType.DOCK].includes(window.get_window_type())) {
             this._render(null);
             return;
         }
+        if (cached)
+            return;
         const cancellable = new Gio.Cancellable();
         this._cancellable = cancellable;
         this._resolve(window, cancellable, new Set()).then(identity => {
@@ -109,17 +115,25 @@ export default class FocusedVMExtension extends Extension {
         if (cancellable.is_cancelled() || seen.has(window))
             return UNKNOWN;
         seen.add(window);
+        const cache = this._cache;
+        const cached = cache.get(window);
+        if (cached)
+            return cached;
         if (window.get_client_type() === Meta.WindowClientType.WAYLAND)
             return LOCAL;
         // Mutter's description starts with the X client XID; its title is ignored.
         const xid = /^(0x[0-9a-fA-F]+)\s/.exec(window.get_description())?.[1];
         if (!xid)
             return UNKNOWN;
+        cache.watch(window);
         const identity = await this._read(xid, cancellable);
+        if (cancellable.is_cancelled())
+            return UNKNOWN;
         if (identity.kind === 'absent') {
             const parent = window.get_transient_for();
             return parent ? this._resolve(parent, cancellable, seen) : UNKNOWN;
         }
+        cache.remember(window, identity);
         return identity;
     }
 
@@ -169,6 +183,8 @@ export default class FocusedVMExtension extends Extension {
         this._cancelRead();
         this._disconnect(this._signals);
         this._disconnect(this._windowSignals);
+        this._cache.clear();
+        this._cache = null;
         this._state.disable();
         this._state = null;
         this._focused = null;

@@ -160,15 +160,15 @@ def test_shell_update_cannot_publish_into_a_reenabled_instance(tmp_path):
     extension_module = tmp_path / "extension.mjs"
     source = re.sub(r"^import .*;\n", "", (EXTENSION / "extension.js").read_text(), flags=re.MULTILINE)
     extension_module.write_text(
-        f"import {{FocusState, LOCAL, UNKNOWN}} from {json.dumps(state_module.as_uri())};\n"
+        f"import {{FocusState, WindowIdentityCache, LOCAL, UNKNOWN}} from {json.dumps(state_module.as_uri())};\n"
         "const {Gio, Meta, Extension} = globalThis.shellMocks;\n" + source
     )
     script = f"""
 import assert from 'node:assert/strict';
-import {{FocusState}} from {json.dumps(state_module.as_uri())};
+import {{FocusState, WindowIdentityCache}} from {json.dumps(state_module.as_uri())};
 globalThis.shellMocks = {{
     Gio: {{Cancellable: class {{}}}},
-    Meta: {{WindowType: {{DESKTOP: 1, DOCK: 2}}}},
+    Meta: {{WindowType: {{DESKTOP: 1, DOCK: 2}}, WindowClientType: {{X11:0, WAYLAND:1}}}},
     Extension: class {{}},
 }};
 const {{default: Extension}} = await import({json.dumps(extension_module.as_uri())});
@@ -176,7 +176,8 @@ const extension = new Extension();
 const renders = [];
 const requests = [];
 extension._state = new FocusState(value => renders.push(value));
-extension._focused = {{get_window_type: () => 0}};
+extension._cache = new WindowIdentityCache();
+extension._focused = {{get_window_type: () => 0, get_client_type: () => 0}};
 extension._suppressed = () => false;
 extension._cancelRead = () => {{}};
 extension._resolve = () => new Promise(resolve => requests.push(resolve));
@@ -214,12 +215,12 @@ def test_application_actors_and_settled_shell_focus(tmp_path):
     extension_module = tmp_path / "extension.mjs"
     source = re.sub(r"^import .*;\n", "", (EXTENSION / "extension.js").read_text(), flags=re.MULTILINE)
     extension_module.write_text(
-        f"import {{FocusState, LOCAL, UNKNOWN}} from {json.dumps(state_module.as_uri())};\n"
+        f"import {{FocusState, WindowIdentityCache, LOCAL, UNKNOWN}} from {json.dumps(state_module.as_uri())};\n"
         "const {Gio, GLib, Meta, Main, Extension} = globalThis.shellMocks;\n" + source
     )
     script = f"""
 import assert from 'node:assert/strict';
-import {{FocusState}} from {json.dumps(state_module.as_uri())};
+import {{FocusState, WindowIdentityCache}} from {json.dumps(state_module.as_uri())};
 let keyFocus = null;
 const idle = [];
 const removed = [];
@@ -230,11 +231,11 @@ globalThis.shellMocks = {{
         idle_add: (_priority, callback) => {{idle.push(callback); return idle.length;}},
         Source: {{remove: id => removed.push(id)}},
     }},
-    Meta: {{WindowType: {{DESKTOP:1,DOCK:2}}}},
+    Meta: {{WindowType: {{DESKTOP:1,DOCK:2}}, WindowClientType: {{X11:0, WAYLAND:1}}}},
     Main,
     Extension: class {{}},
 }};
-const calculator = {{get_window_type:()=>0, get_transient_for:()=>null,
+const calculator = {{get_window_type:()=>0, get_client_type:()=>0, get_transient_for:()=>null,
     connect:()=>1, disconnect:()=>{{}}}};
 globalThis.global = {{stage:{{get_key_focus:()=>keyFocus}}, display:{{focus_window:calculator}},
     window_group:{{contains: actor=>actor.group==='window'}},
@@ -262,6 +263,7 @@ const rendered=[];
 extension._state=new FocusState(value=>rendered.push(value));
 extension._signals=[];
 extension._windowSignals=[];
+extension._cache=new WindowIdentityCache();
 extension._cancelRead=()=>{{}};
 let reads=0;
 extension._resolve=async()=>{{reads++; return {{kind:'vm',name:'usr-home',color:'#3465a4'}};}};
@@ -286,6 +288,157 @@ extension._queueUpdate();
 extension.disable();
 assert.deepEqual(removed,[2]);
 assert.equal(rendered.at(-1),null);
+"""
+    result = subprocess.run([node, "--input-type=module", "-e", script], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+
+
+def test_cached_switches_retry_unknowns_and_window_lifetime(tmp_path):
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("JavaScript runtime is not installed")
+    state_module = tmp_path / "state.mjs"
+    state_module.write_text((EXTENSION / "state.js").read_text())
+    extension_module = tmp_path / "extension.mjs"
+    source = re.sub(r"^import .*;\n", "", (EXTENSION / "extension.js").read_text(), flags=re.MULTILINE)
+    extension_module.write_text(
+        f"import {{FocusState, WindowIdentityCache, LOCAL, UNKNOWN}} from {json.dumps(state_module.as_uri())};\n"
+        "const {Gio, Meta, Extension} = globalThis.shellMocks;\n" + source
+    )
+    script = f"""
+import assert from 'node:assert/strict';
+import {{FocusState, WindowIdentityCache, LOCAL, UNKNOWN}} from {json.dumps(state_module.as_uri())};
+globalThis.shellMocks = {{
+    Gio: {{Cancellable: class {{
+        cancelled = false;
+        cancel() {{this.cancelled = true;}}
+        is_cancelled() {{return this.cancelled;}}
+    }}}},
+    Meta: {{WindowType: {{DESKTOP:1,DOCK:2}}, WindowClientType: {{X11:0,WAYLAND:1}}}},
+    Extension: class {{}},
+}};
+const {{default: Extension}} = await import({json.dumps(extension_module.as_uri())});
+const extension = new Extension();
+const rendered = [];
+const reads = [];
+let suppressed = false;
+function window(xid, clientType = 0) {{
+    const signals = new Map();
+    let id = 0;
+    return {{
+        parent: null,
+        get_client_type: () => clientType,
+        get_window_type: () => 0,
+        get_description: () => `${{xid}} untrusted title`,
+        get_transient_for() {{return this.parent;}},
+        connect(signal, callback) {{signals.set(++id, callback); return id;}},
+        disconnect(id) {{signals.delete(id);}},
+        close() {{for (const callback of [...signals.values()]) callback();}},
+        signalCount: () => signals.size,
+    }};
+}}
+const home = {{kind:'vm',name:'usr-home',color:'#3465a4'}};
+const browser = {{kind:'vm',name:'usr-browser',color:'#f57900'}};
+extension._cache = new WindowIdentityCache();
+extension._render = value => rendered.push(value);
+extension._state = new FocusState(value => rendered.push(value));
+extension._suppressed = () => suppressed;
+extension._read = (xid, cancellable) => new Promise(resolve => reads.push({{xid,cancellable,resolve}}));
+const settle = () => new Promise(resolve => setImmediate(resolve));
+function focus(window) {{extension._focused = window; extension._update();}}
+const files = window('0x123');
+const firefox = window('0x456');
+focus(files);
+assert.deepEqual(rendered.at(-1), UNKNOWN);
+reads.at(-1).resolve(home);
+await settle();
+focus(firefox);
+assert.deepEqual(rendered.at(-1), UNKNOWN); // Never use the previous window's cache.
+reads.at(-1).resolve(browser);
+await settle();
+const warmStart = rendered.length;
+for (let i = 0; i < 100; i++) {{focus(files); focus(firefox);}}
+assert.equal(reads.length, 2); // 200 repeat switches spawn no reader.
+assert.ok(rendered.slice(warmStart).every(value => value.kind === 'vm'));
+assert.deepEqual(rendered.slice(warmStart, warmStart + 2), [home, browser]);
+suppressed = true;
+focus(firefox);
+assert.equal(rendered.at(-1), null);
+suppressed = false;
+focus(firefox);
+assert.deepEqual(rendered.at(-1), browser);
+assert.equal(reads.length, 2);
+focus(null);
+assert.equal(rendered.at(-1), null);
+const localStart = rendered.length;
+focus(window('unused', 1));
+assert.deepEqual(rendered.slice(localStart), [LOCAL]);
+assert.equal(reads.length, 2);
+// Closure invalidates an unfocused entry; reusing its XID does not reuse identity.
+files.close();
+assert.equal(files.signalCount(), 0);
+const replacement = window('0x123');
+focus(replacement);
+assert.deepEqual(rendered.at(-1), UNKNOWN);
+assert.equal(reads.length, 3);
+reads.at(-1).resolve(UNKNOWN);
+await settle();
+focus(replacement);
+assert.equal(reads.length, 4); // Unknown is retried, never cached.
+reads.at(-1).resolve(home);
+await settle();
+// Changing a transient's parent must resolve the current parent, not a cached one.
+const dialog = window('0x789');
+dialog.parent = replacement;
+focus(dialog);
+reads.at(-1).resolve({{kind:'absent'}});
+await settle();
+assert.deepEqual(rendered.at(-1), home);
+dialog.parent = firefox;
+focus(dialog);
+reads.at(-1).resolve({{kind:'absent'}});
+await settle();
+assert.deepEqual(rendered.at(-1), browser);
+// Rapid focus changes cancel cold reads; late results cannot populate that cache.
+const racing = window('0xabc');
+focus(racing);
+const cancelled = reads.at(-1);
+focus(firefox);
+cancelled.resolve(home);
+await settle();
+assert.deepEqual(rendered.at(-1), browser);
+assert.equal(extension._cache.get(racing), null);
+// A window destroyed during its read cannot be resurrected by the completion.
+focus(racing);
+const closing = reads.at(-1);
+racing.close();
+closing.resolve(home);
+await settle();
+assert.equal(extension._cache.get(racing), null);
+// Disable/re-enable cannot leak a late result into either old or new caches.
+const pending = window('0xdef');
+focus(pending);
+const late = reads.at(-1);
+const oldCache = extension._cache;
+oldCache.clear();
+extension._state.disable();
+extension._cache = new WindowIdentityCache();
+extension._render = value => rendered.push(value);
+extension._state = new FocusState(value => rendered.push(value));
+focus(firefox);
+assert.deepEqual(rendered.at(-1), UNKNOWN);
+late.resolve(home);
+await settle();
+assert.equal(oldCache.get(pending), null);
+assert.equal(extension._cache.get(pending), null);
+assert.deepEqual(rendered.at(-1), UNKNOWN);
+assert.equal(pending.signalCount(), 0);
+assert.equal(replacement.signalCount(), 0);
+reads.at(-1).resolve(browser);
+await settle();
+assert.deepEqual(rendered.at(-1), browser);
+extension._cache.clear();
+assert.equal(firefox.signalCount(), 0);
 """
     result = subprocess.run([node, "--input-type=module", "-e", script], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr

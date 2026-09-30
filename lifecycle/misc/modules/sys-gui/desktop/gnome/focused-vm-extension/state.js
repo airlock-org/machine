@@ -15,6 +15,45 @@ export function validateIdentity(value) {
     return {...UNKNOWN};
 }
 
+// Keys are live Meta.Window objects, never reusable XIDs or application names.
+// Only direct, verified identities are retained. Transient-parent fallback and
+// failed reads are resolved again so a changed parent cannot inherit stale data.
+export class WindowIdentityCache {
+    constructor() {
+        this._entries = new Map();
+        this._active = true;
+    }
+
+    watch(window) {
+        if (!this._active || this._entries.has(window))
+            return;
+        const signal = window.connect('unmanaged', () => {
+            window.disconnect(signal);
+            this._entries.delete(window);
+        });
+        this._entries.set(window, {signal, identity: null});
+    }
+
+    get(window) {
+        return this._entries.get(window)?.identity ?? null;
+    }
+
+    remember(window, value) {
+        const entry = this._entries.get(window);
+        const identity = validateIdentity(value);
+        // A late lookup cannot resurrect a destroyed window or a cleared cache.
+        if (this._active && entry && identity.kind !== 'unknown')
+            entry.identity = identity;
+    }
+
+    clear() {
+        this._active = false;
+        for (const [window, {signal}] of this._entries)
+            window.disconnect(signal);
+        this._entries.clear();
+    }
+}
+
 export class FocusState {
     constructor(render) {
         this._render = render;
@@ -22,9 +61,9 @@ export class FocusState {
         this._active = true;
     }
 
-    begin(window, suppressed) {
+    begin(window, suppressed, identity = UNKNOWN) {
         const revision = ++this._revision;
-        this._render(window && !suppressed ? {...UNKNOWN} : null);
+        this._render(window && !suppressed ? validateIdentity(identity) : null);
         return revision;
     }
 
