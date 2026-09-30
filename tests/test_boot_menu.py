@@ -84,7 +84,7 @@ def test_menu_orders_all_normal_before_recovery(boot_menu, tmp_path):
     assert ordered[:2] == [current, previous]
     assert boot_menu.fields(current)["title"] == "Airlock (2026-09-30_14:42-0000000)"
     assert boot_menu.fields(recovery)["title"] == "Airlock (recovery, 2026-09-30_14:42-0000000)"
-    assert boot_menu.fields(current)["version"] == "Generation 12"
+    assert "version" not in boot_menu.fields(current)
     assert other.is_file()
     loader = boot_menu.fields(esp / "loader/loader.conf")
     assert loader["default"] == loader["preferred"] == current.name
@@ -150,7 +150,7 @@ def test_retained_recovery_is_usable_without_its_store_view(boot_menu, tmp_path)
     for system in store.glob('recovery*'):
         shutil.rmtree(system)
     retained = esp / 'loader/entries/airlock-xen-recovery.conf'
-    text = ('title Airlock (recovery)\nversion Generation 1 retained\n'
+    text = ('title Airlock (recovery)\n# airlock-generation 1\n'
             'efi /EFI/airlock/recovery.efi\n'
             '# airlock-system /nix/store/recovery1\n# airlock-role recovery\n')
     retained.write_text(text)
@@ -171,7 +171,7 @@ def test_regenerated_native_duplicates_keep_sealed_choices_and_default(boot_menu
         target = native.with_name('airlock-' + native.name)
         system = boot_menu.system_for_xen_entry(native, store)
         title = 'Airlock (recovery)' if role == 'recovery' else 'Airlock'
-        text = (f'title {title}\nversion Generation {generation}\n'
+        text = (f'title {title}\n# airlock-generation {generation}\n'
                 f'efi /EFI/airlock/{target.stem}.efi\n'
                 f'# airlock-system /nix/store/{system.name}\n# airlock-role {role}\n')
         target.write_text(text)
@@ -222,3 +222,36 @@ def test_explicit_identity_classifies_without_version_or_title(boot_menu, tmp_pa
     assert classified[recovery] == (12, 'recovery')
     boot_menu.configure(esp, store)
     assert boot_menu.fields(esp / 'loader/loader.conf')['default'] == current.name
+
+
+def test_missing_source_refuses_menu_mutation(boot_menu, tmp_path):
+    esp, store, *_ = menu_fixture(tmp_path)
+    (store / "lab12/etc/airlock/boot-source.json").unlink()
+    before = {path: path.read_bytes() for path in esp.rglob("*.conf")}
+    with pytest.raises(ValueError, match="committed source provenance"):
+        boot_menu.configure(esp, store)
+    assert {path: path.read_bytes() for path in esp.rglob("*.conf")} == before
+
+
+def test_version_discovery_is_limited_to_current_upstream_entries(boot_menu):
+    text = "version Generation 7 upstream details\n"
+    assert boot_menu.presentation.generation(text, upstream=True) == 7
+    with pytest.raises(ValueError, match="explicit airlock-generation"):
+        boot_menu.presentation.generation(text)
+
+
+def test_recorded_source_formats_retained_entry_without_mounted_system(boot_menu):
+    presentation = boot_menu.presentation
+    source = {"revision": "abcdef0" + "1" * 33, "timestamp": 1790778600}
+    text = presentation.format_entry("efi /EFI/airlock/host.efi\n", 7, "normal", "/nix/store/host", source)
+    assert presentation.format_entry(text, 7, "normal", "/nix/store/host") == text
+
+
+def test_retained_entry_without_explicit_generation_is_rejected(boot_menu, tmp_path):
+    esp, store, *_ = menu_fixture(tmp_path)
+    retained = esp / 'loader/entries/airlock-xen-old.conf'
+    retained.write_text('version Generation 1\n# airlock-system /nix/store/old\n# airlock-role normal\n')
+    before = {path: path.read_bytes() for path in esp.rglob('*.conf')}
+    with pytest.raises(ValueError, match='explicit airlock-generation'):
+        boot_menu.configure(esp, store)
+    assert {path: path.read_bytes() for path in esp.rglob('*.conf')} == before

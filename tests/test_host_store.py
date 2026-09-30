@@ -16,8 +16,10 @@ B = "/nix/store/" + "1" * 32 + "-package"
 
 
 @pytest.fixture(autouse=True)
-def no_host_firmware_preferences(monkeypatch, tmp_path):
+def boot_source_and_no_host_firmware_preferences(monkeypatch, tmp_path):
     from airlock_qubes_storage import boot_presentation as presentation
+    monkeypatch.setattr(presentation, "source_metadata", lambda system:
+                        {"revision": "abcdef0" + "1" * 33, "timestamp": 1790778600})
     monkeypatch.setattr(presentation.clear_saved_default, "__defaults__",
                         (tmp_path / "no-host-efivars", "bootctl"))
 
@@ -213,11 +215,9 @@ def test_recovery_uses_xen_efi_binding_and_rejects_damaged_initramfs(tmp_path, t
     assert host_artifacts.verify(root, esp, record) == 'airlock-' + entry.name
     retained = entry.with_name('airlock-' + entry.name)
     sealed_text = retained.read_text()
-    assert 'version Generation 1\n' in sealed_text
+    assert 'version ' not in sealed_text
     assert '# airlock-generation 1\n' in sealed_text
-    assert 'legacy generation 1' in sealed_text
-    from airlock_qubes_storage.boot_presentation import GENERATION, fields
-    assert GENERATION.match(fields(sealed_text)['version'])
+    assert '2026-09-30_14:30-abcdef0' in sealed_text
     assert list(entry.parent.glob('*.conf')) == [retained]
     from airlock_qubes_storage.boot_presentation import fields
     assert fields(loader.read_text())["default"] == retained.name
@@ -423,8 +423,8 @@ def test_retiring_boot_entry_preserves_shared_kernel_for_other_generation(tmp_pa
     (directory / 'initrd.efi').write_bytes(b'shared initrd')
     host_artifacts.seal(root, esp)
     assert {line for path in entries.glob('airlock-*.conf')
-            for line in path.read_text().splitlines() if line.startswith('version ')} == {
-                'version Generation 1', 'version Generation 2'}
+            for line in path.read_text().splitlines() if line.startswith('# airlock-generation ')} == {
+                '# airlock-generation 1', '# airlock-generation 2'}
     host_artifacts.forget(root, esp, A)
     assert not (entries / 'airlock-xen-1.conf').exists()
     assert not (esp / 'EFI/airlock/xen-1.efi').exists()
@@ -478,17 +478,15 @@ def test_sealed_entries_preserve_boot_generation_and_source_order(tmp_path, monk
 
 
 @pytest.mark.parametrize('fault', ['entry', 'kernel', 'interruption'])
-def test_legacy_presentation_migration_verifies_and_resumes(tmp_path, monkeypatch, fault):
+def test_current_presentation_refresh_verifies_and_resumes(tmp_path, monkeypatch, fault):
     root, esp, artifacts, presentation = boot_artifact_fixture(tmp_path, monkeypatch)
     artifacts.seal(root, esp)
     descriptor_path = root / 'host/artifacts' / (host.key(A) + '.json')
     descriptor = core.read_json(descriptor_path)
     entry = esp / 'loader/entries' / descriptor['entries'][0]['entry']
-    # Model a genuinely checksum-bound entry created by the previous release.
-    legacy = (f'title Airlock\nversion Generation 2 long details\n'
-              f'efi /EFI/airlock/xen-2-normal.efi\n'
-              f'# airlock-system {A}\n# airlock-role normal\n')
-    entry.write_text(legacy)
+    # A current checksum-bound entry can need presentation changes too.
+    text = entry.read_text().replace('title Airlock (2026-09-30_14:30-abcdef0)', 'title Airlock')
+    entry.write_text(text)
     fingerprint = {'size': entry.stat().st_size, 'sha256': core.hash_file(entry)}
     descriptor['entries'][0]['files'][str(entry.relative_to(esp))] = fingerprint
     core.atomic_json(descriptor_path, descriptor)

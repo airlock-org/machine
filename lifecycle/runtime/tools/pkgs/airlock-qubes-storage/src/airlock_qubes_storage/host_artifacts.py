@@ -75,7 +75,7 @@ def seal(root, esp):
             # A retained entry must survive upstream menu regeneration even
             # when its system path is absent from the currently mounted view.
             selected = verify(root, esp, record)
-            migrate_presentation(descriptor, esp)
+            refresh_presentation(descriptor, esp)
             remove_native_duplicates(esp, record["system"], selected)
             continue
         entries = inventory(esp, record["system"])
@@ -110,7 +110,7 @@ def seal(root, esp):
                 role = metadata.get("airlock-role") or (marker.read_text().strip() if marker.is_file() else None)
                 if role is None:
                     core.fail("host boot entry has no explicit role")
-                generation = presentation.generation(text)
+                generation = presentation.generation(text, upstream=True)
                 if generation is None:
                     core.fail("host boot entry has no boot-menu generation")
                 text = presentation.format_entry(text, generation, role, record["system"],
@@ -131,8 +131,8 @@ def seal(root, esp):
         select_entry(esp, presentation.newest_normal(esp / "loader/entries"))
 
 
-def migrate_presentation(descriptor_path, esp):
-    """Reformat already verified legacy entries with a resumable hash transition.
+def refresh_presentation(descriptor_path, esp):
+    """Refresh verified entry presentation with a resumable hash transition.
 
     Publish both authenticated byte identities before replacing entry files.
     After a crash, verification accepts either complete file and sealing resumes

@@ -45,7 +45,7 @@ def classified_entries(entries_dir, store_root):
     result = []
     for path in entries_dir.glob("xen-*.conf"):
         text = path.read_text()
-        generation = presentation.generation(text)
+        generation = presentation.generation(text, upstream=True)
         comments = presentation.identity(text)
         logical_system = comments.get("airlock-system", "")
         system = (store_root / Path(logical_system).name if logical_system.startswith("/nix/store/")
