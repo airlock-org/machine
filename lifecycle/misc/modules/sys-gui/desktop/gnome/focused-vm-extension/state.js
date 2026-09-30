@@ -5,9 +5,12 @@ export const LOCAL = {kind: 'local', name: 'sys-gui', color: null};
 export function validateIdentity(value) {
     if (value?.kind === 'local' && value.name === 'sys-gui')
         return {...LOCAL};
-    if (value?.kind === 'vm' && /^[A-Za-z][A-Za-z0-9_-]{0,30}$/.test(value.name)) {
+    if (value?.kind === 'vm' && typeof value.name === 'string' &&
+        value.name.length >= 1 && value.name.length <= 31 &&
+        /^[A-Za-z]/.test(value.name) && !/[^A-Za-z0-9_-]/.test(value.name)) {
         return {kind: 'vm', name: value.name,
-            color: /^#[0-9a-f]{6}$/.test(value.color) ? value.color : null};
+            color: typeof value.color === 'string' && value.color.length === 7 &&
+                /^#[0-9a-f]{6}$/.test(value.color) ? value.color : null};
     }
     return {...UNKNOWN};
 }

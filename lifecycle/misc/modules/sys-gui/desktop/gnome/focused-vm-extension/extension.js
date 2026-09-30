@@ -72,7 +72,8 @@ export default class FocusedVMExtension extends Extension {
         this._cancelRead();
         const window = this._focused;
         const suppressed = this._suppressed();
-        const revision = this._state.begin(window, suppressed);
+        const state = this._state;
+        const revision = state.begin(window, suppressed);
         if (!window || suppressed || [Meta.WindowType.DESKTOP, Meta.WindowType.DOCK].includes(window.get_window_type())) {
             this._render(null);
             return;
@@ -80,8 +81,8 @@ export default class FocusedVMExtension extends Extension {
         const cancellable = new Gio.Cancellable();
         this._cancellable = cancellable;
         this._resolve(window, cancellable, new Set()).then(identity => {
-            this._state?.complete(revision, identity);
-        }).catch(() => this._state?.complete(revision, UNKNOWN));
+            state.complete(revision, identity);
+        }).catch(() => state.complete(revision, UNKNOWN));
     }
 
     async _resolve(window, cancellable, seen) {

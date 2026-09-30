@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import json
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -141,8 +142,54 @@ state.complete(local, UNKNOWN);
 state.complete(empty, LOCAL);
 assert.equal(rendered.at(-1), null);
 assert.deepEqual(validateIdentity({{kind:'vm',name:'<b>bad</b>',color:'#ffffff'}}), UNKNOWN);
+assert.deepEqual(validateIdentity({{kind:'vm',name:'usr-home\\n',color:'#ffffff'}}), UNKNOWN);
+assert.deepEqual(validateIdentity({{kind:'vm',name:['usr-home'],color:'#ffffff'}}), UNKNOWN);
 assert.deepEqual(validateIdentity({{kind:'absent'}}), UNKNOWN);
 assert.equal(validateIdentity({{kind:'vm',name:'usr-home',color:'red; width:10000px'}}).color, null);
+"""
+    result = subprocess.run([node, "--input-type=module", "-e", script], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+
+
+def test_shell_update_cannot_publish_into_a_reenabled_instance(tmp_path):
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("JavaScript runtime is not installed")
+    state_module = tmp_path / "state.mjs"
+    state_module.write_text((EXTENSION / "state.js").read_text())
+    extension_module = tmp_path / "extension.mjs"
+    source = re.sub(r"^import .*;\n", "", (EXTENSION / "extension.js").read_text(), flags=re.MULTILINE)
+    extension_module.write_text(
+        f"import {{FocusState, LOCAL, UNKNOWN}} from {json.dumps(state_module.as_uri())};\n"
+        "const {Gio, Meta, Extension} = globalThis.shellMocks;\n" + source
+    )
+    script = f"""
+import assert from 'node:assert/strict';
+import {{FocusState}} from {json.dumps(state_module.as_uri())};
+globalThis.shellMocks = {{
+    Gio: {{Cancellable: class {{}}}},
+    Meta: {{WindowType: {{DESKTOP: 1, DOCK: 2}}}},
+    Extension: class {{}},
+}};
+const {{default: Extension}} = await import({json.dumps(extension_module.as_uri())});
+const extension = new Extension();
+const renders = [];
+const requests = [];
+extension._state = new FocusState(value => renders.push(value));
+extension._focused = {{get_window_type: () => 0}};
+extension._suppressed = () => false;
+extension._cancelRead = () => {{}};
+extension._resolve = () => new Promise(resolve => requests.push(resolve));
+extension._update();
+extension._state.disable();
+extension._state = new FocusState(value => renders.push(value));
+extension._update();
+requests[1]({{kind:'vm',name:'usr-browser',color:'#cc0000'}});
+await new Promise(resolve => setImmediate(resolve));
+assert.equal(renders.at(-1).name, 'usr-browser');
+requests[0]({{kind:'vm',name:'usr-home',color:'#3465a4'}});
+await new Promise(resolve => setImmediate(resolve));
+assert.equal(renders.at(-1).name, 'usr-browser');
 """
     result = subprocess.run([node, "--input-type=module", "-e", script], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
