@@ -238,7 +238,7 @@ def test_nix_selection_drives_reservation_assignment_and_start():
     expression = f"""
       let
         f = builtins.getFlake "{ROOT}";
-        base = f.nixosConfigurations.usb-dev;
+        base = f.nixosConfigurations.machine;
         normal = base.config;
         lab = normal.specialisation.usb-gui-lab.configuration;
         guestBase = f.nixosConfigurations.airlock-domain-sys-gui-usb-gui-lab;
@@ -495,7 +495,7 @@ def test_laptop_read_only_preflight():
             "nix",
             "eval",
             "--json",
-            ".#nixosConfigurations.usb-dev.config.specialisation.usb-gui-lab.configuration",
+            ".#nixosConfigurations.machine.config.specialisation.usb-gui-lab.configuration",
             "--apply",
             'c: { selection = builtins.fromJSON c.environment.etc."airlock/gui-gpu.json".text; topology = c.airlock.qubes.topology; }',
         ],

@@ -24,7 +24,7 @@ def terminal_config():
     expression = f"""
       let
         f = builtins.getFlake "{ROOT}";
-        usb = f.nixosConfigurations.usb-dev;
+        usb = f.nixosConfigurations.machine;
         host = usb.config;
         lab = host.specialisation.usb-gui-lab.configuration;
         guest = f.nixosConfigurations.airlock-domain-sys-gui-usb-gui-lab.config;

@@ -703,15 +703,12 @@
           };
           airlock-vm-dev-image = self.nixosConfigurations."vm-dev".config.system.build.image;
           airlock-vm-release-image = self.nixosConfigurations."vm-release".config.system.build.image;
-          airlock-vm-image = self.nixosConfigurations.vm.config.system.build.image;
           airlock-vm-gui-dev-image = self.nixosConfigurations."vm-gui-dev".config.system.build.image;
           airlock-vm-gui-release-image = self.nixosConfigurations."vm-gui-release".config.system.build.image;
-          airlock-vm-gui-image = self.nixosConfigurations.vm-gui.config.system.build.image;
           airlock-vm-gui-config-dev-image =
             self.nixosConfigurations."vm-gui-config-dev".config.system.build.image;
           airlock-vm-gui-config-release-image =
             self.nixosConfigurations."vm-gui-config-release".config.system.build.image;
-          airlock-vm-gui-config-image = self.nixosConfigurations.vm-gui-config.config.system.build.image;
           airlock-vm-gui-config-network-debug-image =
             self.nixosConfigurations.vm-gui-config-network-debug.config.system.build.image;
           airlock-vm-pool-admission-test-image =
@@ -772,7 +769,6 @@
 
       nixosConfigurations."vm-dev" = mkVmConfiguration { devMode = true; };
       nixosConfigurations."vm-release" = mkVmConfiguration { devMode = false; };
-      nixosConfigurations.vm = self.nixosConfigurations."vm-dev";
 
       nixosConfigurations."vm-gui-dev" = mkVmConfiguration {
         gui = true;
@@ -782,12 +778,10 @@
         gui = true;
         devMode = false;
       };
-      nixosConfigurations.vm-gui = self.nixosConfigurations."vm-gui-dev";
 
       # Minimal nested desktop harness. No physical GPU assignment and no
       # dependency on the full bootstrap/configuration VM topology.
       nixosConfigurations.machine = mkMachineConfiguration { };
-      nixosConfigurations.usb-dev = self.nixosConfigurations.machine;
       nixosConfigurations.airlock-domain-sys-gui-usb =
         (mkUsbSysGuiDomainEntry "x86_64-linux").configuration;
       nixosConfigurations.airlock-domain-sys-gui-usb-gui-lab =
@@ -813,7 +807,6 @@
         configSystem = true;
         devMode = false;
       };
-      nixosConfigurations.vm-gui-config = self.nixosConfigurations."vm-gui-config-dev";
       nixosConfigurations.vm-gui-config-network-debug = mkVmConfiguration {
         gui = true;
         configSystem = true;

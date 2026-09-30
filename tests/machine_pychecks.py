@@ -246,7 +246,7 @@ def check_qrexec_policy_path(repo_root: Path, log_dir: Path) -> None:
             "nix",
             "build",
             "--no-link",
-            f'{repo_root}#nixosConfigurations.vm-gui-config.config.systemd.units."airlock-qubes-policy-path.service".unit',
+            f'{repo_root}#nixosConfigurations.vm-gui-config-dev.config.systemd.units."airlock-qubes-policy-path.service".unit',
         ],
         cwd=repo_root,
     )
@@ -255,7 +255,7 @@ def check_qrexec_policy_path(repo_root: Path, log_dir: Path) -> None:
             "nix",
             "eval",
             "--raw",
-            f"{repo_root}#nixosConfigurations.vm-gui-config.config.systemd.services.airlock-qubes-policy-path.serviceConfig.ExecStart",
+            f"{repo_root}#nixosConfigurations.vm-gui-config-dev.config.systemd.services.airlock-qubes-policy-path.serviceConfig.ExecStart",
         ],
         cwd=repo_root,
     ).stdout
@@ -1814,7 +1814,6 @@ def check_cmd_role(repo_root: Path, log_dir: Path) -> None:
     let
       flake = builtins.getFlake "path:{repo_root}";
       lib = flake.inputs.nixpkgs.lib;
-      legacyDevDom0Cfg = flake.nixosConfigurations.vm-gui-config.config;
       dom0Cfg = flake.nixosConfigurations."vm-gui-config-dev".config;
       releaseDom0Cfg = flake.nixosConfigurations."vm-gui-config-release".config;
       nonDevDom0Cfg = flake.nixosConfigurations.test.config;
@@ -1872,7 +1871,6 @@ def check_cmd_role(repo_root: Path, log_dir: Path) -> None:
         package: packageName package == "airlock-sys-gui-policy"
       ) (throw "missing Airlock sys-gui policy package") dom0Cfg.virtualisation.qubes.packages;
       dom0SysGuiPolicy = builtins.readFile "${{dom0SysGuiPolicyPackage}}/etc/qubes/policy.d/50-airlock-sys-gui.policy";
-      legacyDevDom0Packages = packageNames legacyDevDom0Cfg;
       releaseDom0Packages = packageNames releaseDom0Cfg;
       nonDevDom0Packages = packageNames nonDevDom0Cfg;
       devPackages = packageNames devCfg;
@@ -2029,7 +2027,6 @@ def check_cmd_role(repo_root: Path, log_dir: Path) -> None:
       bootstrap_sys_firewall_topology_autostart =
         bootstrapTopologySysFirewallDomain.prefs.autostart;
       image_dev_mode_enabled = dom0Cfg.airlock.image.devMode.enable;
-      legacy_image_dev_mode_enabled = legacyDevDom0Cfg.airlock.image.devMode.enable;
       dom0_dhcp_enabled = dom0Cfg.networking.useDHCP;
       dom0_dhcpcd_no_gateway = lib.hasInfix "nogateway" dom0Cfg.networking.dhcpcd.extraConfig;
       dom0_proxy_enabled = dom0Cfg.airlock.dom0.devModeNetworkProxy.enable;
@@ -2043,11 +2040,6 @@ def check_cmd_role(repo_root: Path, log_dir: Path) -> None:
       dom0_observability_enabled = dom0Cfg.airlock.dom0.observability.enable;
       dom0_testing_tools_enabled = dom0Cfg.airlock.dom0.testingTools.enable;
       dom0_dev_tools_absent = lib.all (name: !(has name dom0Packages)) [
-        "codex"
-        "git"
-        "zellij"
-      ];
-      legacy_dev_tools_absent = lib.all (name: !(has name legacyDevDom0Packages)) [
         "codex"
         "git"
         "zellij"
@@ -2249,7 +2241,6 @@ def check_cmd_role(repo_root: Path, log_dir: Path) -> None:
     assert data["bootstrap_sys_firewall_topology_netvm"] == "sys-net"
     assert data["bootstrap_sys_firewall_topology_autostart"] is True
     assert data["image_dev_mode_enabled"] is True
-    assert data["legacy_image_dev_mode_enabled"] is True
     assert data["dom0_dhcp_enabled"] is True
     assert data["dom0_dhcpcd_no_gateway"] is True
     assert data["dom0_proxy_enabled"] is True
@@ -2262,7 +2253,6 @@ def check_cmd_role(repo_root: Path, log_dir: Path) -> None:
     assert data["dom0_observability_enabled"] is True
     assert data["dom0_testing_tools_enabled"] is True
     assert data["dom0_dev_tools_absent"] is True
-    assert data["legacy_dev_tools_absent"] is True
     assert data["release_image_dev_mode_enabled"] is False
     assert data["release_dom0_dhcp_enabled"] is False
     assert data["release_dom0_dhcpcd_no_gateway"] is False
@@ -8676,7 +8666,7 @@ def _nix_eval_raw(repo_root: Path, attr: str, *extra: str) -> str:
 def check_config_topology_eval(repo_root: Path, log_dir: Path) -> None:
     """The active configuration topology belongs to the single controller."""
     log_dir.mkdir(parents=True, exist_ok=True)
-    prefix = "nixosConfigurations.vm-gui-config.config"
+    prefix = "nixosConfigurations.vm-gui-config-dev.config"
     topology = _nix_eval_json(repo_root, prefix + ".airlock.qubes.topology")
     assert not any(name.startswith("sys-config-") for name in topology["domains"])
     controller = topology["domains"]["sys-ctrl"]
