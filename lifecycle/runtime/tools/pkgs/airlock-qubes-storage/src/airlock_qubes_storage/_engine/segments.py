@@ -71,10 +71,6 @@ def tar_eof_meta_path(root):
     return Path(root) / "objects/blob-metadata" / ".tar-eof.json"
 
 
-def legacy_object_blob_path(root):
-    return Path(root) / "objects" / "data.blob"
-
-
 def segments_dir(root):
     return Path(root) / "objects/segments"
 

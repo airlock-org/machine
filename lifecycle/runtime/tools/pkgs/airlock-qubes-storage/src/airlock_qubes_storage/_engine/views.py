@@ -92,12 +92,14 @@ def verify_reusable_view(root, manifest):
 
 
 def segment_path_map_from_blob_map(blob_map):
+    if "central_blob" in blob_map:
+        fail("blob map uses obsolete single-blob storage")
     paths = {}
     for segment in blob_map.get("segments", []):
         segment_id = validate_segment_id(segment["id"])
         paths[segment_id] = segment["blob"]
     for extent in blob_map.get("extents", []):
-        if "segment_id" not in extent:
+        if "segment_id" not in extent or "segment_offset" not in extent:
             fail("blob map uses obsolete single-blob extent metadata")
         segment_id = validate_segment_id(extent["segment_id"])
         if "segment_blob" in extent:
@@ -546,16 +548,10 @@ def materialize_erofs_objectmap_view(
     preparation = {"index_reused_objects": 0, "index_new_objects": 0, "index_build_seconds": 0.0}
     reusable_blob_map = False
     if blob_map.exists():
-        with suppress(OSError, json.JSONDecodeError, EngineError):
+        with suppress(OSError, json.JSONDecodeError):
             existing_blob_map = read_json(blob_map)
-            reusable_blob_map = (
-                "segments" in existing_blob_map
-                and "central_blob" not in existing_blob_map
-                and all(
-                    "segment_id" in extent
-                    for extent in existing_blob_map.get("extents", [])
-                )
-            )
+            segment_path_map_from_blob_map(existing_blob_map)
+            reusable_blob_map = True
     if (
         not metadata_image.exists()
         or not blob_map.exists()

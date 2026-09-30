@@ -1,21 +1,17 @@
 import fcntl
 import os
-from contextlib import suppress
 from pathlib import Path
 
 
 from .core import (
-    DEFAULT_SEGMENT_TARGET_BYTES,
     OBJECT_BLOB_ALIGNMENT,
     SCHEMA_OBJECT_BLOB,
-    SCHEMA_SEGMENT,
     TAR_BLOCK_SIZE,
     TAR_EOF_SIZE,
     align_up,
     atomic_json,
     closure_store_fsync_enabled,
     fail,
-    fsync_dir,
     hash_file,
     maybe_failpoint,
     physical_store_path,
@@ -31,7 +27,6 @@ from .segments import (
     create_segment_locked,
     current_open_segment_locked,
     file_size,
-    legacy_object_blob_path,
     object_blob_meta_path,
     object_extent_from_meta,
     object_meta_path,
@@ -39,189 +34,10 @@ from .segments import (
     seal_segment_locked,
     segment_blob_path,
     segment_file_size,
-    segment_id_from_number,
     segment_lock_path,
-    segment_meta_path,
-    segments_dir,
     tar_eof_meta_path,
-    validate_segment_id,
     write_segment_meta,
 )
-
-
-def migrate_single_blob_to_segments(root):
-    root = Path(root)
-    legacy_blob = legacy_object_blob_path(root)
-    if not legacy_blob.exists():
-        return
-    segment_directory = segments_dir(root)
-    segment_directory.mkdir(parents=True, exist_ok=True)
-    lock_path = segment_lock_path(root)
-    with lock_path.open("a+", encoding="utf-8") as lock:
-        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
-        if not legacy_blob.exists():
-            fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
-            return
-        existing = [path for path in segment_directory.glob("*.blob")]
-        if existing:
-            fail("cannot migrate legacy object blob while segment blobs already exist")
-        legacy_realpath = os.path.realpath(legacy_blob)
-        for meta_path in sorted((root / "objects/blob-metadata").glob("*.json")):
-            payload = read_json(meta_path)
-            if (
-                payload.get("central_blob")
-                and os.path.realpath(payload["central_blob"]) != legacy_realpath
-            ):
-                fail(
-                    f"legacy object metadata points outside the legacy object blob: {meta_path}"
-                )
-        segment_id = segment_id_from_number(1)
-        new_blob = segment_blob_path(root, segment_id)
-        os.replace(legacy_blob, new_blob)
-        os.chmod(new_blob, 0o400)
-        objects = []
-        for meta_path in sorted((root / "objects/blob-metadata").glob("*.json")):
-            payload = read_json(meta_path)
-            if "offset" in payload:
-                payload["segment_offset"] = int(payload.pop("offset"))
-            payload["segment_id"] = segment_id
-            payload["segment_blob"] = str(new_blob)
-            payload.pop("central_blob", None)
-            payload["locations"] = [
-                {
-                    "segment_id": segment_id,
-                    "segment_offset": int(payload["segment_offset"]),
-                    "size": int(payload["size"]),
-                    "sha256": payload["sha256"],
-                    "status": "current",
-                    "created_at": utc_now(),
-                    "transaction": payload.get("transaction"),
-                }
-            ]
-            atomic_json(meta_path, payload, mode=0o444)
-            if meta_path.name != ".tar-eof.json":
-                objects.append(
-                    {
-                        "entry": payload.get("entry")
-                        or meta_path.name[: -len(".json")],
-                        "offset": int(payload["segment_offset"]),
-                        "size": int(payload["size"]),
-                        "sha256": payload["sha256"],
-                    }
-                )
-        for meta_path in sorted((root / "objects/metadata").glob("*.json")):
-            payload = read_json(meta_path)
-            fragment = payload.get("tar_fragment")
-            if not fragment:
-                continue
-            if "offset" in fragment:
-                fragment["segment_offset"] = int(fragment.pop("offset"))
-            fragment["segment_id"] = segment_id
-            fragment["segment_blob"] = str(new_blob)
-            fragment.pop("central_blob", None)
-            fragment["locations"] = [
-                {
-                    "segment_id": segment_id,
-                    "segment_offset": int(fragment["segment_offset"]),
-                    "size": int(fragment["size"]),
-                    "sha256": fragment["sha256"],
-                    "status": "current",
-                    "created_at": utc_now(),
-                    "transaction": fragment.get("transaction"),
-                }
-            ]
-            atomic_json(meta_path, payload)
-        atomic_json(
-            segment_meta_path(root, segment_id),
-            {
-                "schema": SCHEMA_SEGMENT,
-                "id": segment_id,
-                "blob": str(new_blob),
-                "status": "sealed",
-                "sealed": True,
-                "created_at": utc_now(),
-                "sealed_at": utc_now(),
-                "seal_reason": "legacy-single-blob-migration",
-                "target_bytes": max(
-                    DEFAULT_SEGMENT_TARGET_BYTES, os.path.getsize(new_blob)
-                ),
-                "used_bytes": os.path.getsize(new_blob),
-                "object_count": len(objects),
-                "objects": objects,
-                "oversized": os.path.getsize(new_blob) > DEFAULT_SEGMENT_TARGET_BYTES,
-                "migrated_from": "objects/data.blob",
-                "append_only_while_open": True,
-                "immutable_after_seal": True,
-            },
-            mode=0o444,
-        )
-        with suppress(FileNotFoundError):
-            remove_path(root / "objects/data.blob.lock")
-        fsync_dir(segment_directory)
-        fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
-
-
-def migrate_legacy_blob_map(root, path, segment_id):
-    root = Path(root)
-    path = Path(path)
-    if not path.exists() or path.is_symlink():
-        return False
-    payload = read_json(path)
-    if "central_blob" not in payload and all(
-        "segment_id" in extent for extent in payload.get("extents", [])
-    ):
-        return False
-    segment_id = validate_segment_id(segment_id)
-    segment_blob = str(segment_blob_path(root, segment_id))
-    segments = {
-        segment_id: {
-            "id": segment_id,
-            "blob": segment_blob,
-            "size": (
-                os.path.getsize(segment_blob) if os.path.exists(segment_blob) else 0
-            ),
-            "status": "sealed",
-        }
-    }
-    for extent in payload.get("extents", []):
-        if "segment_id" not in extent:
-            extent["segment_id"] = segment_id
-        if "segment_offset" not in extent and "central_offset" in extent:
-            extent["segment_offset"] = int(extent.pop("central_offset"))
-        extent["segment_blob"] = segment_blob
-        segments.setdefault(
-            extent["segment_id"],
-            {
-                "id": extent["segment_id"],
-                "blob": extent["segment_blob"],
-                "size": (
-                    os.path.getsize(extent["segment_blob"])
-                    if os.path.exists(extent["segment_blob"])
-                    else 0
-                ),
-                "status": "sealed",
-            },
-        )
-    payload.pop("central_blob", None)
-    payload["segments"] = [
-        segments[key] for key in sorted(segments, key=lambda value: int(value))
-    ]
-    payload["segment_count"] = len(payload["segments"])
-    atomic_json(path, payload, mode=0o444)
-    return True
-
-
-def migrate_legacy_blob_maps(root):
-    root = Path(root)
-    first_segment = segment_blob_path(root, "000001")
-    if not first_segment.exists():
-        return
-    for blob_map in sorted((root / "views/by-closure").glob("*/store.blob-map.json")):
-        migrate_legacy_blob_map(root, blob_map, "000001")
-    for blob_map in sorted(
-        (root / "domains").glob("*/generations/*/store.blob-map.json")
-    ):
-        migrate_legacy_blob_map(root, blob_map, "000001")
 
 
 def create_tar_fragment(source, entry, target):
