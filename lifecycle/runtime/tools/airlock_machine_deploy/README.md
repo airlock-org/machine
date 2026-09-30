@@ -22,3 +22,21 @@ in order: interrupted operations are resumed from those records.
 The existing CLI, journal fields, schema identifiers, and recovery behavior are
 preserved. Tests in `tests/test_machine_deploy.py` exercise those contracts,
 including interruption, rollback, shared locking, and installed-package imports.
+
+Host and controller preparation can extend an authenticated EROFS index when
+its registered objects are an additive subset of the next store. Existing
+logical offsets stay fixed; new fragments append before the terminal tar EOF.
+The predecessor image is copied and never edited. The erofs-utils overlay adds
+`--tar-offset` so upstream incremental tar-index construction can address the
+appended fragments in the combined external data device. Fresh images, removed
+objects, legacy controller indexes without integrity metadata, and depth 16
+use a full index build. Rebuilds bound appended metadata growth.
+
+Generation metadata binds the index checksum and logical blob layout. Existing
+pool admission, physical-range checks, retention pins, boot checksums and
+journalled publication still apply. Compaction may move physical ranges while
+preserving logical addresses. Host publication timing output now separates
+object verification/admission, view preparation and index construction, and
+reports the number of inherited and newly indexed objects for host/controller
+views. This allows changes in preparation cost to be measured separately from
+package transfer volume.

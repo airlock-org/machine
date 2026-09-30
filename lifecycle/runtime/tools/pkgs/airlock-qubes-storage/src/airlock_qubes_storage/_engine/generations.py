@@ -1,4 +1,5 @@
 import os
+import time
 
 
 from .core import (
@@ -35,7 +36,7 @@ from .state import (
     mark_running_ref,
     switch_current,
 )
-from .views import materialize_view, verify_reusable_view
+from .views import materialize_view, verify_reusable_view, view_integrity
 from .root_images import admit_root_source, verify_generation_root
 
 
@@ -143,6 +144,8 @@ def describe_generation(args):
 
 
 def admit_generation(args):
+    started = time.monotonic()
+    timings = {}
     root = ensure_pool(args.pool_root)
     root_artifact = (admit_root_source(root, args.root_source, args.physical_store_root)
                      if args.root_source else None)
@@ -194,6 +197,8 @@ def admit_generation(args):
         )
     else:
         verification = run_verify([args.system], args.verify_mode)
+    timings["object_verification_seconds"] = time.monotonic() - started
+    started = time.monotonic()
     admitted = []
     reused = []
     for logical_path in paths:
@@ -206,6 +211,8 @@ def admit_generation(args):
             reused.append(result)
 
     closure_id = closure_hash(paths, args.system, args.root_source, args.kernel_name)
+    timings["object_admission_seconds"] = time.monotonic() - started
+    started = time.monotonic()
     view = materialize_view(
         root,
         domain,
@@ -216,7 +223,10 @@ def admit_generation(args):
         txid,
         target_bytes,
         trusted_paths=set(cached),
+        **({"previous_index": args.previous_index} if getattr(args, "previous_index", None) else {}),
     )
+    timings["view_preparation_seconds"] = time.monotonic() - started
+    timings.update(view.get("preparation", {}))
     manifest_path = generation_dir / "manifest.json"
     manifest = {
         "schema": SCHEMA_GENERATION,
@@ -269,6 +279,8 @@ def admit_generation(args):
                 "image_contains_materialized_store_copy"
             ],
             "segment_target_bytes": target_bytes,
+            "index_depth": view.get("index_depth", 0),
+            "integrity": view_integrity(view),
         },
         "verification": verification,
         "retention": {
@@ -301,6 +313,7 @@ def admit_generation(args):
     return {
         "schema": SCHEMA_ADMISSION,
         "status": "passed",
+        "timings": timings,
         "pool_root": str(root),
         "domain": domain,
         "generation": generation,

@@ -39,7 +39,8 @@
             patches = (oldAttrs.patches or [ ]) ++ lib.optionals (
               lib.versionAtLeast oldAttrs.version "1.9"
               && lib.versionOlder oldAttrs.version "1.9.4"
-            ) [ ./lifecycle/misc/overlays/erofs-incremental-data.patch ];
+            ) [ ./lifecycle/misc/overlays/erofs-incremental-data.patch ]
+            ++ [ ./lifecycle/misc/overlays/erofs-tar-index-offset.patch ];
           });
           lkl = prev.lkl.overrideAttrs (oldAttrs: {
             postPatch = (oldAttrs.postPatch or "") + ''

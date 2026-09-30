@@ -35,7 +35,7 @@ def key(system):
     return core.store_entry(system)
 
 
-def admit(root, domain, system, registration, *, incremental=True):
+def admit(root, domain, system, registration, *, incremental=True, previous_index=None):
     from .cli import build_parser
     from .generations import admit_generation
 
@@ -54,19 +54,34 @@ def admit(root, domain, system, registration, *, incremental=True):
             "--activate", "false",
         ])
         args.physical_store_root = "/nix/store"
+        args.previous_index = previous_index
         result = admit_generation(args)
     directory = Path(result["manifest"]).parent
     core.atomic_write(directory / "registration", registration, mode=0o444)
     return result
 
 
-def publish(root, system, registration, systems=None, *, incremental=True):
+def publish(root, system, registration, systems=None, *, incremental=True, statistics=None):
     """Admission, durable metadata and physical retention precede boot visibility."""
     root = Path(root)
     existing = root / "host/boots" / (key(system) + ".json")
     if existing.exists():
         return validate_boot(root, system)
-    result = admit(root, "dom0", system, registration, incremental=incremental)
+    previous_index = None
+    running = root / "host/running.json"
+    if running.exists():
+        previous = validate_boot(root, core.read_json(running)["system"])
+        previous_index = dict(core.read_json(previous["manifest"])["store"])
+        # Legacy host indexes already have authenticated boot-record hashes.
+        # Controller bases without integrity metadata use one full build first.
+        previous_index["integrity"] = {
+            "metadata_sha256": previous["metadata_image_sha256"],
+            "layout_sha256": views.blob_layout_hash(core.read_json(previous["blob_map"])),
+        }
+    result = admit(root, "dom0", system, registration, incremental=incremental,
+                   previous_index=previous_index)
+    if statistics is not None:
+        statistics.update({"host_" + name: value for name, value in result.get("timings", {}).items()})
     manifest_path = Path(result["manifest"])
     manifest = core.read_json(manifest_path)
     paths = builder.registration_paths(registration)
@@ -149,7 +164,7 @@ def validate_boot(root, system, *, logical_root=None, allow_retired=False):
     return record
 
 
-def refresh_builder(root, role, host_registration, *, incremental=True):
+def refresh_builder(root, role, host_registration, *, incremental=True, statistics=None):
     """Publish an additive successor; Qubes must attach it only while stopped."""
     root = Path(root)
     previous = core.read_json(root / f"builders/{role}.json")
@@ -158,7 +173,10 @@ def refresh_builder(root, role, host_registration, *, incremental=True):
     if hashlib.sha256(registration.encode()).hexdigest() == previous["registration_sha256"]:
         return previous
     old = core.read_json(directory / "manifest.json")
-    result = admit(root, f"{role}-builder", old["system"], registration, incremental=incremental)
+    result = admit(root, f"{role}-builder", old["system"], registration, incremental=incremental,
+                   previous_index=old["store"])
+    if statistics is not None:
+        statistics.update({"controller_" + name: value for name, value in result.get("timings", {}).items()})
     builder.prepare_builder(root, result, Path(result["manifest"]).parent / "registration",
                             directory / "flake-inputs.json", predecessor=previous)
     return core.read_json(root / f"builders/{role}.json")
@@ -178,7 +196,7 @@ def publish_live(system):
             seed_generation_metadata(record)
             timings["host_database_seconds"] = time.monotonic() - started
             started = time.monotonic()
-            refresh_builder(root, "sys-ctrl", Path(record["registration"]).read_text())
+            refresh_builder(root, "sys-ctrl", Path(record["registration"]).read_text(), statistics=timings)
             timings["controller_base_seconds"] = time.monotonic() - started
             return dict(record, timings=timings)
     temporary = Path(HOST) / "publishing"
@@ -189,13 +207,13 @@ def publish_live(system):
         timings["host_registration_seconds"] = time.monotonic() - started
         with admission_lock(root):
             started = time.monotonic()
-            record = publish(root, system, registration)
+            record = publish(root, system, registration, statistics=timings)
             timings["host_pool_publication_seconds"] = time.monotonic() - started
             started = time.monotonic()
             seed_generation_metadata(record)
             timings["host_database_seconds"] = time.monotonic() - started
             started = time.monotonic()
-            refresh_builder(root, "sys-ctrl", registration)
+            refresh_builder(root, "sys-ctrl", registration, statistics=timings)
             timings["controller_base_seconds"] = time.monotonic() - started
             return dict(record, timings=timings)
 

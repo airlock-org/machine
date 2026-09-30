@@ -2,6 +2,8 @@ import hashlib
 import json
 import os
 import subprocess
+import shutil
+import time
 import uuid
 from contextlib import suppress
 from pathlib import Path
@@ -162,13 +164,17 @@ def reconstruct_blob_view(blob_map, output_path):
     os.chmod(output_path, 0o400)
 
 
-def create_erofs_tar_index_image(root, blob_map, metadata_path, closure_id, txid):
+def create_erofs_tar_index_image(root, blob_map, metadata_path, closure_id, txid,
+                                 *, predecessor=None, tar_offset=0):
     from .core import image_building
 
     mkfs_erofs = require_tool("mkfs.erofs", "AIRLOCK_MKFS_EROFS")
     root = Path(root)
     metadata_path = Path(metadata_path)
-    if metadata_path.exists():
+    if predecessor:
+        shutil.copyfile(predecessor, metadata_path)
+        os.chmod(metadata_path, 0o644)
+    elif metadata_path.exists():
         metadata_path.unlink()
 
     source_mode = os.environ.get("AIRLOCK_CLOSURE_STORE_INDEX_SOURCE", "auto")
@@ -202,6 +208,7 @@ def create_erofs_tar_index_image(root, blob_map, metadata_path, closure_id, txid
                 mkfs_erofs,
                 "--quiet",
                 "--tar=i",
+                *(["--incremental=data", f"--tar-offset={tar_offset}"] if predecessor else []),
                 *seed_options,
                 str(metadata_path),
                 source_path,
@@ -214,6 +221,33 @@ def create_erofs_tar_index_image(root, blob_map, metadata_path, closure_id, txid
             remove_path(tmp_source)
 
     os.chmod(metadata_path, 0o444)
+
+
+def index_predecessor(root, paths, previous):
+    """Reuse only authenticated, additive layouts; old views remain immutable.
+
+    Compaction may relocate extents but must preserve their logical offsets.
+    Periodic full builds bound the growth of appended inode metadata.
+    """
+    from .core import image_building
+
+    if (image_building() or not previous or not previous.get("integrity")
+            or previous.get("index_depth", 0) >= 16
+            or not set(previous["paths"]) <= set(paths)):
+        return None
+    verify_reusable_view(root, {"store": previous})
+    blob_map = read_json(previous["canonical_blob_map"])
+    entries = [extent for extent in blob_map["extents"] if extent["object"] != ".tar-eof"]
+    if ({extent["object"] for extent in entries} != {store_entry(path) for path in previous["paths"]}
+            or len(entries) != len(previous["paths"])):
+        fail("predecessor index differs from registered objects")
+    offset = 0
+    for extent in entries:
+        if extent["logical_offset"] != offset:
+            fail("predecessor index has non-contiguous offsets")
+        offset += extent["length"]
+    return {"store": previous, "objects": [extent["object"] for extent in entries],
+            "offset": offset, "depth": previous.get("index_depth", 0) + 1}
 
 
 def ensure_loop_for_blob(blob_path):
@@ -497,6 +531,7 @@ def materialize_erofs_objectmap_view(
     target_bytes,
     *,
     trusted_paths=frozenset(),
+    previous_index=None,
 ):
     root = Path(root)
     view_root = root / "views/by-closure" / closure_id
@@ -507,6 +542,7 @@ def materialize_erofs_objectmap_view(
     view_root.mkdir(parents=True, exist_ok=True)
 
     view_created = False
+    preparation = {"index_reused_objects": 0, "index_new_objects": 0, "index_build_seconds": 0.0}
     reusable_blob_map = False
     if blob_map.exists():
         with suppress(OSError, json.JSONDecodeError, EngineError):
@@ -530,7 +566,12 @@ def materialize_erofs_objectmap_view(
         object_entries = []
         logical_offset = 0
         total_object_data_bytes = 0
-        for logical_path in sorted(paths):
+        base = index_predecessor(root, paths, previous_index)
+        by_entry = {store_entry(path): path for path in paths}
+        order = (base["objects"] + sorted(set(by_entry) - set(base["objects"]))
+                 if base else sorted(by_entry))
+        for entry in order:
+            logical_path = by_entry[entry]
             entry = store_entry(logical_path)
             meta_path = object_blob_meta_path(root, entry)
             if not meta_path.exists():
@@ -613,9 +654,26 @@ def materialize_erofs_objectmap_view(
         }
 
         tmp_metadata = view_root / f".store.erofs.tmp-{uuid.uuid4().hex}"
+        source_map = blob_map_payload
+        if base:
+            # The inherited index keeps its addresses in the unchanged prefix.
+            # Feed only the appended fragments to mkfs, with their original
+            # logical offset in the combined external data device.
+            source_map = dict(blob_map_payload, extents=[
+                dict(extent, logical_offset=extent["logical_offset"] - base["offset"])
+                for extent in extents[len(base["objects"]):]
+            ], logical_size=logical_offset - base["offset"])
+            needed = {extent["segment_id"] for extent in source_map["extents"]}
+            source_map["segments"] = [segment for segment in source_map["segments"] if segment["id"] in needed]
+        started = time.monotonic()
         create_erofs_tar_index_image(
-            root, blob_map_payload, tmp_metadata, closure_id, txid
+            root, source_map, tmp_metadata, closure_id, txid,
+            predecessor=base["store"]["canonical_metadata_image"] if base else None,
+            tar_offset=base["offset"] if base else 0,
         )
+        preparation.update(index_build_seconds=time.monotonic() - started,
+                           index_reused_objects=len(base["objects"]) if base else 0,
+                           index_new_objects=len(paths) - (len(base["objects"]) if base else 0))
         maybe_failpoint("view-after-metadata-build")
         os.replace(tmp_metadata, metadata_image)
         os.chmod(metadata_image, 0o444)
@@ -637,6 +695,7 @@ def materialize_erofs_objectmap_view(
                 "object_data_bytes": total_object_data_bytes,
                 "read_only": True,
                 "image_contains_materialized_store_copy": False,
+                "index_depth": base["depth"] if base else 0,
             },
         )
         fsync_dir(view_root)
@@ -676,6 +735,8 @@ def materialize_erofs_objectmap_view(
         "segment_count": blob_map_payload.get("segment_count", 0),
         "segments": blob_map_payload.get("segments", []),
         "image_created": view_created,
+        "index_depth": read_json(view_manifest).get("index_depth", 0),
+        "preparation": preparation,
         "sizing": {
             "metadata_image_bytes": os.path.getsize(metadata_image),
             "blob_logical_size": blob_map_payload["logical_size"],
@@ -699,6 +760,7 @@ def materialize_view(
     target_bytes,
     *,
     trusted_paths=frozenset(),
+    previous_index=None,
 ):
     generation_dir = Path(root) / "domains" / domain / "generations" / str(generation)
     if view_backend == VIEW_BACKEND_EROFS_OBJECTMAP:
@@ -710,5 +772,6 @@ def materialize_view(
             txid,
             target_bytes,
             trusted_paths=trusted_paths,
+            previous_index=previous_index,
         )
     fail(f"unsupported closure view backend: {view_backend}")
