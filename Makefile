@@ -2,17 +2,25 @@ SHELL := bash
 
 AIRLOCK_NIX := ./lifecycle/misc/tools/scripts/airlock-nix.sh
 AIRLOCK_LOG_DIR ?= /run/media/user/data/airlock/logs/airlock-machine
+PYTEST_TARGETS = $(if $(TESTS),$(foreach test,$(TESTS),'tests/test_machine_local.py::test_local_check[$(test)]'),tests)
 
-.PHONY: test-quick check-eval machine-build machine-build-gui gc-auto gc-roots gc-dry-run gc
+.PHONY: test-quick test-nix check-eval machine-build machine-build-gui gc-auto gc-roots gc-dry-run gc
 
 check-eval:
 	$(AIRLOCK_NIX) flake check --no-build
 
 test-quick:
 	@mkdir -p "$(AIRLOCK_LOG_DIR)"
-	uv run pytest $(if $(TESTS),$(foreach test,$(TESTS),'tests/test_machine_local.py::test_local_check[$(test)]'),tests) \
+	AIRLOCK_PYTEST_WARM_STORE=0 uv run pytest $(PYTEST_TARGETS) \
 		--junitxml "$(AIRLOCK_LOG_DIR)/pytest-junit.xml" \
-		--json-report --json-report-file "$(AIRLOCK_LOG_DIR)/pytest-report.json" $(PYTEST_ARGS)
+		--json-report --json-report-file "$(AIRLOCK_LOG_DIR)/pytest-report.json" $(PYTEST_ARGS) -m "not nix"
+
+# Explicit opt-in for evaluations, flake checks and package builds.
+test-nix:
+	@mkdir -p "$(AIRLOCK_LOG_DIR)"
+	uv run pytest $(PYTEST_TARGETS) \
+		--junitxml "$(AIRLOCK_LOG_DIR)/pytest-junit.xml" \
+		--json-report --json-report-file "$(AIRLOCK_LOG_DIR)/pytest-report.json" $(PYTEST_ARGS) -m nix
 
 machine-build:
 	$(AIRLOCK_NIX) build .#airlock-machine-release-usb-lab --print-build-logs

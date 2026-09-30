@@ -485,6 +485,7 @@ def test_bootstrap_guard_precedes_mutation():
 
 
 @pytest.mark.qubes
+@pytest.mark.nix
 def test_laptop_read_only_preflight():
     host = os.environ.get("AIRLOCK_GPU_ASSIGNMENT_SSH")
     if not host:

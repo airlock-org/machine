@@ -8978,15 +8978,9 @@ def _storage_env(repo_root: Path, extra_path: str = "") -> dict[str, str]:
     env["PYTHONDONTWRITEBYTECODE"] = "1"
     path_parts = [extra_path] if extra_path else []
     if shutil.which("mkfs.erofs") is None or shutil.which("fsck.erofs") is None:
-        erofs_out = _run(
-            ["nix", "build", "--no-link", "--print-out-paths", "nixpkgs#erofs-utils"],
-            cwd=repo_root,
-        ).stdout.splitlines()
-        for output in erofs_out:
-            physical = Path(_physical_store_path(repo_root, output))
-            if (physical / "bin/mkfs.erofs").is_file():
-                path_parts.append(str(physical / "bin"))
-                break
+        import pytest
+
+        pytest.skip("requires erofs-utils on PATH; test setup does not build tools")
     if path_parts:
         env["PATH"] = ":".join(path_parts + [env["PATH"]])
     return env

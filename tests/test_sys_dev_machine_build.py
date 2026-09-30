@@ -104,6 +104,7 @@ def build_script(tmp_path):
 @pytest.mark.parametrize(
     "failure", ["build", "interrupt", "json", "closure", "preflight"]
 )
+@pytest.mark.nix
 def test_admission_stops_before_sending_when_build_or_metadata_fails(
     tmp_path, build_script, failure
 ):
@@ -178,6 +179,7 @@ fi
         assert result.returncode in (-signal.SIGINT, 128 + signal.SIGINT)
 
 
+@pytest.mark.nix
 def test_offline_build_uses_pinned_sources_and_rejects_changed_lock(
     tmp_path, build_script
 ):

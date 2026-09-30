@@ -26,6 +26,8 @@ not opt into the host Nix store.
 ```bash
 make check-eval
 make test-quick
+# Optional Nix evaluation and package checks:
+make test-nix
 make machine-build
 ```
 
