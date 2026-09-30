@@ -11,6 +11,61 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 @pytest.mark.nix
+@pytest.mark.parametrize(
+    "profile, configuration",
+    [
+        (
+            "usb-lab",
+            "f.nixosConfigurations.machine.config.specialisation.usb-lab.configuration",
+        ),
+        ("nested", "f.nixosConfigurations.vm-gui-config-dev.config"),
+    ],
+)
+def test_personal_domains_explicitly_select_the_gui_vm(profile, configuration):
+    expression = f"""
+      let
+        f = builtins.getFlake "{ROOT}";
+        topology = ({configuration}).airlock.qubes.topology;
+        runtime = import {ROOT}/lifecycle/bootstrap/initial-runtime-config/airlock/runtime.nix {{
+          appliedMessage = "";
+          system = "x86_64-linux";
+        }};
+      in {{
+        defaultGuiVM = topology.prefs.default_guivm;
+        personalGuiVMs = builtins.listToAttrs (map (name: {{
+          inherit name;
+          value = topology.domains.${{name}}.prefs.guivm or null;
+        }}) [ "usr-home" "usr-browser" ]);
+        runtimeGuiVMs = builtins.listToAttrs (map (name: {{
+          inherit name;
+          value = runtime.nixNative.domains.${{name}}.prefs.guivm or null;
+        }}) [ "usr-home" "usr-browser" ]);
+      }}
+    """
+    result = subprocess.run(
+        [
+            str(ROOT / "lifecycle/misc/tools/scripts/airlock-nix.sh"),
+            "eval", "--impure", "--json", "--expr", expression,
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    log_dir = Path(os.environ["AIRLOCK_LOG_DIR"]) / "personal-guivm"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    (log_dir / f"{profile}.json").write_text(result.stdout)
+    report = json.loads(result.stdout)
+    assert report["defaultGuiVM"] == "sys-gui"
+    # A global default cannot override a VM's existing explicit guivm=None.
+    assert report["personalGuiVMs"] == {
+        "usr-home": "sys-gui",
+        "usr-browser": "sys-gui",
+    }
+    assert report["runtimeGuiVMs"] == report["personalGuiVMs"]
+
+
+@pytest.mark.nix
 def test_gnome_desktop_work_applications_are_routed_to_usr_home():
     expression = f"""
       let

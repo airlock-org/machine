@@ -61,6 +61,7 @@
       netvm = null;
       rootImageSizeMiB = 1024;
       prefs = {
+        guivm = "sys-gui";
         autostart = true;
         include_in_backups = true;
         memory = 2048;
@@ -83,6 +84,7 @@
       netvm = "sys-firewall";
       rootImageSizeMiB = 1024;
       prefs = {
+        guivm = "sys-gui";
         include_in_backups = true;
         memory = 2048;
         maxmem = 4096;

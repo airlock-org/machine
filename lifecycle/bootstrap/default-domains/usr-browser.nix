@@ -4,6 +4,8 @@
   rootImageSizeMiB = 1024;
   netvm = "sys-firewall";
   prefs = {
+    # Forward application windows through the declared desktop domain.
+    guivm = "sys-gui";
     autostart = false;
     include_in_backups = true;
     memory = 2048;

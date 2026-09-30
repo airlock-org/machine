@@ -4,6 +4,8 @@
   rootImageSizeMiB = 1024;
   netvm = null;
   prefs = {
+    # Reconcile an existing explicit guivm=None as well as fresh VM defaults.
+    guivm = "sys-gui";
     # Keep the offline desktop-work VM ready alongside sys-gui. Its applications
     # own the user's files and shell state while their windows render in sys-gui.
     autostart = true;
