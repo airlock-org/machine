@@ -106,6 +106,10 @@ in
     };
   };
   config = lib.mkIf cfg.enable {
+    # Physical GUI startup provisions only its dependencies. The remaining
+    # topology is reconciled after the guarded desktop and input are ready.
+    airlock.qubes.deferredSetupConfigOnBoot.enable = lib.mkIf guardedGui (lib.mkForce true);
+    environment.etc."airlock/split-startup".text = lib.mkIf guardedGui "v1\n";
     environment.systemPackages = [ engine ];
     virtualisation.qubes.packages = [ retiredPolicy guestPolicy ];
     environment.etc."qubes-rpc/airlock.Ctrl.GuestPlan" = {
@@ -168,14 +172,43 @@ in
             ];
           };
         };
-        airlock-setup-config.serviceConfig.ExecStart = lib.mkForce "${engine}/bin/airlock-machine-deploy boot-setup ${setup}/bin/airlock-setup-config --apply${
+        airlock-setup-config.serviceConfig.ExecStart = lib.mkForce "${engine}/bin/airlock-machine-deploy boot-setup${lib.optionalString guardedGui " --gui"} ${setup}/bin/airlock-setup-config --apply${
           lib.optionalString (
-            config.airlock.qubes.setupConfigOnBoot.scope == "boot-critical"
+            !guardedGui && config.airlock.qubes.setupConfigOnBoot.scope == "boot-critical"
           ) " --boot-critical"
         }";
       })
       (lib.mkIf config.airlock.qubes.deferredSetupConfigOnBoot.enable {
-        airlock-setup-config-deferred.serviceConfig.ExecStart = lib.mkForce "${engine}/bin/airlock-machine-deploy boot-setup ${setup}/bin/airlock-setup-config --apply --deferred";
+        airlock-setup-config-deferred.serviceConfig.ExecStart = lib.mkForce "${engine}/bin/airlock-machine-deploy boot-setup${lib.optionalString guardedGui " --background"} ${setup}/bin/airlock-setup-config --apply${lib.optionalString (!guardedGui) " --deferred"}";
+      })
+      (lib.mkIf guardedGui {
+        airlock-gui-input-connect = lib.mkIf config.airlock.inputProxy.sender.enable {
+          after = [ "airlock-start-gui-gpu.service" ];
+        };
+        airlock-setup-config-deferred = {
+          requires = [ "airlock-start-gui-gpu.service" ]
+            ++ lib.optional config.airlock.inputProxy.sender.enable "airlock-gui-input-connect.service";
+          wants = lib.mkForce [
+            "libvirtd.service"
+            "qubes-db-dom0.service"
+            "qubesd.service"
+            "qubes-qrexec-policy-daemon.service"
+          ];
+          after = lib.mkForce ([
+            "airlock-setup-config.service"
+            "airlock-start-gui-gpu.service"
+            "qubesd.service"
+            "qubes-db-dom0.service"
+            "qubes-qrexec-policy-daemon.service"
+          ] ++ lib.optional config.airlock.inputProxy.sender.enable "airlock-gui-input-connect.service");
+          before = [ "airlock-start-network-providers.service" "airlock-machine-autostart.service" ];
+        };
+        airlock-start-network-providers = lib.mkIf config.airlock.qubes.startNetworkProvidersOnBoot.enable {
+          requires = [ "airlock-setup-config-deferred.service" ];
+          after = [ "airlock-setup-config-deferred.service" ];
+          before = lib.mkForce [ "airlock-machine-autostart.service" ];
+          environment.AIRLOCK_QUBES_TOPOLOGY = "/run/airlock/startup/topology.json";
+        };
       })
     ];
   };

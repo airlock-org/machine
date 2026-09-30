@@ -361,14 +361,13 @@ render_boot_status() {
     printf '\033[K\n'
     case "$boot_status_state" in
       working)
-        printf '\033[K  Airlock checks the saved system and VM configuration on every boot.\n'
-        printf '\033[K  The first boot can take several minutes while VM files are prepared.\n'
-        printf '\033[K  Later boots reuse existing VM images and saved data.\n'
+        printf '\033[K  Airlock is preparing a new or changed configuration.\n'
+        printf '\033[K  Existing VM images and saved data are reused where possible.\n'
+        printf '\033[K  Initial preparation can take several minutes.\n'
         ;;
       configured)
-        printf '\033[K  Topology configuration is complete; VM startup is not yet complete.\n'
-        printf '\033[K  Airlock is now waiting for required guests to answer health checks.\n'
-        printf '\033[K  The desktop appears only after those checks pass.\n'
+        printf '\033[K  Startup VM configuration is ready; the desktop is starting next.\n'
+        printf '\033[K  Required hardware and VM checks still need to finish.\n'
         ;;
       failed)
         printf '\033[K  Startup configuration could not finish. Switch to a console with Ctrl+Alt+F2.\n'
@@ -380,8 +379,7 @@ render_boot_status() {
 }
 
 show_boot_status() {
-  # Minimal GUI/USB images prepare their entire topology at boot. They need
-  # the same progress screen as boot-critical setup; deferred background
+  # Detailed progress is for provisioning or changed configuration. Background
   # reconciliation must never overwrite the desktop handover screen.
   [ "$SETUP_SCOPE" != "deferred" ] || return 0
   [ -n "$STATUS_DEVICE" ] || return 0
@@ -1886,7 +1884,7 @@ setup_nix_closure_domain() {
     record_live_action domain create "$domain" class StandaloneVM
   fi
 
-  show_domain_boot_status "$domain" "Checking and copying the VM system disk."
+  show_domain_boot_status "$domain" "Checking the VM system disk; reusing it if current."
   install_nix_domain_root "$domain" "$root_source" "$root_image"
   ensure_state_volume_size "$domain" private "$persistent_size"
   show_domain_boot_status "$domain" "Preparing system files and persistent storage; this may take a while."
@@ -2068,7 +2066,7 @@ schema="$(jq_get '.schema')"
 # The helper only observes; the existing setup_domain_pci_devices path owns
 # persistent assignment. Absent configuration leaves ordinary profiles alone.
 if [ -e /etc/airlock/gui-gpu.json ]; then
-  airlock-gui-gpu-check --topology "$TOPOLOGY" --phase bootstrap \
+  airlock-gui-gpu-check --topology "${AIRLOCK_GUI_GPU_CHECK_TOPOLOGY:-$TOPOLOGY}" --phase bootstrap \
     > "$LOG_DIR/gui-gpu-check.json" || {
       cat "$LOG_DIR/gui-gpu-check.json"
       fail "GPU selection validation failed; see $LOG_DIR/gui-gpu-check.json"

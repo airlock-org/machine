@@ -10,6 +10,9 @@ let
   checker = pkgs.callPackage ../tools/pkgs/airlock-gui-gpu-check { };
   startQubeReady = pkgs.callPackage ../tools/pkgs/airlock-start-qube-ready { };
   supervisor = pkgs.callPackage ../../runtime/tools/pkgs/airlock-boot-supervisor { };
+  splitStartup = config.airlock.machineDeployment.enable;
+  startupTopology = if splitStartup then "/run/airlock/startup/topology.json"
+    else "/var/lib/airlock/system/current-topology.json";
 in
 {
   options.airlock.guiGpu = {
@@ -73,8 +76,8 @@ in
               assertion =
                 config.virtualisation.qubes.dom0.enable
                 && config.airlock.qubes.setupConfigOnBoot.enable
-                && config.airlock.qubes.setupConfigOnBoot.scope == "all";
-              message = "Physical sys-gui GPU assignment requires dom0 and full boot topology setup.";
+                && (splitStartup || config.airlock.qubes.setupConfigOnBoot.scope == "all");
+              message = "Physical sys-gui GPU assignment requires dom0 and guarded GUI or full topology setup.";
             }
             {
               assertion =
@@ -131,7 +134,7 @@ in
             requires = [
               "airlock-setup-config.service"
             ]
-            ++ lib.optional config.airlock.qubes.startNetworkProvidersOnBoot.enable "airlock-start-network-providers.service";
+            ++ lib.optional (!splitStartup && config.airlock.qubes.startNetworkProvidersOnBoot.enable) "airlock-start-network-providers.service";
             # Bootstrap restarts qubesd after adopting VM storage. Requires
             # would propagate that stop and cancel our still-pending start.
             # Keep ordering/pull-in, then check daemon readiness after setup.
@@ -140,7 +143,7 @@ in
               "airlock-setup-config.service"
               "qubesd.service"
             ]
-            ++ lib.optional config.airlock.qubes.startNetworkProvidersOnBoot.enable "airlock-start-network-providers.service";
+            ++ lib.optional (!splitStartup && config.airlock.qubes.startNetworkProvidersOnBoot.enable) "airlock-start-network-providers.service";
             restartIfChanged = false;
             stopIfChanged = false;
             serviceConfig = {
@@ -149,13 +152,13 @@ in
               ExecStartPre = [
                 "${supervisor}/bin/airlock-boot-supervisor stage gui 'starting and verifying sys-gui'"
                 "${pkgs.systemd}/bin/systemctl is-active --quiet qubesd.service"
-                "${checker}/bin/airlock-gui-gpu-check --phase start"
+                "${checker}/bin/airlock-gui-gpu-check --topology ${startupTopology} --phase start"
               ]
               ++ lib.optional cfg.bootFramebuffer.enable "${pkgs.python3}/bin/python3 ${../tools/scripts/boot-framebuffer.py} --gpu ${gpu.bdf} --report /var/log/airlock/boot-framebuffer-handoff.json"
               # Preserve the last visible bootstrap milestone before qvm-start
               # takes over the physical GPU and the console stops updating.
               ++ [ "${pkgs.systemd}/bin/journalctl --sync" ];
-              ExecStart = "${startQubeReady}/bin/airlock-start-qube-ready sys-gui /var/lib/airlock/system/current-topology.json";
+              ExecStart = "${startQubeReady}/bin/airlock-start-qube-ready sys-gui ${startupTopology}";
               ExecStartPost = "${pkgs.systemd}/bin/journalctl --sync";
               # Never loop over GPU resets, restart the VM on exit, or hide failure.
               Restart = "no";

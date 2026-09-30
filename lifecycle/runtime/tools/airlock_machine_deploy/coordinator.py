@@ -31,6 +31,7 @@ from .retirement import RetirementManager
 from .state import read_json, atomic_json, load_release
 from .validation import validate_staged_generation, validate_admission_receipt
 from .models import DeploymentPhase, DeploymentPlan, DeploymentRecord, Selection
+from .boot import BootConfiguration, digest
 
 STATE = Path("/var/lib/airlock/machine")
 
@@ -877,6 +878,14 @@ class Coordinator:
                         self.command("qvm-start", name, timeout=240)
                 phase("verifying")
                 observed = self.verify(topology, set(changes["start"]))
+                # A verified full apply authorizes reuse on subsequent boots.
+                # Interrupted transactions still block boot independently.
+                if Path("/etc/airlock/split-startup").exists():
+                    BootConfiguration(self).record(
+                        digest({"topology": topology, "setup": manifest["setup"],
+                                "generations": manifest.get("stagedGenerations", {})}),
+                        topology, list(topology["domains"]),
+                    )
                 phase("host-boot-selection")
                 self.command("airlock-host-store", "bind-machine", manifest["host"])
                 self.command("airlock-host-store", "select", manifest["host"])
@@ -1029,8 +1038,13 @@ class Coordinator:
                 "trash_active": [entry["id"] for entry in trash],
             }
 
-    def boot_setup(self, default_setup, args):
+    def boot_setup(self, default_setup, args, *, gui=False, background=False):
         with self.locked() as lock:
+            if gui or background:
+                if gui and background:
+                    raise DeploymentError("choose either GUI or background setup")
+                BootConfiguration(self).configure(default_setup, args, gui=gui)
+                return
             # Keep the lock across exec through the exact setup wrapper.
             os.set_inheritable(lock.fileno(), True)
             self._boot_setup(default_setup, args)

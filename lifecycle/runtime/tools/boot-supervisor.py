@@ -12,6 +12,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import tempfile
+import time
 
 STATE_ROOT = Path(
     os.environ.get("AIRLOCK_BOOT_STATE_ROOT", "/var/lib/airlock/boot-attempts")
@@ -70,6 +71,7 @@ def append_event(identifier, stage, status, detail=""):
     event = {
         "boot_id": identifier,
         "time": now(),
+        "monotonic_seconds": time.monotonic(),
         "stage": stage,
         "status": status,
         "detail": detail,

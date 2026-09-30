@@ -45,6 +45,7 @@ let
     exec ${pkgs.util-linux}/bin/agetty --noclear tty1 linux
   '';
   desktopGuarded = config.airlock.guiGpu.enable && config.airlock.guiGpu.startOnBoot;
+  splitStartup = desktopGuarded && config.airlock.machineDeployment.enable;
   desktopHandler = operation: pkgs.writeShellScript "airlock-boot-${operation}-rpc" ''
     set -eu
     [ "''${QREXEC_REMOTE_DOMAIN:-}" = sys-gui ] || exit 1
@@ -184,11 +185,19 @@ in
       unitConfig.OnFailure = failureTarget;
       serviceConfig.ExecCondition = [ gate ];
       serviceConfig.ExecStartPre = [
-        "${supervisor}/bin/airlock-boot-supervisor stage topology 'configuring declared topology'"
+        "${supervisor}/bin/airlock-boot-supervisor stage topology 'checking startup configuration'"
       ];
     };
+    systemd.services.airlock-setup-config-deferred = lib.mkIf splitStartup {
+      unitConfig.OnFailure = [ "airlock-boot-background-failure.service" ];
+      serviceConfig.ExecCondition = [ gate ];
+      serviceConfig.ExecStartPre = [
+        "${supervisor}/bin/airlock-boot-supervisor desktop-ready"
+      ];
+      serviceConfig.TimeoutStartSec = 1800;
+    };
     systemd.services.airlock-start-network-providers = {
-      unitConfig.OnFailure = failureTarget;
+      unitConfig.OnFailure = if splitStartup then [ "airlock-boot-background-failure.service" ] else failureTarget;
       serviceConfig.ExecCondition = [ gate ];
       serviceConfig.TimeoutStartSec = 300;
     };
@@ -203,10 +212,14 @@ in
       unitConfig.OnFailure = failureTarget;
       serviceConfig.ExecCondition = [ gate ];
     };
+    systemd.services.airlock-gui-input-connect = lib.mkIf (splitStartup && config.airlock.inputProxy.sender.enable) {
+      unitConfig.OnFailure = failureTarget;
+      serviceConfig.ExecCondition = [ gate ];
+    };
     systemd.services.airlock-machine-autostart = {
       # All hardware/GUI guards have succeeded before this service runs.
       unitConfig.OnFailure = if desktopGuarded then [ "airlock-boot-background-failure.service" ] else failureTarget;
-      serviceConfig.ExecStartPre = lib.optional desktopGuarded
+      serviceConfig.ExecStartPre = lib.optional (desktopGuarded && !splitStartup)
         "${supervisor}/bin/airlock-boot-supervisor desktop-ready";
       serviceConfig.ExecCondition = [ gate ];
       serviceConfig.TimeoutStartSec = 1800;

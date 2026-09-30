@@ -61,6 +61,9 @@ def main(argv=None):
                 "--retain", required=True, choices=("true", "false")
             )
     boot = sub.add_parser("boot-setup")
+    scope = boot.add_mutually_exclusive_group()
+    scope.add_argument("--gui", action="store_true")
+    scope.add_argument("--background", action="store_true")
     boot.add_argument("setup")
     boot.add_argument("args", nargs=argparse.REMAINDER)
     start = sub.add_parser("boot-start")
@@ -117,7 +120,10 @@ def main(argv=None):
                 raise DeploymentError("no deployment to resume or roll back")
             result = coordinator.apply(status[key], recover=True)
         elif args.action == "boot-setup":
-            coordinator.boot_setup(args.setup, args.args)
+            if args.gui or args.background:
+                coordinator.boot_setup(args.setup, args.args, gui=args.gui, background=args.background)
+            else:
+                coordinator.boot_setup(args.setup, args.args)
             return 0
         elif args.action == "boot-start":
             result = coordinator.boot_start(args.topology, args.require_running)

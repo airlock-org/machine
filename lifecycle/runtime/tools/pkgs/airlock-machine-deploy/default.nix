@@ -9,6 +9,7 @@
   gnutar,
   lvm2,
   util-linux,
+  callPackage,
   ...
 }:
 let
@@ -34,6 +35,7 @@ writeShellApplication {
     gnutar
     lvm2
     util-linux
+    (callPackage ../../../../misc/tools/pkgs/airlock-start-qube-ready { })
     python3.pkgs.qubes-core-admin-client
     python3.pkgs.qubes-core-qrexec.dom0
   ];

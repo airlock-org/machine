@@ -166,8 +166,8 @@ in
           after = [
             "systemd-udev-trigger.service"
             "airlock-setup-config.service"
-            "airlock-start-network-providers.service"
-          ];
+          ] ++ lib.optional (!(config.airlock.machineDeployment.enable && config.airlock.guiGpu.enable && config.airlock.guiGpu.startOnBoot))
+            "airlock-start-network-providers.service";
           before = [ "airlock-start-gui-gpu.service" "airlock-gui-input-connect.service" ];
           path = [ pkgs.systemd ];
           serviceConfig = {
