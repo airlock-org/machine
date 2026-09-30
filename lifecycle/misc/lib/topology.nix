@@ -115,6 +115,13 @@ let
   expectNullOrStringOrPath =
     path: value: if value == null then null else expectStringOrPath path value;
 
+  validRelativePath =
+    value:
+    match "[A-Za-z0-9_.+-]+(/[A-Za-z0-9_.+-]+)*" value != null
+    && builtins.all (part: typeOf part != "string" || (part != "." && part != "..")) (
+      builtins.split "/" value
+    );
+
   expectFlakeOutputRef =
     path: value:
     let
@@ -131,7 +138,7 @@ let
     in
     if match "[A-Za-z0-9_+-]+(\\.[A-Za-z0-9_+-]+)*" attr == null then
       fail path "invalid flake output reference ${toJSON attr}; expected dot-separated flake attribute path"
-    else if subpath != "" && match "[A-Za-z0-9_.+-]+(/[A-Za-z0-9_.+-]+)*" subpath == null then
+    else if subpath != "" && !validRelativePath subpath then
       fail "${path}.subpath" "invalid source subpath ${toJSON subpath}; expected a relative path without .."
     else
       {

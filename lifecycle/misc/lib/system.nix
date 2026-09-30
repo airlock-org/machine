@@ -106,6 +106,13 @@ let
     else
       fail path "invalid ${kind} name ${toJSON name}; expected [A-Za-z0-9_.:+@-]+";
 
+  validRelativePath =
+    value:
+    match "[A-Za-z0-9_.+-]+(/[A-Za-z0-9_.+-]+)*" value != null
+    && builtins.all (part: typeOf part != "string" || (part != "." && part != "..")) (
+      builtins.split "/" value
+    );
+
   expectRelativePath =
     path: value:
     let
@@ -113,7 +120,7 @@ let
     in
     if relative == "" then
       fail path "must not be empty"
-    else if match "[A-Za-z0-9_.+-]+(/[A-Za-z0-9_.+-]+)*" relative == null then
+    else if !validRelativePath relative then
       fail path "invalid relative path ${toJSON relative}; expected a relative path without .."
     else
       relative;
@@ -138,7 +145,7 @@ let
     in
     if match "[A-Za-z0-9_+-]+(\\.[A-Za-z0-9_+-]+)*" attr == null then
       fail path "invalid flake output reference ${toJSON attr}; expected dot-separated flake attribute path"
-    else if subpath != "" && match "[A-Za-z0-9_.+-]+(/[A-Za-z0-9_.+-]+)*" subpath == null then
+    else if subpath != "" && !validRelativePath subpath then
       fail "${path}.subpath" "invalid source subpath ${toJSON subpath}; expected a relative path without .."
     else
       {

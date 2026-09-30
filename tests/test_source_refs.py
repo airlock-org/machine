@@ -169,3 +169,26 @@ def test_invalid_authored_source_fields_are_rejected(
     result = evaluate_source_fields(fields)
     assert result.returncode != 0
     assert error in result.stderr
+
+
+@pytest.mark.parametrize("subpath", [".", "..", "../root.img", "images/../root.img", "images/./root.img", "images/.."])
+def test_reference_rejects_dot_path_components(evaluate_ref, subpath):
+    result = evaluate_ref(f'{{ build = "{OUTPUT}"; subpath = "{subpath}"; }}')
+    assert result.returncode != 0
+    assert "invalid source subpath" in result.stderr
+
+
+@pytest.mark.parametrize("subpath", [".hidden/root.img", "images/root..img", "images/.hidden"])
+def test_reference_accepts_regular_dotted_names(evaluate_ref, subpath):
+    result = evaluate_ref(f'{{ build = "{OUTPUT}"; subpath = "{subpath}"; }}')
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["subpath"] == subpath
+
+
+@pytest.mark.parametrize("command", ["..", "../activate", "bin/../activate", "bin/./activate"])
+def test_activation_command_rejects_dot_path_components(repo_root, command):
+    result = evaluate_nix(repo_root, "system",
+                          f'mkSystem {{ dom0.profile.activationCommand = "{command}"; }}',
+                          ".dom0.profile.activation_command", "null")
+    assert result.returncode != 0
+    assert "invalid relative path" in result.stderr
