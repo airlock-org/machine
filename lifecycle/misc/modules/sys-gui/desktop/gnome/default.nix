@@ -26,8 +26,32 @@ let
       runHook postInstall
     '';
   };
+  identityPython = pkgs.python3.withPackages (ps: [ ps.python-xlib ]);
+  identityReader = pkgs.writeScript "airlock-focused-vm-identity" (
+    "#!${identityPython}/bin/python3\n"
+    + builtins.replaceStrings [ "@guid@" ] [ "${pkgs.qubes-gui-daemon}/bin/qubes-guid" ] (
+      builtins.readFile ./focused-vm-extension/identity.py
+    )
+  );
+  focusedVMExtension = pkgs.stdenvNoCC.mkDerivation {
+    pname = "airlock-gnome-focused-vm";
+    version = "1";
+    src = ./focused-vm-extension;
+    dontBuild = true;
+    installPhase = ''
+      runHook preInstall
+      extension_dir="$out/share/gnome-shell/extensions/airlock-focused-vm@airlock.local"
+      mkdir -p "$extension_dir"
+      cp extension.js state.js metadata.json stylesheet.css "$extension_dir/"
+      substituteInPlace "$extension_dir/extension.js" \
+        --replace-fail '@identityReader@' '${identityReader}'
+      runHook postInstall
+    '';
+    passthru = { inherit identityReader; };
+  };
   enabledExtensions = [
     "airlock-host-poweroff@airlock.local"
+    "airlock-focused-vm@airlock.local"
   ]
   ++ lib.optional config.airlock.sysGuiGuest.personalLaunchers.enable "ding@rastersoft.com";
   enabledExtensionsGVariant = "[${
@@ -68,6 +92,7 @@ in
     );
     environment.systemPackages = [
       hostPoweroffExtension
+      focusedVMExtension
     ]
     ++ lib.optionals config.airlock.sysGuiGuest.personalLaunchers.enable [
       # Accessibility controls the sys-gui session itself.
