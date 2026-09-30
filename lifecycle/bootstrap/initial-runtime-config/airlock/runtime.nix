@@ -239,7 +239,7 @@
   dom0.host = {
     # Automatic apply classification:
     # - packages, etc, and systemd fields default to an in-session switch
-    # - overlays, configuration, modules, and dom0.extraModules default to the
+    # - overlays, configuration, and modules default to the
     #   next boot generation because they can affect Xen/kernel/early services
     # Override only when you know the change class:
     # apply.mode = "switch"; # force live switch
@@ -258,10 +258,6 @@
     # host fields.
     modules = [ ];
   };
-
-  # Backward-compatible raw NixOS modules for dom0. Prefer dom0.host for new
-  # config.
-  dom0.extraModules = [ ];
 
   # Low-level escape hatch. These values override dom0.host.apply classification
   # and are mainly for tests or unusual hand-authored plans.

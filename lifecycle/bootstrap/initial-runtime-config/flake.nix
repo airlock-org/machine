@@ -259,7 +259,6 @@
               { }
           );
       localDom0 = checkDom0Keys "" [
-        "extraModules"
         "host"
       ] (expectDom0Attrs "" (localConfig.dom0 or { }));
       localDom0Host = checkDom0Host (localDom0.host or { });
@@ -284,8 +283,7 @@
       localDom0HostHasUnknownLiveSafety =
         hasNonEmptyList (localDom0Host.overlays or [ ])
         || hasNonEmptyAttrs (localDom0Host.configuration or { })
-        || hasNonEmptyList (localDom0Host.modules or [ ])
-        || hasNonEmptyList (localDom0.extraModules or [ ]);
+        || hasNonEmptyList (localDom0Host.modules or [ ]);
       autoDom0SystemSwitchAction =
         if localDom0HostApply.mode == "boot" then
           "boot"
@@ -310,8 +308,7 @@
         localDom0HostModule
       ]
       ++ (if localDom0Host ? configuration then [ localDom0Host.configuration ] else [ ])
-      ++ (localDom0Host.modules or [ ])
-      ++ (localDom0.extraModules or [ ]);
+      ++ (localDom0Host.modules or [ ]);
       prebuiltTemplateSources = import ./airlock/prebuilt-template-sources.nix;
       airlockSupport = "__AIRLOCK_SUPPORT_PATH__";
       nixosQubesSource = "__AIRLOCK_NIXOS_QUBES_PATH__";

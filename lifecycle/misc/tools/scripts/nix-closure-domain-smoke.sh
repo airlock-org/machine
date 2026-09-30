@@ -1539,7 +1539,6 @@ in
     modules = [ ];
   };
 
-  dom0.extraModules = [ ];
   system.args = { };
 }
 RUNTIMENIX

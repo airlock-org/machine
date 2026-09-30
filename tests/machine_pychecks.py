@@ -8903,7 +8903,19 @@ def check_config_candidate_flake(repo_root: Path, log_dir: Path) -> None:
         assert expected in profile_build_command
 
     runtime_path = work_dir / "airlock/runtime.nix"
+    runtime_path.write_text(
+        "{ ... }:\n{ dom0.host.modules = [ { } ]; }\n", encoding="utf-8"
+    )
+    module_system = eval_work_json("airlock.system")
+    assert module_system["dom0"]["nixos"]["system"]["switch_action"] == "boot"
+    assert module_system["plan"]["reboot_required"] is True
     negative_cases = [
+        (
+            "{ ... }:\n{ dom0.extraModules = [ ]; }\n",
+            "airlock.system",
+            "--json",
+            "airlock.dom0: unknown option(s): extraModules",
+        ),
         (
             '{ ... }:\n{ configVms.guests.sys-ctrl.hostname = "old-name"; }\n',
             "airlock.configRoleConfigurations.sys-ctrl.config.networking.hostName",
