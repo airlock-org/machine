@@ -203,3 +203,89 @@ def test_declarative_installation_and_enablement():
     assert "ps.python-xlib" in nix
     assert '${pkgs.qubes-gui-daemon}/bin/qubes-guid' in nix
     assert (EXTENSION / "metadata.json").read_text().count('"50"') == 1
+
+
+def test_application_actors_and_settled_shell_focus(tmp_path):
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("JavaScript runtime is not installed")
+    state_module = tmp_path / "state.mjs"
+    state_module.write_text((EXTENSION / "state.js").read_text())
+    extension_module = tmp_path / "extension.mjs"
+    source = re.sub(r"^import .*;\n", "", (EXTENSION / "extension.js").read_text(), flags=re.MULTILINE)
+    extension_module.write_text(
+        f"import {{FocusState, LOCAL, UNKNOWN}} from {json.dumps(state_module.as_uri())};\n"
+        "const {Gio, GLib, Meta, Main, Extension} = globalThis.shellMocks;\n" + source
+    )
+    script = f"""
+import assert from 'node:assert/strict';
+import {{FocusState}} from {json.dumps(state_module.as_uri())};
+let keyFocus = null;
+const idle = [];
+const removed = [];
+const Main = {{overview: {{visible:false}}, sessionMode: {{isLocked:false,isGreeter:false}}, modalCount:0}};
+globalThis.shellMocks = {{
+    Gio: {{Cancellable: class {{}}}},
+    GLib: {{PRIORITY_DEFAULT_IDLE:0, SOURCE_REMOVE:false,
+        idle_add: (_priority, callback) => {{idle.push(callback); return idle.length;}},
+        Source: {{remove: id => removed.push(id)}},
+    }},
+    Meta: {{WindowType: {{DESKTOP:1,DOCK:2}}}},
+    Main,
+    Extension: class {{}},
+}};
+const calculator = {{get_window_type:()=>0, get_transient_for:()=>null,
+    connect:()=>1, disconnect:()=>{{}}}};
+globalThis.global = {{stage:{{get_key_focus:()=>keyFocus}}, display:{{focus_window:calculator}},
+    window_group:{{contains: actor=>actor.group==='window'}},
+    top_window_group:{{contains: actor=>actor.group==='top-window'}},
+}};
+const {{default: Extension}} = await import({json.dumps(extension_module.as_uri())});
+const extension = new Extension();
+for (const actor of [null, {{group:'window'}}, {{group:'top-window'}}]) {{
+    keyFocus=actor;
+    assert.equal(extension._suppressed(), false);
+}}
+keyFocus={{group:'shell'}};
+assert.equal(extension._suppressed(), true);
+keyFocus=null;
+Main.modalCount=1;
+assert.equal(extension._suppressed(), true);
+Main.modalCount=0;
+Main.overview.visible=true;
+assert.equal(extension._suppressed(), true);
+Main.overview.visible=false;
+Main.sessionMode.isLocked=true;
+assert.equal(extension._suppressed(), true);
+Main.sessionMode.isLocked=false;
+const rendered=[];
+extension._state=new FocusState(value=>rendered.push(value));
+extension._signals=[];
+extension._windowSignals=[];
+extension._cancelRead=()=>{{}};
+let reads=0;
+extension._resolve=async()=>{{reads++; return {{kind:'vm',name:'usr-home',color:'#3465a4'}};}};
+// Grab/key-focus notifications arrive while the menu close handler is running.
+Main.modalCount=1;
+keyFocus={{group:'shell'}};
+extension._queueUpdate();
+extension._queueUpdate();
+assert.equal(idle.length,1);
+assert.equal(rendered.at(-1),null);
+assert.equal(reads,0);
+// Complete the close handler before the idle callback; refresh the actual app.
+Main.modalCount=0;
+keyFocus={{group:'window'}};
+idle[0]();
+await new Promise(resolve=>setImmediate(resolve));
+assert.equal(reads,1);
+assert.equal(rendered.at(-1).name,'usr-home');
+// Disable removes an outstanding idle callback as well as pending reads/signals.
+extension._indicator={{destroy:()=>{{}}}};
+extension._queueUpdate();
+extension.disable();
+assert.deepEqual(removed,[2]);
+assert.equal(rendered.at(-1),null);
+"""
+    result = subprocess.run([node, "--input-type=module", "-e", script], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr

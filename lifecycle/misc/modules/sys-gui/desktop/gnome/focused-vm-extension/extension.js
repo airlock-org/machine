@@ -1,5 +1,6 @@
 import Clutter from 'gi://Clutter';
 import Gio from 'gi://Gio';
+import GLib from 'gi://GLib';
 import Meta from 'gi://Meta';
 import Pango from 'gi://Pango';
 import St from 'gi://St';
@@ -30,7 +31,8 @@ export default class FocusedVMExtension extends Extension {
         this._state = new FocusState(identity => this._render(identity));
         Main.panel.addToStatusArea('airlock-focused-vm', this._indicator, 1, 'left');
         this._connect(global.display, 'notify::focus-window', () => this._focusChanged());
-        this._connect(global.stage, 'notify::key-focus', () => this._update());
+        this._connect(global.stage, 'notify::key-focus', () => this._queueUpdate());
+        this._connect(global.stage, 'notify::is-grabbed', () => this._queueUpdate());
         this._connect(Main.overview, 'showing', () => this._update());
         this._connect(Main.overview, 'hidden', () => this._update());
         this._connect(Main.sessionMode, 'updated', () => this._update());
@@ -55,7 +57,7 @@ export default class FocusedVMExtension extends Extension {
             seen.add(window);
             this._connect(window, 'unmanaged', () => {
                 this._focused = null;
-                this._update();
+                this._queueUpdate();
             }, this._windowSignals);
         }
         this._update();
@@ -63,9 +65,27 @@ export default class FocusedVMExtension extends Extension {
 
     _suppressed() {
         // Shell menus, modal dialogs, overview, switchers and lock screens own input.
+        const keyFocus = global.stage.get_key_focus();
+        const applicationFocus = keyFocus && (
+            global.window_group.contains(keyFocus) ||
+            global.top_window_group.contains(keyFocus));
         return Main.overview.visible || Main.sessionMode.isLocked ||
             Main.sessionMode.isGreeter || Main.modalCount > 0 ||
-            global.stage.get_key_focus() !== null;
+            Boolean(keyFocus && !applicationFocus);
+    }
+
+    _queueUpdate() {
+        // Signals can arrive while Shell is still unwinding a modal grab.
+        // Invalidate pending results immediately, then read the settled state.
+        this._cancelRead();
+        this._state.begin(null, true);
+        if (this._updateSource)
+            return;
+        this._updateSource = GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
+            this._updateSource = 0;
+            this._focusChanged();
+            return GLib.SOURCE_REMOVE;
+        });
     }
 
     _update() {
@@ -142,6 +162,10 @@ export default class FocusedVMExtension extends Extension {
     }
 
     disable() {
+        if (this._updateSource) {
+            GLib.Source.remove(this._updateSource);
+            this._updateSource = 0;
+        }
         this._cancelRead();
         this._disconnect(this._signals);
         this._disconnect(this._windowSignals);
