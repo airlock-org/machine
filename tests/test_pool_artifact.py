@@ -96,6 +96,7 @@ def artifact_input(tmp_path, monkeypatch):
             "segments": [],
             "image_contains_materialized_store_copy": False,
             "image_created": True,
+            "index_depth": 0,
         }
 
     monkeypatch.setattr(artifacts, "materialize_view", fake_view)
@@ -167,6 +168,7 @@ def test_transferred_artifact_is_inactive_retained_and_reused(artifact_input):
     assert second["objects_reused"] == 2
     assert len(list((artifact_input["pool"] / "objects/metadata").glob("*.json"))) == 2
     manifest = core.read_json(second["manifest"])
+    assert manifest["store"]["index_depth"] == 0
     assert manifest["approval"] == {
         "approved_by": "sys-dev",
         "source": artifact_input["closure"],

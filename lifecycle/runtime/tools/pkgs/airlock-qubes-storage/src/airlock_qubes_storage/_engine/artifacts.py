@@ -661,6 +661,7 @@ def _admit_received(manifest, fragments, root, approved_by, *, reused=None, root
                 "metadata_image": view["metadata_image"],
                 "canonical_metadata_image": view["canonical_metadata_image"],
                 "integrity": view_integrity(view),
+                "index_depth": view["index_depth"],
                 "blob_map": view["blob_map"],
                 "canonical_blob_map": view["canonical_blob_map"],
                 "object_refs": view.get("object_refs"),
