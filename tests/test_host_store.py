@@ -189,7 +189,8 @@ def test_recovery_uses_xen_efi_binding_and_rejects_damaged_initramfs(tmp_path, t
     entry = esp / "loader/entries/xen-generation-1.conf"
     entry.parent.mkdir(parents=True)
     native_text = (f"title {title}\nversion Generation 1 NixOS long kernel and build details\n"
-                   "efi /EFI/nixos/xen-generation-1.efi\n")
+                   "efi /EFI/nixos/xen-generation-1.efi\n"
+                   f"# airlock-role {'recovery' if 'recovery' in title else 'normal'}\n")
     entry.write_text(native_text)
     loader = esp / 'loader/loader.conf'
     loader.write_text(f'timeout 10\ndefault {entry.name}\npreferred {entry.stem}\n')
@@ -205,10 +206,13 @@ def test_recovery_uses_xen_efi_binding_and_rejects_damaged_initramfs(tmp_path, t
     assert host_artifacts.verify(root, esp, record) == 'airlock-' + entry.name
     retained = entry.with_name('airlock-' + entry.name)
     sealed_text = retained.read_text()
-    assert f'title {title}\nversion Generation 1\n' in sealed_text
+    assert 'version 1\n' in sealed_text
+    assert '# airlock-generation 1\n' in sealed_text
+    assert 'legacy generation 1' in sealed_text
     assert list(entry.parent.glob('*.conf')) == [retained]
-    assert loader.read_text() == (
-        f'timeout 10\ndefault {retained.stem}\npreferred {retained.stem}\n')
+    from airlock_qubes_storage.boot_presentation import fields
+    assert fields(loader.read_text())["default"] == retained.stem
+    assert fields(loader.read_text())["timeout"] == "10"
     # Upstream can recreate the native copy on a subsequent boot installation.
     entry.write_text(native_text)
     host_artifacts.seal(root, esp)
@@ -400,7 +404,7 @@ def test_retiring_boot_entry_preserves_shared_kernel_for_other_generation(tmp_pa
     entries = esp / 'loader/entries'
     entries.mkdir(parents=True)
     for generation, system in ((1, A), (2, B)):
-        (entries / f'xen-{generation}.conf').write_text(f'efi /EFI/nixos/xen-{generation}.efi\n')
+        (entries / f'xen-{generation}.conf').write_text(f'efi /EFI/nixos/xen-{generation}.efi\nversion Generation {generation}\n# airlock-role normal\n')
         write_xen_efi(directory / f'xen-{generation}.efi',
                       f'kernel=kernel.efi init={system}/init\nramdisk=initrd.efi\n')
         core.atomic_json(root / 'host/boots' / (host.key(system) + '.json'),
@@ -410,8 +414,107 @@ def test_retiring_boot_entry_preserves_shared_kernel_for_other_generation(tmp_pa
     host_artifacts.seal(root, esp)
     assert {line for path in entries.glob('airlock-*.conf')
             for line in path.read_text().splitlines() if line.startswith('version ')} == {
-                'version Generation 1', 'version Generation 2'}
+                'version 1', 'version 2'}
     host_artifacts.forget(root, esp, A)
     assert not (entries / 'airlock-xen-1.conf').exists()
     assert not (esp / 'EFI/airlock/xen-1.efi').exists()
     assert host_artifacts.verify(root, esp, {'system': B, 'generation': 2}) == 'airlock-xen-2.conf'
+
+
+def boot_artifact_fixture(tmp_path, monkeypatch):
+    from airlock_qubes_storage import host_artifacts
+    from airlock_qubes_storage import boot_presentation as presentation
+    root, esp = tmp_path / 'pool', tmp_path / 'esp'
+    directory = esp / 'EFI/nixos'
+    directory.mkdir(parents=True)
+    entries = esp / 'loader/entries'
+    entries.mkdir(parents=True)
+    (esp / 'loader/loader.conf').write_text('default xen-2\npreferred xen-2\ntimeout 10\n')
+    source = {'revision': 'abcdef0' + '1' * 33, 'timestamp': 1790778600}
+    monkeypatch.setattr(presentation, 'source_metadata', lambda system: source)
+    for boot_generation, pool_generation, system, role in ((2, 1, A, 'normal'),
+                                                           (10, 2, B, 'normal'),
+                                                           (2, 3, B + '-recovery', 'recovery')):
+        name = f'xen-{boot_generation}-{role}'
+        (entries / f'{name}.conf').write_text(
+            f'version Generation {boot_generation} long upstream details\n'
+            f'efi /EFI/nixos/{name}.efi\n# airlock-role {role}\n')
+        write_xen_efi(directory / f'{name}.efi',
+                      f'kernel=kernel.efi init={system}/init\nramdisk=initrd.efi\n')
+        core.atomic_json(root / 'host/boots' / (host.key(system) + '.json'),
+                         {'system': system, 'generation': pool_generation})
+    (directory / 'kernel.efi').write_bytes(b'shared kernel')
+    (directory / 'initrd.efi').write_bytes(b'shared initrd')
+    return root, esp, host_artifacts, presentation
+
+
+def test_sealed_entries_preserve_boot_generation_and_source_order(tmp_path, monkeypatch):
+    root, esp, artifacts, presentation = boot_artifact_fixture(tmp_path, monkeypatch)
+    artifacts.seal(root, esp)
+    entries = sorted((esp / 'loader/entries').glob('*.conf'),
+                     key=lambda path: presentation.fields(path.read_text())['sort-key'])
+    assert [(presentation.generation(path.read_text()),
+             presentation.identity(path.read_text())['airlock-role']) for path in entries] == [
+        (10, 'normal'), (2, 'normal'), (2, 'recovery')]
+    assert presentation.fields(entries[0].read_text())['title'] == 'Airlock (2026-09-30_14:30-abcdef0)'
+    assert presentation.fields(entries[1].read_text())['title'] == presentation.fields(entries[0].read_text())['title']
+    assert presentation.fields(entries[2].read_text())['title'] == 'Airlock (recovery, 2026-09-30_14:30-abcdef0)'
+    assert artifacts.verify(root, esp, {'system': B, 'generation': 2}) == entries[0].name
+    artifacts.select_entry(esp, entries[1].name)
+    assert presentation.fields((esp / 'loader/loader.conf').read_text())['default'] == entries[0].stem
+    before = {path: path.read_bytes() for path in esp.rglob('*') if path.is_file()}
+    artifacts.seal(root, esp)
+    assert {path: path.read_bytes() for path in esp.rglob('*') if path.is_file()} == before
+
+
+@pytest.mark.parametrize('fault', ['entry', 'kernel', 'interruption'])
+def test_legacy_presentation_migration_verifies_and_resumes(tmp_path, monkeypatch, fault):
+    root, esp, artifacts, presentation = boot_artifact_fixture(tmp_path, monkeypatch)
+    artifacts.seal(root, esp)
+    descriptor_path = root / 'host/artifacts' / (host.key(A) + '.json')
+    descriptor = core.read_json(descriptor_path)
+    entry = esp / 'loader/entries' / descriptor['entries'][0]['entry']
+    # Model a genuinely checksum-bound entry created by the previous release.
+    legacy = (f'title Airlock\nversion Generation 2 long details\n'
+              f'efi /EFI/airlock/xen-2-normal.efi\n'
+              f'# airlock-system {A}\n# airlock-role normal\n')
+    entry.write_text(legacy)
+    fingerprint = {'size': entry.stat().st_size, 'sha256': core.hash_file(entry)}
+    descriptor['entries'][0]['files'][str(entry.relative_to(esp))] = fingerprint
+    core.atomic_json(descriptor_path, descriptor)
+    if fault in ('entry', 'kernel'):
+        corrupt = entry if fault == 'entry' else esp / 'EFI/airlock/kernel.efi'
+        corrupt.write_bytes(b'corrupt')
+        with pytest.raises(core.EngineError, match='corrupt boot artifact'):
+            artifacts.seal(root, esp)
+        assert core.read_json(descriptor_path) == descriptor
+    else:
+        original = core.atomic_json
+        interrupted = False
+        def write(path, value, **kwargs):
+            nonlocal interrupted
+            if Path(path) == descriptor_path and 'presentationMigration' not in value and not interrupted:
+                interrupted = True
+                raise OSError('power loss before committing updated fingerprints')
+            original(path, value, **kwargs)
+        monkeypatch.setattr(core, 'atomic_json', write)
+        with pytest.raises(OSError, match='power loss'):
+            artifacts.seal(root, esp)
+        assert 'presentationMigration' in core.read_json(descriptor_path)
+        assert artifacts.verify(root, esp, {'system': A, 'generation': 1}) == entry.name
+        artifacts.seal(root, esp)
+        assert 'presentationMigration' not in core.read_json(descriptor_path)
+        assert presentation.generation(entry.read_text()) == 2
+        assert presentation.fields(entry.read_text())['title'] == 'Airlock (2026-09-30_14:30-abcdef0)'
+        assert artifacts.verify(root, esp, {'system': A, 'generation': 1}) == entry.name
+
+
+def test_saved_firmware_default_is_cleared_only_when_present(tmp_path, monkeypatch):
+    from airlock_qubes_storage import boot_presentation as presentation
+    calls = []
+    monkeypatch.setattr(presentation.subprocess, 'run', lambda *args, **kwargs: calls.append((args, kwargs)))
+    presentation.clear_saved_default(tmp_path, '/bin/bootctl')
+    assert not calls
+    (tmp_path / 'LoaderEntryDefault-4a67b082-0a4c-41cf-b6c7-440b29bb8c4f').write_bytes(b'older')
+    presentation.clear_saved_default(tmp_path, '/bin/bootctl')
+    assert calls == [((['/bin/bootctl', 'set-default', ''],), {'check': True})]

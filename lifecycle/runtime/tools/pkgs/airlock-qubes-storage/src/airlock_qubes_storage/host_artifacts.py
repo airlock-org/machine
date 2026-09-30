@@ -3,8 +3,10 @@ from pathlib import Path
 import os
 import struct
 import shutil
+import hashlib
 
 from ._engine import core
+from . import boot_presentation as presentation
 
 
 def xen_config(binary):
@@ -73,6 +75,7 @@ def seal(root, esp):
             # A retained entry must survive upstream menu regeneration even
             # when its system path is absent from the currently mounted view.
             selected = verify(root, esp, record)
+            migrate_presentation(descriptor, esp)
             remove_native_duplicates(esp, record["system"], selected)
             continue
         entries = inventory(esp, record["system"])
@@ -101,19 +104,17 @@ def seal(root, esp):
                     files[str(target.relative_to(esp))] = fingerprint
                 target_entry = esp / "loader/entries" / name
                 text = source_entry.read_text().replace("/EFI/nixos/", "/EFI/airlock/").rstrip("\n") + "\n"
-                role = "recovery" if "title Airlock (recovery)" in text else "normal"
-                # Menu classification must not open an unmounted old store.
-                # Comments are ignored by systemd-boot and covered by our hash.
-                text += f"# airlock-system {record['system']}\n# airlock-role {role}\n"
-                lines = text.splitlines()
-                version = next((line.removeprefix("version ") for line in lines if line.startswith("version ")), "")
-                parts = version.split()
-                generation = parts[1] if len(parts) > 1 and parts[0] == "Generation" and parts[1].isdigit() else str(record["generation"])
-                # systemd-boot adds versions only to distinguish equal titles.
-                # Keep those versions short; a fresh image has unique titles.
-                title = "Airlock (recovery)" if role == "recovery" else "Airlock"
-                lines = [line for line in lines if not line.startswith(("title ", "version "))]
-                text = f"title {title}\nversion Generation {generation}\n" + "\n".join(lines) + "\n"
+                metadata = presentation.identity(text)
+                system = Path(record["system"])
+                marker = system / "etc/airlock/boot-role"
+                role = metadata.get("airlock-role") or (marker.read_text().strip() if marker.is_file() else None)
+                if role is None:
+                    core.fail("host boot entry has no explicit role")
+                generation = presentation.generation(text)
+                if generation is None:
+                    core.fail("host boot entry has no boot-menu generation")
+                text = presentation.format_entry(text, generation, role, record["system"],
+                                                 presentation.source_metadata(system))
                 core.atomic_write(target_entry, text)
                 files[str(target_entry.relative_to(esp))] = {
                     "size": target_entry.stat().st_size, "sha256": core.hash_file(target_entry)}
@@ -123,6 +124,49 @@ def seal(root, esp):
                               "generation": record["generation"], "entries": retained})
             selected = verify(root, esp, record)
             remove_native_duplicates(esp, record["system"], selected)
+
+    if (esp / "loader/loader.conf").exists() and any(
+            presentation.identity(path.read_text()).get("airlock-role") == "normal"
+            for path in (esp / "loader/entries").glob("*.conf")):
+        select_entry(esp, presentation.newest_normal(esp / "loader/entries") + ".conf")
+
+
+def migrate_presentation(descriptor_path, esp):
+    """Reformat already verified legacy entries with a resumable hash transition.
+
+    Publish both authenticated byte identities before replacing entry files.
+    After a crash, verification accepts either complete file and sealing resumes
+    the same transition. Binary, kernel and initrd fingerprints never change.
+    """
+    descriptor = core.read_json(descriptor_path)
+    changes = descriptor.get("presentationMigration")
+    if changes is None:
+        changes = []
+        for entry in descriptor["entries"]:
+            path = Path(esp) / "loader/entries" / entry["entry"]
+            text = path.read_text()
+            metadata = presentation.identity(text)
+            number = presentation.generation(text)
+            system = metadata["airlock-system"]
+            target = presentation.format_entry(text, number, metadata["airlock-role"], system,
+                                               presentation.source_metadata(system))
+            if target != text:
+                relative = str(path.relative_to(esp))
+                changes.append({"path": relative, "text": target,
+                                "before": entry["files"][relative],
+                                "after": {"size": len(target.encode()),
+                                          "sha256": hashlib.sha256(target.encode()).hexdigest()}})
+        if not changes:
+            return
+        descriptor["presentationMigration"] = changes
+        core.atomic_json(descriptor_path, descriptor)
+    for change in changes:
+        core.atomic_write(Path(esp) / change["path"], change["text"])
+        for entry in descriptor["entries"]:
+            if change["path"] in entry["files"]:
+                entry["files"][change["path"]] = change["after"]
+    descriptor.pop("presentationMigration")
+    core.atomic_json(descriptor_path, descriptor)
 
 
 def remove_native_duplicates(esp, system, selected):
@@ -182,7 +226,13 @@ def verify(root, esp, record):
             if Path(name).is_absolute() or ".." in Path(name).parts:
                 core.fail("invalid boot artifact path")
             path = Path(esp) / name
-            if not path.is_file() or path.stat().st_size != expected["size"] or core.hash_file(path) != expected["sha256"]:
+            alternatives = [expected]
+            for change in descriptor.get("presentationMigration", []):
+                if change["path"] == name and name == "loader/entries/" + entry["entry"]:
+                    alternatives.append(change["after"])
+            if not path.is_file() or not any(
+                    path.stat().st_size == fingerprint["size"] and core.hash_file(path) == fingerprint["sha256"]
+                    for fingerprint in alternatives):
                 core.fail(f"missing or corrupt boot artifact: {name}")
     return descriptor["entries"][0]["entry"]
 
@@ -192,6 +242,11 @@ def select_entry(esp, entry):
     if Path(entry).name != entry:
         core.fail("invalid loader entry name")
     path = Path(esp) / "loader/loader.conf"
+    # The selected pool system can be older (rollback or recovery). Selection
+    # must not establish an older persistent boot default. Older systems remain
+    # available for manual selection at the physical menu, even without EFI vars.
+    default = presentation.newest_normal(Path(esp) / "loader/entries")
     lines = [line for line in path.read_text().splitlines()
-             if not line.split() or line.split()[0] != "default"]
-    core.atomic_write(path, "\n".join([f"default {entry}", *lines]) + "\n")
+             if not line.split() or line.split()[0] not in ("default", "preferred")]
+    presentation.clear_saved_default()
+    core.atomic_write(path, "\n".join([f"default {default}", *lines]) + "\n")

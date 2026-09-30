@@ -4,6 +4,7 @@
   pkgs,
   airlockMachineGuestEntries,
   airlockSourceRevision,
+  airlockSourceTimestamp,
   airlockSourceLockHash,
   ...
 }:
@@ -43,6 +44,7 @@ let
     setup = "${setup}/bin/airlock-setup-config";
     coordinator = "${engine}/bin/airlock-machine-deploy";
     revision = airlockSourceRevision;
+    timestamp = airlockSourceTimestamp;
     lockHash = airlockSourceLockHash;
     retireDomains = config.airlock.machineDeployment.retireDomains;
     trashRetentionDays = config.airlock.machineDeployment.trashRetentionDays;

@@ -454,6 +454,7 @@
             (if includeAlternativeGuiProfiles then "sys-gui-hybrid" else "sys-gui");
           airlockMachineGuestEntries = entries;
           airlockSourceRevision = self.rev or "dirty";
+          airlockSourceTimestamp = self.lastModified or 0;
           airlockSourceLockHash = builtins.hashFile "sha256" ./flake.lock;
         } // extraSpecialArgs;
         modules = [
@@ -463,6 +464,10 @@
           ./lifecycle/misc/modules/host-store.nix
           ./lifecycle/image/hardware/thinkpad-t14-gen3-amd.nix
           ({ config, lib, ... }: {
+            airlock.dom0.bootMenu.source = {
+              revision = extraSpecialArgs.airlockSourceRevision or (self.rev or "dirty");
+              timestamp = extraSpecialArgs.airlockSourceTimestamp or (self.lastModified or 0);
+            };
             airlock.machineDeployment.enable = true;
             airlock.hostStore.enable = true;
             airlock.machineDeployment.profile = "usb-dev";
@@ -475,6 +480,10 @@
               inheritParentConfig = false;
               configuration = {
                 imports = [ ./lifecycle/image/profiles/usb-recovery.nix ];
+                environment.etc."airlock/boot-source.json".text = builtins.toJSON {
+                  revision = extraSpecialArgs.airlockSourceRevision or (self.rev or "dirty");
+                  timestamp = extraSpecialArgs.airlockSourceTimestamp or (self.lastModified or 0);
+                };
                 boot.kernelPackages = config.boot.kernelPackages;
                 virtualisation.xen.package = config.virtualisation.xen.package;
               };

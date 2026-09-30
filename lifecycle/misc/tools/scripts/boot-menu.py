@@ -9,7 +9,8 @@ import os
 import re
 import subprocess
 
-GENERATION = re.compile(r"^Generation ([0-9]+)(?:\s|$)")
+from airlock_qubes_storage import boot_presentation as presentation
+
 STORE_SYSTEM = re.compile(r"(?:^|\s)init=(/nix/store/[^/\s]+)/init(?:\s|$)")
 
 
@@ -43,24 +44,23 @@ def system_for_xen_entry(entry, store_root):
 def classified_entries(entries_dir, store_root):
     result = []
     for path in entries_dir.glob("xen-*.conf"):
-        metadata = fields(path)
-        generation = GENERATION.match(metadata.get("version", ""))
-        system = system_for_xen_entry(path, store_root)
+        text = path.read_text()
+        generation = presentation.generation(text)
+        comments = presentation.identity(text)
+        logical_system = comments.get("airlock-system", "")
+        system = (store_root / Path(logical_system).name if logical_system.startswith("/nix/store/")
+                  else system_for_xen_entry(path, store_root))
         marker = system / "etc/airlock/boot-role" if system else None
-        if not generation or not marker or not marker.is_file():
-            continue
-        role = marker.read_text().strip()
-        if role in ("normal", "recovery"):
-            result.append(Entry(path, int(generation.group(1)), role, system))
+        role = comments.get("airlock-role") or (marker.read_text().strip() if marker and marker.is_file() else None)
+        if generation and system and role in ("normal", "recovery"):
+            result.append(Entry(path, generation, role, system))
     for path in entries_dir.glob("airlock-xen-*.conf"):
-        metadata = fields(path)
-        generation = GENERATION.match(metadata.get("version", ""))
-        comments = dict(line[2:].split(" ", 1) for line in path.read_text().splitlines()
-                        if line.startswith("# airlock-") and " " in line[2:])
+        comments = presentation.identity(path.read_text())
+        generation = presentation.generation(path.read_text())
         system = comments.get("airlock-system", "")
         role = comments.get("airlock-role")
         if generation and system.startswith("/nix/store/") and role in ("normal", "recovery"):
-            result.append(Entry(path, int(generation.group(1)), role, store_root / Path(system).name))
+            result.append(Entry(path, generation, role, store_root / Path(system).name))
     return result
 
 
@@ -78,17 +78,15 @@ def replace_field(path, key, value):
     os.replace(temporary, path)
 
 
-def choose_one_per_generation(entries, preferred):
+def choose_one_per_generation(entries):
     grouped = defaultdict(list)
     for entry in entries:
         grouped[entry.generation].append(entry)
     selected = []
-    for generation, choices in grouped.items():
+    for choices in grouped.values():
         choices.sort(
             key=lambda entry: (
-                entry.path.stem != preferred,
                 not entry.path.name.startswith("airlock-"),
-                "usb-lab" not in fields(entry.path).get("title", ""),
                 entry.path.name,
             )
         )
@@ -96,38 +94,30 @@ def choose_one_per_generation(entries, preferred):
     return sorted(selected, key=lambda entry: entry.generation, reverse=True)
 
 
-def configure(esp, store_root, recovery_profile=None, nix_env="nix-env"):
+def configure(esp, store_root, recovery_profile=None, nix_env="nix-env", bootctl="bootctl"):
     entries_dir = esp / "loader/entries"
     loader_conf = esp / "loader/loader.conf"
     if not entries_dir.is_dir() or not loader_conf.is_file():
         raise ValueError("systemd-boot files are missing from the EFI partition")
 
     loader = fields(loader_conf)
-    preferred = loader.get("preferred", loader.get("default", "")).removesuffix(".conf")
     classified = classified_entries(entries_dir, store_root)
-    preferred_entry = next((entry for entry in classified if entry.path.stem == preferred), None)
-    if preferred_entry:
-        # Upstream may regenerate a native copy of an already sealed entry.
-        # Preserve the chosen system while preferring its independent copy.
-        preferred = next((entry.path.stem for entry in classified
-                          if entry.path.name.startswith("airlock-")
-                          and (entry.generation, entry.role, entry.system) ==
-                          (preferred_entry.generation, preferred_entry.role, preferred_entry.system)), preferred)
-    normal = choose_one_per_generation(
-        [entry for entry in classified if entry.role == "normal"], preferred
-    )
-    recovery = choose_one_per_generation(
-        [entry for entry in classified if entry.role == "recovery"], preferred
-    )
+    normal = choose_one_per_generation([entry for entry in classified if entry.role == "normal"])
+    recovery = choose_one_per_generation([entry for entry in classified if entry.role == "recovery"])
     if not normal:
         raise ValueError("no Xen Airlock normal boot entry was generated")
     if not recovery:
         raise ValueError("no Xen Airlock recovery boot entry was generated")
 
-    selected = next((entry for entry in normal if entry.path.stem == preferred), None)
-    current = selected or normal[0]
-    history = [entry for entry in normal if entry != current]
+    current = normal[0]
     current_recovery = recovery[0]
+    # Validate every native label before modifying the menu or recovery profile.
+    formatted = {
+        entry.path: presentation.format_entry(
+            entry.path.read_text(), entry.generation, entry.role,
+            "/nix/store/" + entry.system.name, presentation.source_metadata(entry.system))
+        for entry in normal + recovery if not entry.path.name.startswith("airlock-")
+    }
     if recovery_profile and not current_recovery.path.name.startswith("airlock-"):
         recovery_profile.parent.mkdir(parents=True, exist_ok=True)
         subprocess.run(
@@ -140,23 +130,18 @@ def configure(esp, store_root, recovery_profile=None, nix_env="nix-env"):
             ],
             check=True,
         )
-    retained = {entry.path for entry in normal} | {current_recovery.path}
+    retained = {entry.path for entry in normal + recovery}
     for entry in entries_dir.glob("*.conf"):
         if entry.name.startswith(("nixos-", "xen-")) and entry not in retained:
             entry.unlink()
 
     # Retained entries are checksum-bound boot artifacts. Preserve their bytes.
-    if not current.path.name.startswith("airlock-"):
-        replace_field(current.path, "title", "Airlock")
-        replace_field(current.path, "sort-key", "00-airlock")
-    if not current_recovery.path.name.startswith("airlock-"):
-        replace_field(current_recovery.path, "title", "Airlock (recovery)")
-        replace_field(current_recovery.path, "sort-key", "01-airlock-recovery")
-    for entry in history:
-        if not entry.path.name.startswith("airlock-"):
-            replace_field(entry.path, "title", f"Airlock (generation {entry.generation})")
-            replace_field(entry.path, "sort-key", "02-airlock-generation")
+    for path, text in formatted.items():
+        temporary = path.with_suffix(".conf.tmp")
+        temporary.write_text(text)
+        os.replace(temporary, path)
 
+    presentation.clear_saved_default(bootctl=bootctl)
     replace_field(loader_conf, "default", current.path.stem)
     if "preferred" in loader:
         replace_field(loader_conf, "preferred", current.path.stem)
@@ -168,6 +153,7 @@ def main():
     parser.add_argument("--store-root", type=Path, default=Path("/nix/store"))
     parser.add_argument("--recovery-profile", type=Path)
     parser.add_argument("--nix-env", default="nix-env")
+    parser.add_argument("--bootctl", default="bootctl")
     args = parser.parse_args()
     try:
         configure(
@@ -175,6 +161,7 @@ def main():
             args.store_root,
             recovery_profile=args.recovery_profile,
             nix_env=args.nix_env,
+            bootctl=args.bootctl,
         )
     except (OSError, ValueError, subprocess.CalledProcessError) as error:
         parser.error(str(error))

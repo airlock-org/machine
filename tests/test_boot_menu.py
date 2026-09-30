@@ -1,6 +1,8 @@
 """Airlock's systemd-boot menu exposes current, recovery and old generations."""
 
 import importlib.util
+import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -12,6 +14,8 @@ def boot_menu():
         Path(__file__).resolve().parents[1]
         / "lifecycle/misc/tools/scripts/boot-menu.py"
     )
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] /
+                          "lifecycle/runtime/tools/pkgs/airlock-qubes-storage/src"))
     spec = importlib.util.spec_from_file_location("airlock_boot_menu", source)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -24,6 +28,8 @@ def add_entry(esp, store, name, generation, role=None, title="NixOS"):
         marker = system / "etc/airlock/boot-role"
         marker.parent.mkdir(parents=True)
         marker.write_text(role + "\n")
+        (marker.parent / "boot-source.json").write_text(json.dumps({
+            "revision": f"{generation:040x}", "timestamp": 1790778600 + generation * 60}))
     ordinary = esp / "loader/entries" / f"nixos-{name}.conf"
     ordinary.write_text(
         f"title {title}\n"
@@ -64,31 +70,25 @@ def menu_fixture(tmp_path):
     return esp, store, current, recovery, previous, other
 
 
-def test_menu_keeps_current_recovery_and_numbered_normal_generations(
-    boot_menu, tmp_path
-):
+def test_menu_orders_all_normal_before_recovery(boot_menu, tmp_path):
     esp, store, current, recovery, previous, other = menu_fixture(tmp_path)
-
     boot_menu.configure(esp, store)
-
-    entries = list((esp / "loader/entries").glob("*.conf"))
-    titles = {boot_menu.fields(entry).get("title"): entry for entry in entries}
-    assert set(titles) == {
-        "Airlock",
-        "Airlock (recovery)",
-        "Airlock (generation 11)",
-        "Airlock (generation 10)",
-        "Other OS",
-    }
-    assert titles["Airlock"] == current
-    assert titles["Airlock (recovery)"] == recovery
-    assert titles["Airlock (generation 11)"] == previous
+    entries = [entry for entry in (esp / "loader/entries").glob("*.conf") if entry != other]
+    ordered = sorted(entries, key=lambda entry: boot_menu.fields(entry)["sort-key"])
+    assert [(entry.generation, entry.role) for entry in sorted(
+        boot_menu.classified_entries(esp / "loader/entries", store),
+        key=lambda entry: boot_menu.fields(entry.path)["sort-key"])] == [
+        (12, "normal"), (11, "normal"), (10, "normal"), (12, "recovery"), (11, "recovery")]
+    assert ordered[:2] == [current, previous]
+    assert boot_menu.fields(current)["title"] == "Airlock (2026-09-30_14:42-0000000)"
+    assert boot_menu.fields(recovery)["title"] == "Airlock (recovery, 2026-09-30_14:42-0000000)"
+    assert boot_menu.fields(current)["version"] == "12"
     assert other.is_file()
     loader = boot_menu.fields(esp / "loader/loader.conf")
-    assert loader["default"] == current.stem
-    assert loader["preferred"] == current.stem
-    assert boot_menu.fields(current)["sort-key"] == "00-airlock"
-    assert boot_menu.fields(recovery)["sort-key"] == "01-airlock-recovery"
+    assert loader["default"] == loader["preferred"] == current.stem
+    before = {path: path.read_bytes() for path in esp.rglob("*.conf")}
+    boot_menu.configure(esp, store)
+    assert {path: path.read_bytes() for path in esp.rglob("*.conf")} == before
 
 
 def test_menu_refuses_to_mutate_without_recovery(boot_menu, tmp_path):
@@ -132,16 +132,14 @@ def test_menu_pins_recovery_as_a_system_profile(boot_menu, tmp_path, monkeypatch
     ]
 
 
-def test_selected_rollback_generation_remains_the_airlock_default(boot_menu, tmp_path):
+def test_selected_older_generation_does_not_change_newest_default(boot_menu, tmp_path):
     esp, store, current, _, previous, _ = menu_fixture(tmp_path)
     loader = esp / "loader/loader.conf"
     loader.write_text(f"timeout 10\ndefault {previous.stem}\n")
 
     boot_menu.configure(esp, store)
 
-    assert boot_menu.fields(previous)["title"] == "Airlock"
-    assert boot_menu.fields(current)["title"] == "Airlock (generation 12)"
-    assert boot_menu.fields(loader)["default"] == previous.stem
+    assert boot_menu.fields(loader)["default"] == current.stem
 
 
 def test_retained_recovery_is_usable_without_its_store_view(boot_menu, tmp_path):
@@ -181,5 +179,29 @@ def test_regenerated_native_duplicates_keep_sealed_choices_and_default(boot_menu
 
     assert not any(path.exists() for path in (current, previous, recovery))
     assert all(path.read_text() == text for path, text in sealed.items())
-    assert boot_menu.fields(loader)['default'] == 'airlock-' + previous.stem
-    assert boot_menu.fields(loader)['preferred'] == 'airlock-' + previous.stem
+    assert boot_menu.fields(loader)['default'] == 'airlock-' + current.stem
+    assert boot_menu.fields(loader)['preferred'] == 'airlock-' + current.stem
+
+
+def test_numeric_order_with_identical_source_labels(boot_menu, tmp_path):
+    esp, store, _, _, _, _ = menu_fixture(tmp_path)
+    older = add_entry(esp, store, "two", 2, "normal")
+    newer = esp / "loader/entries/xen-lab10a.conf"
+    same = json.dumps({"revision": "abcdef0" + "1" * 33, "timestamp": 1790778600})
+    for marker in store.glob("*/etc/airlock/boot-source.json"):
+        marker.write_text(same)
+    boot_menu.configure(esp, store)
+    assert boot_menu.fields(older)["title"] == boot_menu.fields(newer)["title"]
+    ordered = sorted(boot_menu.classified_entries(esp / "loader/entries", store),
+                     key=lambda entry: boot_menu.fields(entry.path)["sort-key"])
+    assert [entry.generation for entry in ordered if entry.role == "normal"] == [12, 11, 10, 2]
+
+
+def test_invalid_source_refuses_mutation(boot_menu, tmp_path):
+    esp, store, *_ = menu_fixture(tmp_path)
+    (store / "lab12/etc/airlock/boot-source.json").write_text(
+        json.dumps({"revision": "dirty", "timestamp": 1790778600}))
+    before = {path: path.read_bytes() for path in esp.rglob("*.conf")}
+    with pytest.raises(ValueError, match="committed revision"):
+        boot_menu.configure(esp, store)
+    assert {path: path.read_bytes() for path in esp.rglob("*.conf")} == before

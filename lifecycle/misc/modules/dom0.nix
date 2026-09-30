@@ -12,10 +12,11 @@ let
   qubesStorage = pkgs.python3.pkgs.callPackage ../../runtime/tools/pkgs/airlock-qubes-storage { };
   observeDom0 = pkgs.callPackage ../../runtime/tools/pkgs/airlock-observe { };
   bootMenu = pkgs.writeShellScript "airlock-boot-menu" ''
-    exec ${pkgs.python3}/bin/python3 ${../tools/scripts/boot-menu.py} \
+    exec ${pkgs.python3.withPackages (_: [ qubesStorage ])}/bin/python3 ${../tools/scripts/boot-menu.py} \
       --esp ${lib.escapeShellArg config.boot.loader.efi.efiSysMountPoint} \
       --recovery-profile /nix/var/nix/profiles/system-profiles/airlock-recovery \
-      --nix-env ${config.nix.package}/bin/nix-env
+      --nix-env ${config.nix.package}/bin/nix-env \
+      --bootctl ${pkgs.systemd}/bin/bootctl
   '';
   qubesSmoke = pkgs.callPackage ../tools/pkgs/airlock-qubes-smoke { };
   qrexecDom0 = pkgs.python3.pkgs.qubes-core-qrexec.dom0;
@@ -246,6 +247,16 @@ in
     gui.enable = lib.mkEnableOption "Qubes GUI integration in dom0";
 
     bootMenu.enable = lib.mkEnableOption "the concise Airlock USB boot menu";
+    bootMenu.source = lib.mkOption {
+      type = lib.types.nullOr (lib.types.submodule {
+        options = {
+          revision = lib.mkOption { type = lib.types.str; };
+          timestamp = lib.mkOption { type = lib.types.ints.unsigned; };
+        };
+      });
+      default = null;
+      description = "Committed source identity for this host's boot entries.";
+    };
 
     observability.enable = lib.mkOption {
       type = lib.types.bool;
@@ -367,6 +378,9 @@ in
       ]
     );
 
+    environment.etc."airlock/boot-source.json" = lib.mkIf (cfg.bootMenu.source != null) {
+      text = builtins.toJSON cfg.bootMenu.source;
+    };
     boot.initrd.systemd.enable = lib.mkDefault true;
     time.timeZone = lib.mkDefault "UTC";
     services.xserver.desktopManager.xfce.enable = lib.mkIf cfg.gui.enable false;
