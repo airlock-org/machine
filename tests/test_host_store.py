@@ -345,6 +345,7 @@ def test_registration_union_rejects_overflowing_nix_base32_hash():
 
 @pytest.mark.parametrize("invalid_registration", [False, True])
 @pytest.mark.parametrize("isolated_state", [False, True])
+@pytest.mark.nix
 def test_database_transition_preserves_saved_derivation(tmp_path, monkeypatch, invalid_registration, isolated_state):
     """Exercise real Nix registration; emulate only privileged bind mounts."""
     import shutil
