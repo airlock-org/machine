@@ -20,12 +20,6 @@ let
         description = "Candidate flake output attribute that builds this template source.";
       };
 
-      attr = lib.mkOption {
-        type = lib.types.nullOr lib.types.str;
-        default = null;
-        description = "Alias for build.";
-      };
-
       subpath = lib.mkOption {
         type = lib.types.str;
         default = "";

@@ -124,23 +124,16 @@ let
       ref = expectOptions path [
         "type"
         "build"
-        "attr"
         "subpath"
       ] value;
       declaredType = get ref "type" "flake-output";
-      hasBuild = hasAttr "build" ref;
-      hasAttrName = hasAttr "attr" ref;
       attr =
         if declaredType != "flake-output" then
           fail "${path}.type" "expected flake-output, got ${toJSON declaredType}"
-        else if hasBuild && hasAttrName then
-          fail path "build and attr cannot both be set"
-        else if hasBuild then
+        else if hasAttr "build" ref then
           expectStringOrPath "${path}.build" ref.build
-        else if hasAttrName then
-          expectStringOrPath "${path}.attr" ref.attr
         else
-          fail path "must set build or attr";
+          fail path "must set build";
       subpath = expectStringOrPath "${path}.subpath" (get ref "subpath" "");
     in
     if match "[A-Za-z0-9_+-]+(\\.[A-Za-z0-9_+-]+)*" attr == null then

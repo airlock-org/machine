@@ -120,20 +120,13 @@ let
     let
       ref = expectOptions path [
         "build"
-        "attr"
         "subpath"
       ] value;
-      hasBuild = hasAttr "build" ref && ref.build != null;
-      hasAttrName = hasAttr "attr" ref && ref.attr != null;
       attr =
-        if hasBuild && hasAttrName then
-          fail path "build and attr cannot both be set"
-        else if hasBuild then
+        if hasAttr "build" ref && ref.build != null then
           expectStringOrPath "${path}.build" ref.build
-        else if hasAttrName then
-          expectStringOrPath "${path}.attr" ref.attr
         else
-          fail path "must set build or attr";
+          fail path "must set build";
       subpath = expectStringOrPath "${path}.subpath" (get ref "subpath" "");
     in
     if match "[A-Za-z0-9_+-]+(\\.[A-Za-z0-9_+-]+)*" attr == null then
