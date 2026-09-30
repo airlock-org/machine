@@ -432,28 +432,10 @@ let
         "source"
         "sourceRef"
         "skipStart"
-        "skip_start"
       ] value;
       importTemplate = expectBool "templates.${checkedName}.import" (get template "import" false);
       sourceInfo = normalizeSourceOption "templates.${checkedName}" template;
-      hasCamelSkip = hasAttr "skipStart" template;
-      hasSnakeSkip = hasAttr "skip_start" template;
-      camelSkip =
-        if hasCamelSkip then expectBool "templates.${checkedName}.skipStart" template.skipStart else null;
-      snakeSkip =
-        if hasSnakeSkip then expectBool "templates.${checkedName}.skip_start" template.skip_start else null;
-      skipStart =
-        if hasCamelSkip && hasSnakeSkip then
-          if camelSkip == snakeSkip then
-            camelSkip
-          else
-            fail "templates.${checkedName}" "skipStart and skip_start disagree"
-        else if hasCamelSkip then
-          camelSkip
-        else if hasSnakeSkip then
-          snakeSkip
-        else
-          true;
+      skipStart = expectBool "templates.${checkedName}.skipStart" (get template "skipStart" true);
     in
     if importTemplate && sourceInfo.source == null && sourceInfo.source_ref == null then
       fail "templates.${checkedName}.source" "must be set when import is true"
@@ -542,7 +524,6 @@ let
           "chunkSize"
           "chunk_size"
           "readOnly"
-          "read_only"
         ] value;
         mode = expectEnum "${path}.mode" [
           "shared-closure"
@@ -559,22 +540,7 @@ let
         viewBackend = expectEnum "${path}.viewBackend" [
           "erofs-objectmap"
         ] (get store "viewBackend" (get store "view_backend" "erofs-objectmap"));
-        hasCamelReadOnly = hasAttr "readOnly" store;
-        hasSnakeReadOnly = hasAttr "read_only" store;
-        camelReadOnly = if hasCamelReadOnly then expectBool "${path}.readOnly" store.readOnly else null;
-        snakeReadOnly = if hasSnakeReadOnly then expectBool "${path}.read_only" store.read_only else null;
-        readOnly =
-          if hasCamelReadOnly && hasSnakeReadOnly then
-            if camelReadOnly == snakeReadOnly then
-              camelReadOnly
-            else
-              fail path "readOnly and read_only disagree"
-          else if hasCamelReadOnly then
-            camelReadOnly
-          else if hasSnakeReadOnly then
-            snakeReadOnly
-          else
-            true;
+        readOnly = expectBool "${path}.readOnly" (get store "readOnly" true);
       in
       if mountpoint != "/nix/store" then
         fail "${path}.mountpoint" "currently must be /nix/store"
@@ -614,26 +580,10 @@ let
             "source"
             "sourceRef"
             "readOnly"
-            "read_only"
           ] value;
       mode = expectEnum "${path}.mode" [ "qubes-root-image" ] (get root "mode" "qubes-root-image");
       sourceInfo = normalizeSourceOption path root;
-      hasCamelReadOnly = hasAttr "readOnly" root;
-      hasSnakeReadOnly = hasAttr "read_only" root;
-      camelReadOnly = if hasCamelReadOnly then expectBool "${path}.readOnly" root.readOnly else null;
-      snakeReadOnly = if hasSnakeReadOnly then expectBool "${path}.read_only" root.read_only else null;
-      readOnly =
-        if hasCamelReadOnly && hasSnakeReadOnly then
-          if camelReadOnly == snakeReadOnly then
-            camelReadOnly
-          else
-            fail path "readOnly and read_only disagree"
-        else if hasCamelReadOnly then
-          camelReadOnly
-        else if hasSnakeReadOnly then
-          snakeReadOnly
-        else
-          false;
+      readOnly = expectBool "${path}.readOnly" (get root "readOnly" false);
     in
     if readOnly then
       fail path "qubes-root-image materialization imports a writable Qubes root volume"
@@ -657,34 +607,14 @@ let
           expectOptions path [
             "persistent"
             "persistentSize"
-            "persistent_size"
             "volatile"
           ] value;
       persistent = expectLooseName "persistent state volume" "${path}.persistent" (
         get state "persistent" "${domainName}-private"
       );
-      hasCamelPersistentSize = hasAttr "persistentSize" state;
-      hasSnakePersistentSize = hasAttr "persistent_size" state;
-      camelPersistentSize =
-        if hasCamelPersistentSize && state.persistentSize != null then
-          expectPositiveInt "${path}.persistentSize" state.persistentSize
-        else
-          null;
-      snakePersistentSize =
-        if hasSnakePersistentSize && state.persistent_size != null then
-          expectPositiveInt "${path}.persistent_size" state.persistent_size
-        else
-          null;
       persistentSize =
-        if hasCamelPersistentSize && hasSnakePersistentSize then
-          if camelPersistentSize == snakePersistentSize then
-            camelPersistentSize
-          else
-            fail path "persistentSize and persistent_size disagree"
-        else if hasCamelPersistentSize then
-          camelPersistentSize
-        else if hasSnakePersistentSize then
-          snakePersistentSize
+        if hasAttr "persistentSize" state && state.persistentSize != null then
+          expectPositiveInt "${path}.persistentSize" state.persistentSize
         else
           null;
       volatile =
@@ -896,20 +826,9 @@ let
         "domains"
         "prefs"
         "qrexecPolicy"
-        "qrexec_policy"
       ] value;
       requestedSchema = get cfg "schema" schema;
-      hasCamelQrexecPolicy = hasAttr "qrexecPolicy" cfg;
-      hasSnakeQrexecPolicy = hasAttr "qrexec_policy" cfg;
-      qrexecPolicy =
-        if hasCamelQrexecPolicy && hasSnakeQrexecPolicy then
-          fail "" "qrexecPolicy and qrexec_policy cannot both be set"
-        else if hasCamelQrexecPolicy then
-          cfg.qrexecPolicy
-        else if hasSnakeQrexecPolicy then
-          cfg.qrexec_policy
-        else
-          { };
+      qrexecPolicy = get cfg "qrexecPolicy" { };
     in
     if requestedSchema != schema then
       fail "schema" "expected ${schema}, got ${toJSON requestedSchema}"

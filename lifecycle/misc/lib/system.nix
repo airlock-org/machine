@@ -190,54 +190,16 @@ let
         "source"
         "sourceRef"
         "activationCommand"
-        "activation_command"
         "activationAction"
-        "activation_action"
         "message"
       ] value;
       sourceInfo = normalizeSourceOption "dom0.profile" profile;
-      hasCamelCommand = hasAttr "activationCommand" profile;
-      hasSnakeCommand = hasAttr "activation_command" profile;
-      activationCommand =
-        if hasCamelCommand && hasSnakeCommand then
-          let
-            camel = expectRelativePath "dom0.profile.activationCommand" profile.activationCommand;
-            snake = expectRelativePath "dom0.profile.activation_command" profile.activation_command;
-          in
-          if camel == snake then
-            camel
-          else
-            fail "dom0.profile" "activationCommand and activation_command disagree"
-        else if hasCamelCommand then
-          expectRelativePath "dom0.profile.activationCommand" profile.activationCommand
-        else if hasSnakeCommand then
-          expectRelativePath "dom0.profile.activation_command" profile.activation_command
-        else
-          "bin/airlock-dom0-profile-activate";
-      hasCamelAction = hasAttr "activationAction" profile;
-      hasSnakeAction = hasAttr "activation_action" profile;
-      camelAction =
-        if hasCamelAction then
-          expectEnum "dom0.profile.activationAction" activationActions profile.activationAction
-        else
-          null;
-      snakeAction =
-        if hasSnakeAction then
-          expectEnum "dom0.profile.activation_action" activationActions profile.activation_action
-        else
-          null;
-      activationAction =
-        if hasCamelAction && hasSnakeAction then
-          if camelAction == snakeAction then
-            camelAction
-          else
-            fail "dom0.profile" "activationAction and activation_action disagree"
-        else if hasCamelAction then
-          camelAction
-        else if hasSnakeAction then
-          snakeAction
-        else
-          "run";
+      activationCommand = expectRelativePath "dom0.profile.activationCommand" (
+        get profile "activationCommand" "bin/airlock-dom0-profile-activate"
+      );
+      activationAction = expectEnum "dom0.profile.activationAction" activationActions (
+        get profile "activationAction" "run"
+      );
       message = expectStringOrPath "dom0.profile.message" (get profile "message" "");
     in
     {
@@ -261,37 +223,15 @@ let
             "source"
             "sourceRef"
             "switchAction"
-            "switch_action"
           ] value;
       sourceInfo = normalizeSourceOption path componentValue;
       enable = expectBool "${path}.enable" (get componentValue "enable" (sourceIsSet sourceInfo));
       reason = expectStringOrPath "${path}.reason" (
         get componentValue "reason" "new dom0 NixOS system generation"
       );
-      hasCamelAction = hasAttr "switchAction" componentValue;
-      hasSnakeAction = hasAttr "switch_action" componentValue;
-      camelAction =
-        if hasCamelAction then
-          expectEnum "${path}.switchAction" switchActions componentValue.switchAction
-        else
-          null;
-      snakeAction =
-        if hasSnakeAction then
-          expectEnum "${path}.switch_action" switchActions componentValue.switch_action
-        else
-          null;
-      switchAction =
-        if hasCamelAction && hasSnakeAction then
-          if camelAction == snakeAction then
-            camelAction
-          else
-            fail path "switchAction and switch_action disagree"
-        else if hasCamelAction then
-          camelAction
-        else if hasSnakeAction then
-          snakeAction
-        else
-          "switch";
+      switchAction = expectEnum "${path}.switchAction" switchActions (
+        get componentValue "switchAction" "switch"
+      );
     in
     if enable && !(sourceIsSet sourceInfo) then
       fail path "enable is true but no source or sourceRef was provided"

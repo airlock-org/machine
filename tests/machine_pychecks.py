@@ -8905,6 +8905,18 @@ def check_config_candidate_flake(repo_root: Path, log_dir: Path) -> None:
     runtime_path = work_dir / "airlock/runtime.nix"
     negative_cases = [
         (
+            '{ ... }:\n{ configVms.guests.sys-ctrl.hostname = "old-name"; }\n',
+            "airlock.configRoleConfigurations.sys-ctrl.config.networking.hostName",
+            "--raw",
+            "airlock.configVms.guests.sys-ctrl: unknown option(s): hostname",
+        ),
+        (
+            '{ ... }:\n{ nixNative.domains.work = { role = "base"; hostname = "old-name"; }; }\n',
+            "airlock.topology",
+            "--json",
+            "airlock.nixNative.domains.work: unknown option(s): hostname",
+        ),
+        (
             "{ ... }:\n{\n  templates.definitions.airlock-nixos-bad = { };\n}\n",
             "airlock.topology",
             "--json",

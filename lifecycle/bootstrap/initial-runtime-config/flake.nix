@@ -87,7 +87,6 @@
           "configuration"
           "etc"
           "hostName"
-          "hostname"
           "modules"
           "packages"
           "systemd"
@@ -120,7 +119,6 @@
           "etc"
           "features"
           "hostName"
-          "hostname"
           "kernel"
           "label"
           "modules"
@@ -530,20 +528,9 @@
       };
       mkGuestContentModule =
         defaultHostName: definition:
-        let
-          hasCamelHostName = definition ? hostName;
-          hasLowerHostName = definition ? hostname;
-          hostName =
-            if hasCamelHostName then
-              definition.hostName
-            else if hasLowerHostName then
-              definition.hostname
-            else
-              defaultHostName;
-        in
         { ... }:
         {
-          networking.hostName = nixpkgs.lib.mkOverride 900 hostName;
+          networking.hostName = nixpkgs.lib.mkOverride 900 (definition.hostName or defaultHostName);
           environment.systemPackages = definition.packages or [ ];
           environment.etc = definition.etc or { };
         }
