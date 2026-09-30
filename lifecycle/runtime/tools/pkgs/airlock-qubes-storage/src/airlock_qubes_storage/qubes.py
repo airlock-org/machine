@@ -239,9 +239,9 @@ class ClosureVolume(qubes.storage.Volume):
                 f"missing domain/generation for {self.vid}"
             )
         try:
-            from airlock_qubes_storage import engine
+            from airlock_qubes_storage._engine import views
 
-            result = engine.attach_blob_view(
+            result = views.attach_blob_view(
                 self.pool.root_dir, self.domain_name, self.generation
             )
         except Exception as exc:
@@ -266,9 +266,9 @@ class ClosureVolume(qubes.storage.Volume):
         if not self.domain_name or self.generation is None:
             return
         try:
-            from airlock_qubes_storage import engine
+            from airlock_qubes_storage._engine import views
 
-            engine.detach_blob_view(
+            views.detach_blob_view(
                 self.pool.root_dir, self.domain_name, self.generation
             )
         except Exception as exc:
@@ -278,9 +278,9 @@ class ClosureVolume(qubes.storage.Volume):
         if not self.domain_name or self.generation is None:
             return
         try:
-            from airlock_qubes_storage import engine
+            from airlock_qubes_storage._engine import state
 
-            engine.mark_running_ref(
+            state.mark_running_ref(
                 self.pool.root_dir, self.domain_name, self.generation, self.name
             )
         except Exception as exc:
@@ -290,9 +290,9 @@ class ClosureVolume(qubes.storage.Volume):
         if not self.domain_name or self.generation is None:
             return
         try:
-            from airlock_qubes_storage import engine
+            from airlock_qubes_storage._engine import state
 
-            engine.clear_running_ref(
+            state.clear_running_ref(
                 self.pool.root_dir, self.domain_name, self.generation, self.name
             )
         except Exception as exc:

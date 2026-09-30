@@ -1,7 +1,8 @@
 import json
 import sys
 
-from .engine import EngineError, run
+from ._engine.cli import run
+from ._engine.core import EngineError
 
 
 def main(argv=None):

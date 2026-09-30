@@ -391,28 +391,29 @@ def load_domain(qubes, domain):
 
 def run_engine(argv):
     try:
-        from airlock_qubes_storage import engine
+        from airlock_qubes_storage._engine.cli import run
+        from airlock_qubes_storage._engine.core import EngineError
     except Exception as exc:
         fail(f"cannot import Airlock closure-store engine: {exc}")
     try:
-        return engine.run(argv)
-    except engine.EngineError as exc:
+        return run(argv)
+    except EngineError as exc:
         fail(str(exc))
 
 
 def load_generation_admission(pool_root, domain, generation):
     try:
-        from airlock_qubes_storage import engine
+        from airlock_qubes_storage._engine import core, pool, state
     except Exception as exc:
         fail(f"cannot import Airlock closure-store engine: {exc}")
 
-    root = engine.ensure_pool(pool_root)
-    domain = engine.safe_domain_name(domain)
-    manifest_path = engine.generation_manifest_path(root, domain, generation)
+    root = pool.ensure_pool(pool_root)
+    domain = core.safe_domain_name(domain)
+    manifest_path = state.generation_manifest_path(root, domain, generation)
     if not os.path.exists(manifest_path):
         fail(f"generation does not exist for {domain}: {generation}")
-    manifest = engine.read_json(manifest_path)
-    if not engine.generation_is_committed(root, manifest):
+    manifest = core.read_json(manifest_path)
+    if not state.generation_is_committed(root, manifest):
         fail(f"generation is not committed for {domain}: {generation}")
     from airlock_qubes_storage._engine.root_images import verify_generation_root
 

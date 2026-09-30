@@ -6509,7 +6509,7 @@ def check_closure_volume_filtered_device(repo_root: Path, log_dir: Path) -> None
     sys.modules["qubes.storage"] = storage_module
 
     try:
-        from airlock_qubes_storage import engine
+        from airlock_qubes_storage._engine import views
         from airlock_qubes_storage.qubes import ClosurePool
 
         pool_root = work_dir / "pool"
@@ -6563,7 +6563,7 @@ def check_closure_volume_filtered_device(repo_root: Path, log_dir: Path) -> None
                 "manifest_path": str(manifest),
             },
         )
-        original_attach = engine.attach_blob_view
+        original_attach = views.attach_blob_view
         calls: list[dict[str, str]] = []
 
         def filtered_attach(
@@ -6577,7 +6577,7 @@ def check_closure_volume_filtered_device(repo_root: Path, log_dir: Path) -> None
                 "backing_paths": [str(segment_blob)],
             }
 
-        engine.attach_blob_view = filtered_attach
+        views.attach_blob_view = filtered_attach
         device = volume.block_device()
         assert device.path == "/dev/mapper/airlock-config-vault-1-abc"
         assert os.path.realpath(device.path) != os.path.realpath(segment_blob)
@@ -6614,7 +6614,7 @@ def check_closure_volume_filtered_device(repo_root: Path, log_dir: Path) -> None
                 "backing_paths": [str(segment_blob)],
             }
 
-        engine.attach_blob_view = unsafe_attach
+        views.attach_blob_view = unsafe_attach
         volume.path = None
         try:
             volume.block_device()
@@ -6623,7 +6623,7 @@ def check_closure_volume_filtered_device(repo_root: Path, log_dir: Path) -> None
         else:
             raise AssertionError("global backing storage was exposed to the guest")
         finally:
-            engine.attach_blob_view = original_attach
+            views.attach_blob_view = original_attach
 
         result_path.write_text(
             json.dumps(

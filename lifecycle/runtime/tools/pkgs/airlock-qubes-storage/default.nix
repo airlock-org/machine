@@ -39,7 +39,10 @@ buildPythonPackage {
 
   pythonImportsCheck = [
     "airlock_qubes_storage"
-    "airlock_qubes_storage.engine"
+    "airlock_qubes_storage.cli"
+    "airlock_qubes_storage._engine.cli"
+    "airlock_qubes_storage._engine.views"
+    "airlock_qubes_storage._engine.state"
   ];
 
   meta = {
