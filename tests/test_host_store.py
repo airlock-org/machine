@@ -15,6 +15,13 @@ A = "/nix/store/" + "0" * 32 + "-host"
 B = "/nix/store/" + "1" * 32 + "-package"
 
 
+@pytest.fixture(autouse=True)
+def no_host_firmware_preferences(monkeypatch, tmp_path):
+    from airlock_qubes_storage import boot_presentation as presentation
+    monkeypatch.setattr(presentation.clear_saved_default, "__defaults__",
+                        (tmp_path / "no-host-efivars", "bootctl"))
+
+
 def registration(path, references=(), digest="0" * 64):
     return "\n".join([path, digest, "42", "", str(len(references)), *references]) + "\n"
 
@@ -206,9 +213,11 @@ def test_recovery_uses_xen_efi_binding_and_rejects_damaged_initramfs(tmp_path, t
     assert host_artifacts.verify(root, esp, record) == 'airlock-' + entry.name
     retained = entry.with_name('airlock-' + entry.name)
     sealed_text = retained.read_text()
-    assert 'version 1\n' in sealed_text
+    assert 'version Generation 1\n' in sealed_text
     assert '# airlock-generation 1\n' in sealed_text
     assert 'legacy generation 1' in sealed_text
+    from airlock_qubes_storage.boot_presentation import GENERATION, fields
+    assert GENERATION.match(fields(sealed_text)['version'])
     assert list(entry.parent.glob('*.conf')) == [retained]
     from airlock_qubes_storage.boot_presentation import fields
     assert fields(loader.read_text())["default"] == retained.name
@@ -414,7 +423,7 @@ def test_retiring_boot_entry_preserves_shared_kernel_for_other_generation(tmp_pa
     host_artifacts.seal(root, esp)
     assert {line for path in entries.glob('airlock-*.conf')
             for line in path.read_text().splitlines() if line.startswith('version ')} == {
-                'version 1', 'version 2'}
+                'version Generation 1', 'version Generation 2'}
     host_artifacts.forget(root, esp, A)
     assert not (entries / 'airlock-xen-1.conf').exists()
     assert not (esp / 'EFI/airlock/xen-1.efi').exists()

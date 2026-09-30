@@ -9,7 +9,7 @@ import pytest
 
 
 @pytest.fixture
-def boot_menu():
+def boot_menu(monkeypatch, tmp_path):
     source = (
         Path(__file__).resolve().parents[1]
         / "lifecycle/misc/tools/scripts/boot-menu.py"
@@ -19,6 +19,8 @@ def boot_menu():
     spec = importlib.util.spec_from_file_location("airlock_boot_menu", source)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
+    monkeypatch.setattr(module.presentation.clear_saved_default, "__defaults__",
+                        (tmp_path / "no-host-efivars", "bootctl"))
     return module
 
 
@@ -82,7 +84,7 @@ def test_menu_orders_all_normal_before_recovery(boot_menu, tmp_path):
     assert ordered[:2] == [current, previous]
     assert boot_menu.fields(current)["title"] == "Airlock (2026-09-30_14:42-0000000)"
     assert boot_menu.fields(recovery)["title"] == "Airlock (recovery, 2026-09-30_14:42-0000000)"
-    assert boot_menu.fields(current)["version"] == "12"
+    assert boot_menu.fields(current)["version"] == "Generation 12"
     assert other.is_file()
     loader = boot_menu.fields(esp / "loader/loader.conf")
     assert loader["default"] == loader["preferred"] == current.name
@@ -205,3 +207,18 @@ def test_invalid_source_refuses_mutation(boot_menu, tmp_path):
     with pytest.raises(ValueError, match="committed revision"):
         boot_menu.configure(esp, store)
     assert {path: path.read_bytes() for path in esp.rglob("*.conf")} == before
+
+
+def test_explicit_identity_classifies_without_version_or_title(boot_menu, tmp_path):
+    esp, store, current, recovery, *_ = menu_fixture(tmp_path)
+    boot_menu.configure(esp, store)
+    for path in (current, recovery):
+        lines = path.read_text().splitlines()
+        path.write_text('\n'.join(line for line in lines
+                                  if not line.startswith(('title ', 'version '))) + '\n')
+    classified = {entry.path: (entry.generation, entry.role)
+                  for entry in boot_menu.classified_entries(esp / 'loader/entries', store)}
+    assert classified[current] == (12, 'normal')
+    assert classified[recovery] == (12, 'recovery')
+    boot_menu.configure(esp, store)
+    assert boot_menu.fields(esp / 'loader/loader.conf')['default'] == current.name

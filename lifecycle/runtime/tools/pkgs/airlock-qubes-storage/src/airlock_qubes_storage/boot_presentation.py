@@ -70,7 +70,10 @@ def format_entry(text, number, role, system, source=None):
     sort_key = f"{group}-{MAX_GENERATION - number:020d}"
     lines = [line for line in text.splitlines()
              if not line.startswith(("title ", "version ", "sort-key ", "machine-id ", "# airlock-"))]
-    result = [f"title {title}", f"version {number}", f"sort-key {sort_key}", *lines,
+    # Previous releases' install hooks still discover retained entries through
+    # this short version. Keep them usable during rollback; new discovery uses
+    # the explicit generation comment and sorting never depends on this field.
+    result = [f"title {title}", f"version Generation {number}", f"sort-key {sort_key}", *lines,
               f"# airlock-generation {number}", f"# airlock-role {role}", f"# airlock-system {system}"]
     if source:
         result += [f"# airlock-revision {source['revision']}", f"# airlock-timestamp {source['timestamp']}"]
