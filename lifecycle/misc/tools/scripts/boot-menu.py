@@ -142,9 +142,9 @@ def configure(esp, store_root, recovery_profile=None, nix_env="nix-env", bootctl
         os.replace(temporary, path)
 
     presentation.clear_saved_default(bootctl=bootctl)
-    replace_field(loader_conf, "default", current.path.stem)
+    replace_field(loader_conf, "default", current.path.name)
     if "preferred" in loader:
-        replace_field(loader_conf, "preferred", current.path.stem)
+        replace_field(loader_conf, "preferred", current.path.name)
 
 
 def main():

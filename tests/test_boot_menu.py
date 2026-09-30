@@ -85,7 +85,7 @@ def test_menu_orders_all_normal_before_recovery(boot_menu, tmp_path):
     assert boot_menu.fields(current)["version"] == "12"
     assert other.is_file()
     loader = boot_menu.fields(esp / "loader/loader.conf")
-    assert loader["default"] == loader["preferred"] == current.stem
+    assert loader["default"] == loader["preferred"] == current.name
     before = {path: path.read_bytes() for path in esp.rglob("*.conf")}
     boot_menu.configure(esp, store)
     assert {path: path.read_bytes() for path in esp.rglob("*.conf")} == before
@@ -139,7 +139,7 @@ def test_selected_older_generation_does_not_change_newest_default(boot_menu, tmp
 
     boot_menu.configure(esp, store)
 
-    assert boot_menu.fields(loader)["default"] == current.stem
+    assert boot_menu.fields(loader)["default"] == current.name
 
 
 def test_retained_recovery_is_usable_without_its_store_view(boot_menu, tmp_path):
@@ -155,7 +155,7 @@ def test_retained_recovery_is_usable_without_its_store_view(boot_menu, tmp_path)
     boot_menu.configure(esp, store, recovery_profile=tmp_path / 'recovery-profile')
     assert retained.read_text() == text
     assert not (tmp_path / 'recovery-profile').exists()
-    assert boot_menu.fields(esp / 'loader/loader.conf')['default'] == current.stem
+    assert boot_menu.fields(esp / 'loader/loader.conf')['default'] == current.name
 
 
 def test_regenerated_native_duplicates_keep_sealed_choices_and_default(boot_menu, tmp_path):
@@ -179,8 +179,8 @@ def test_regenerated_native_duplicates_keep_sealed_choices_and_default(boot_menu
 
     assert not any(path.exists() for path in (current, previous, recovery))
     assert all(path.read_text() == text for path, text in sealed.items())
-    assert boot_menu.fields(loader)['default'] == 'airlock-' + current.stem
-    assert boot_menu.fields(loader)['preferred'] == 'airlock-' + current.stem
+    assert boot_menu.fields(loader)['default'] == 'airlock-' + current.name
+    assert boot_menu.fields(loader)['preferred'] == 'airlock-' + current.name
 
 
 def test_numeric_order_with_identical_source_labels(boot_menu, tmp_path):

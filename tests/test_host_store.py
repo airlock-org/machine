@@ -211,7 +211,7 @@ def test_recovery_uses_xen_efi_binding_and_rejects_damaged_initramfs(tmp_path, t
     assert 'legacy generation 1' in sealed_text
     assert list(entry.parent.glob('*.conf')) == [retained]
     from airlock_qubes_storage.boot_presentation import fields
-    assert fields(loader.read_text())["default"] == retained.stem
+    assert fields(loader.read_text())["default"] == retained.name
     assert fields(loader.read_text())["timeout"] == "10"
     # Upstream can recreate the native copy on a subsequent boot installation.
     entry.write_text(native_text)
@@ -461,7 +461,7 @@ def test_sealed_entries_preserve_boot_generation_and_source_order(tmp_path, monk
     assert presentation.fields(entries[2].read_text())['title'] == 'Airlock (recovery, 2026-09-30_14:30-abcdef0)'
     assert artifacts.verify(root, esp, {'system': B, 'generation': 2}) == entries[0].name
     artifacts.select_entry(esp, entries[1].name)
-    assert presentation.fields((esp / 'loader/loader.conf').read_text())['default'] == entries[0].stem
+    assert presentation.fields((esp / 'loader/loader.conf').read_text())['default'] == entries[0].name
     before = {path: path.read_bytes() for path in esp.rglob('*') if path.is_file()}
     artifacts.seal(root, esp)
     assert {path: path.read_bytes() for path in esp.rglob('*') if path.is_file()} == before
@@ -509,12 +509,16 @@ def test_legacy_presentation_migration_verifies_and_resumes(tmp_path, monkeypatc
         assert artifacts.verify(root, esp, {'system': A, 'generation': 1}) == entry.name
 
 
-def test_saved_firmware_default_is_cleared_only_when_present(tmp_path, monkeypatch):
+@pytest.mark.parametrize('variable, command', [
+    ('LoaderEntryDefault', 'set-default'), ('LoaderEntryPreferred', 'set-preferred'),
+])
+def test_saved_firmware_default_is_cleared_only_when_present(tmp_path, monkeypatch, variable, command):
     from airlock_qubes_storage import boot_presentation as presentation
     calls = []
     monkeypatch.setattr(presentation.subprocess, 'run', lambda *args, **kwargs: calls.append((args, kwargs)))
     presentation.clear_saved_default(tmp_path, '/bin/bootctl')
     assert not calls
-    (tmp_path / 'LoaderEntryDefault-4a67b082-0a4c-41cf-b6c7-440b29bb8c4f').write_bytes(b'older')
+    (tmp_path / f'{variable}-4a67b082-0a4c-41cf-b6c7-440b29bb8c4f').write_bytes(b'older')
+    (tmp_path / 'LoaderEntryOneShot-4a67b082-0a4c-41cf-b6c7-440b29bb8c4f').write_bytes(b'manual next boot')
     presentation.clear_saved_default(tmp_path, '/bin/bootctl')
-    assert calls == [((['/bin/bootctl', 'set-default', ''],), {'check': True})]
+    assert calls == [((['/bin/bootctl', command, ''],), {'check': True})]

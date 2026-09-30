@@ -85,12 +85,14 @@ def newest_normal(entries_dir):
             choices.append((generation(text), path.name.startswith("airlock-"), path.name))
     if not choices:
         raise ValueError("no Xen Airlock normal boot entry was generated")
-    return max(choices)[2].removesuffix(".conf")
+    return max(choices)[2]
 
 
 def clear_saved_default(efivars=Path("/sys/firmware/efi/efivars"), bootctl="bootctl"):
     # Xen and image creation commonly have no EFI variable access. The file
     # default is sufficient there. Clear an existing firmware preference when
     # available, since it overrides loader.conf even without @saved.
-    if any(efivars.glob("LoaderEntryDefault-4a67b082-0a4c-41cf-b6c7-440b29bb8c4f")):
-        subprocess.run([bootctl, "set-default", ""], check=True)
+    for variable, command in (("LoaderEntryDefault", "set-default"),
+                              ("LoaderEntryPreferred", "set-preferred")):
+        if (efivars / f"{variable}-4a67b082-0a4c-41cf-b6c7-440b29bb8c4f").exists():
+            subprocess.run([bootctl, command, ""], check=True)

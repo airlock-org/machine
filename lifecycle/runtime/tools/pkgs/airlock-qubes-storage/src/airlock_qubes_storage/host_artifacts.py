@@ -128,7 +128,7 @@ def seal(root, esp):
     if (esp / "loader/loader.conf").exists() and any(
             presentation.identity(path.read_text()).get("airlock-role") == "normal"
             for path in (esp / "loader/entries").glob("*.conf")):
-        select_entry(esp, presentation.newest_normal(esp / "loader/entries") + ".conf")
+        select_entry(esp, presentation.newest_normal(esp / "loader/entries"))
 
 
 def migrate_presentation(descriptor_path, esp):
@@ -180,7 +180,7 @@ def remove_native_duplicates(esp, system, selected):
         for index, line in enumerate(lines):
             fields = line.split()
             if len(fields) == 2 and fields[0] in ("default", "preferred") and fields[1].removesuffix(".conf") in names:
-                lines[index] = f"{fields[0]} {selected.removesuffix('.conf')}"
+                lines[index] = f"{fields[0]} {selected}"
         # Commit the new default before removing any formerly selected entry.
         core.atomic_write(loader, "\n".join(lines) + "\n")
     for entry in entries:
