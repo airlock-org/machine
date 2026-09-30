@@ -166,10 +166,7 @@ let
 
     config_home="''${XDG_CONFIG_HOME:-$HOME/.config}"
     marker="$config_home/airlock/desktop-bootstrap-v1"
-    legacy_marker="$config_home/airlock/desktop-launchers-v1"
-    if [ -e "$marker" ] || [ -e "$legacy_marker" ]; then
-      exit 0
-    fi
+    [ -e "$marker" ] && exit 0
 
     panel=""
     for _attempt in $(${pkgs.coreutils}/bin/seq 1 30); do

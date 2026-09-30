@@ -49,10 +49,6 @@ def active_profile():
     marker = Path("/etc/airlock/machine-profile")
     if marker.exists():
         return marker.read_text().strip()
-    # Compatibility with images predating the deployment coordinator.
-    for profile in ("usb-lab", "usb-gui-lab"):
-        if Path("/etc/airlock", profile).exists():
-            return profile
     raise DeploymentError("this boot profile does not support machine deployment")
 
 

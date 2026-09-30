@@ -19,6 +19,20 @@ releases = importlib.import_module("airlock_machine_deploy.releases")
 common = importlib.import_module("airlock_machine_deploy.common")
 
 
+@pytest.mark.parametrize("current", [False, True])
+def test_active_profile_requires_current_marker(tmp_path, monkeypatch, current):
+    marker = tmp_path / "machine-profile"
+    (tmp_path / "usb-lab").write_text("old image marker")
+    if current:
+        marker.write_text("usb-lab\n")
+    monkeypatch.setattr(deploy, "Path", lambda path: tmp_path / Path(path).name)
+    if current:
+        assert deploy.active_profile() == "usb-lab"
+    else:
+        with pytest.raises(deploy.DeploymentError, match="does not support machine deployment"):
+            deploy.active_profile()
+
+
 def domain(name, netvm=None, guivm=None):
     return {
         "class": "StandaloneVM",
