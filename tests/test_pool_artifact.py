@@ -514,13 +514,14 @@ def test_candidate_bound_incremental_admission_is_inactive_and_retryable(artifac
     assert second["root_artifact"] == identity["root_artifact"]
 
 
-@pytest.mark.parametrize("probe", [False, True])
-@pytest.mark.parametrize("field", ["domain", "system", "closure_source", "root_source",
-                                   "kernel_name", "source_revision", "lock_hash", "root_artifact"])
+@pytest.mark.parametrize("probe,field", [
+    (probe, field) for probe in (False, True)
+    for field in ("domain", "system", "closure_source", "root_source", "kernel_name",
+                  "source_revision", "lock_hash", "root_artifact")
+    if not probe or field != "root_artifact"
+])
 def test_candidate_rejects_artifact_substitution_before_touching_pool(artifact_input, monkeypatch, field, probe):
     identity = candidate_inventory(artifact_input)
-    if probe and field == "root_artifact":
-        return  # Probe has no root descriptor; reuse checks the stored root instead.
     inventory = dict(identity)
     inventory["schema"] = artifacts.SCHEMA_PROBE if probe else artifacts.SCHEMA_INCREMENTAL
     inventory[field] = "substituted"
@@ -541,6 +542,50 @@ def test_candidate_probe_cannot_bypass_next_inventory_check(artifact_input):
             pool_root=artifact_input["pool"], expected_domain="usr-home", approved_by="sys-ctrl",
             expected_identity=identity)
     assert not list((artifact_input["pool"] / "domains").glob("*/generations/*/manifest.json"))
+
+
+@pytest.mark.parametrize("substitute", [False, True])
+def test_installed_candidate_cli_returns_one_pool_protocol_message(artifact_input, monkeypatch, substitute):
+    sys.path.insert(0, str(ROOT / "lifecycle/runtime/tools"))
+    from airlock_machine_deploy import cli
+    from airlock_machine_deploy.admission import AdmissionManager
+
+    artifacts.receive_artifact(io.BytesIO(artifact_input["bytes"]),
+        pool_root=artifact_input["pool"], expected_domain="usr-home", approved_by="sys-ctrl")
+    identity = candidate_inventory(artifact_input)
+    probe = dict(identity, schema=artifacts.SCHEMA_PROBE)
+    if substitute:
+        probe["system"] = "/nix/store/" + "d" * 32 + "-other-system"
+    incoming = io.TextIOWrapper(io.BytesIO((json.dumps(probe) + "\n").encode()))
+    output = io.BytesIO()
+    outgoing = io.TextIOWrapper(output)
+    @contextmanager
+    def locked():
+        yield
+    monkeypatch.setattr(cli, "Coordinator", lambda: SimpleNamespace(locked=locked))
+    monkeypatch.setattr(cli, "boot_id", lambda: "boot")
+    monkeypatch.setattr(AdmissionManager, "identity", lambda *_args: identity)
+    original = artifacts.receive_incremental
+    def receive_cli(*args, **kwargs):
+        kwargs["pool_root"] = artifact_input["pool"]
+        return original(*args, **kwargs)
+    monkeypatch.setattr(artifacts, "receive_incremental", receive_cli)
+    with monkeypatch.context() as streams:
+        streams.setattr(cli.sys, "stdin", incoming)
+        streams.setattr(cli.sys, "stdout", outgoing)
+        status = cli.main(["admission-receive", "a" * 64 + ".usr-home", "--caller", "sys-ctrl"])
+        outgoing.flush()
+    wire = io.BytesIO(output.getvalue())
+    response = artifacts.read_message(wire)
+    assert wire.read() == b""
+    if substitute:
+        assert status == 1
+        assert response["schema"] == artifacts.SCHEMA_ERROR
+        assert "prepared candidate" in response["error"]
+    else:
+        assert status == 0
+        assert response["generation_reused"] is True
+        assert response["activated"] is False
 
 
 def test_incremental_empty_pool_then_no_payload_on_repeat(artifact_input, monkeypatch):
