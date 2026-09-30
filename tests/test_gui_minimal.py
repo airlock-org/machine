@@ -155,11 +155,7 @@ def test_gui_minimal_topology_and_desktop():
     assert "airlock.Dom0Poweroff + sys-gui dom0 allow" in report["hostPoweroffPolicy"]
     assert "airlock.Dom0Poweroff * @anyvm @anyvm deny" in report["hostPoweroffPolicy"]
     assert (
-        "airlock.AppSessionReady + sys-gui usr-home allow"
-        in report["hostPoweroffPolicy"]
-    )
-    assert (
-        "airlock.AppSessionReady + sys-gui usr-browser allow"
+        "airlock.AppSessionReady + sys-gui @tag:guivm-sys-gui allow"
         in report["hostPoweroffPolicy"]
     )
     assert (

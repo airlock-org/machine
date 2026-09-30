@@ -31,6 +31,15 @@ let
     '';
   guiAgent = pkgs.qubes-gui-agent-linux;
   guestUser = config.airlock.qubeGuest.user;
+  desktopCommon = pkgs.python3.pkgs.qubes-desktop-linux-common.overrideAttrs (old: {
+    postPatch = (old.postPatch or "") + ''
+      # Keep upstream sanitization and per-VM menu management. Use the same
+      # session barrier as Airlock's existing launchers for generated entries.
+      substituteInPlace qubesappmenus/receive.py \
+        --replace-fail 'Exec=qvm-run -q -a --service -- %VMNAME% ' \
+          'Exec=airlock-launch-qube-app Application %VMNAME% '
+    '';
+  });
   hybrid = cfg.displayMode == "hybrid";
   physicalXserver = pkgs.writeShellScript "airlock-gui-physical-xserver" ''
     export LD_PRELOAD=${pkgs.qubes-gui-daemon}/lib/qubes-gui-daemon/shmoverride.so
@@ -79,6 +88,24 @@ let
       exec ${appLauncher}/bin/airlock-launch-qube-app ${lib.escapeShellArg application.desktopName} \
         usr-home qubes.StartApp+${application.application}
     '';
+  syncAppmenus = pkgs.writeShellScriptBin "airlock-sync-qube-appmenus" ''
+    set -eu
+    [ "$#" -eq 1 ] || {
+      echo 'Usage: airlock-sync-qube-appmenus VM' >&2
+      exit 2
+    }
+    # Explicitly start the selected VM, even if its boot autostart is disabled.
+    ${appLauncher}/bin/airlock-launch-qube-app Applications "$1" airlock.AppSessionReady
+    unset QREXEC_REMOTE_DOMAIN
+    exec ${desktopCommon}/bin/qvm-sync-appmenus --force-rpc "$1"
+  '';
+  receiveAppmenus = pkgs.writeShellScript "airlock-receive-qube-appmenus" ''
+    set -eu
+    [ -z "''${QREXEC_SERVICE_ARGUMENT:-}" ] || exit 2
+    # Qubes policy redirects tagged guests' SyncAppMenus calls to this GUI VM.
+    # The upstream receiver sanitizes the untrusted desktop metadata.
+    exec ${desktopCommon}/bin/qvm-sync-appmenus
+  '';
   homeApplicationDesktop = application:
     pkgs.makeDesktopItem {
       name = application.desktopFile;
@@ -312,7 +339,7 @@ in
       pkgs.qubes-manager
       pkgs.qubes-artwork
       pkgs.python3.pkgs.qubes-core-admin-client
-      pkgs.python3.pkgs.qubes-desktop-linux-common
+      desktopCommon
       pkgs.python3.pkgs.qubes-desktop-linux-manager
       pkgs.xdpyinfo
       pkgs.xinit
@@ -320,6 +347,7 @@ in
       pkgs.xdotool
       pkgs.xterm
       appLauncher
+      syncAppmenus
     ]
     ++ lib.optionals cfg.enableXfce [
       pkgs.xfce4-session
@@ -402,6 +430,14 @@ in
     };
 
     environment.etc = {
+      "qubes-rpc/qubes.SyncAppMenus" = {
+        source = receiveAppmenus;
+        mode = "0555";
+      };
+      "qubes/rpc-config/qubes.SyncAppMenus" = {
+        text = "force-user='${guestUser}'\n";
+        mode = "0444";
+      };
       "X11/xorg-qubes.conf.template".source = "${guiAgent}/etc/X11/xorg-qubes.conf.template";
       # Only profiles that explicitly enable XFCE should retain its session.
       "X11/xinit/xinitrc".source = if cfg.enableXfce then
