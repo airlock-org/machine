@@ -24,10 +24,10 @@ the external Airlock data location is unavailable. Routine development must
 not opt into the host Nix store.
 
 ```bash
-make check-eval
 make test-quick
 # Optional Nix evaluation and package checks:
 make test-nix
+make check-eval # flake evaluation only
 make machine-build
 ```
 

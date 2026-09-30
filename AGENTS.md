@@ -13,6 +13,8 @@
   tools should report state without expanding Qubes control authority.
 - `make test-quick` is the primary component feedback loop. Preserve clear logs
   and machine-readable output under the external Airlock log directory.
+- Keep `test-quick` free of Nix evaluations, builds and automatic tool provisioning.
+  `make test-nix` is opt-in; do not run it as a routine pre-deployment gate.
 - New tests should be written in the pytest framework. Do not add new Bash test
   scripts; migrate or extend pytest coverage instead.
 - Do not make full GUI support block the first qrexec/VM lifecycle milestone.
