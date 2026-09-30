@@ -926,9 +926,7 @@ write_direct_topology() {
               blobDevice: "/dev/xvdf",
               mountpoint: "/nix/store",
               view_backend: "erofs-objectmap",
-              viewBackend: "erofs-objectmap",
-              chunk_size: 65536,
-              chunkSize: 65536
+              viewBackend: "erofs-objectmap"
             },
             state: {
               persistent: null,

@@ -1827,7 +1827,7 @@ setup_nix_closure_domain() {
   store_device="$(jq_get '.domains[$name].backend.store.device // "/dev/xvde"' --arg name "$domain")"
   store_blob_device="$(jq_get '.domains[$name].backend.store.blob_device // .domains[$name].backend.store.blobDevice // "/dev/xvdf"' --arg name "$domain")"
   store_view_backend="$(jq_get '.domains[$name].backend.store.view_backend // .domains[$name].backend.store.viewBackend // "erofs-objectmap"' --arg name "$domain")"
-  persistent_size="$(jq_get '.domains[$name].backend.state.persistent_size // .domains[$name].backend.state.persistentSize // null' --arg name "$domain")"
+  persistent_size="$(jq_get '.domains[$name].backend.state.persistent_size // null' --arg name "$domain")"
   store_filesystem="erofs"
   root_image=""
   store_artifact=""
