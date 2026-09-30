@@ -518,11 +518,7 @@ let
           "mountpoint"
           "device"
           "blobDevice"
-          "blob_device"
           "viewBackend"
-          "view_backend"
-          "chunkSize"
-          "chunk_size"
           "readOnly"
         ] value;
         mode = expectEnum "${path}.mode" [
@@ -531,7 +527,7 @@ let
         sourceInfo = normalizeSourceOption path store;
         mountpoint = expectStringOrPath "${path}.mountpoint" (get store "mountpoint" "/nix/store");
         device = expectStringOrPath "${path}.device" (get store "device" "/dev/xvde");
-        blobDeviceRaw = get store "blobDevice" (get store "blob_device" "/dev/xvdf");
+        blobDeviceRaw = get store "blobDevice" "/dev/xvdf";
         blobDevice =
           if blobDeviceRaw == null then
             null
@@ -539,7 +535,7 @@ let
             expectStringOrPath "${path}.blobDevice" blobDeviceRaw;
         viewBackend = expectEnum "${path}.viewBackend" [
           "erofs-objectmap"
-        ] (get store "viewBackend" (get store "view_backend" "erofs-objectmap"));
+        ] (get store "viewBackend" "erofs-objectmap");
         readOnly = expectBool "${path}.readOnly" (get store "readOnly" true);
       in
       if mountpoint != "/nix/store" then

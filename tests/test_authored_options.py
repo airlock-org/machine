@@ -23,6 +23,8 @@ CASES = [
     ("topology", "templates.test", "skipStart", "skip_start", "false", False),
     ("topology", "root", "readOnly", "read_only", "false", False),
     ("topology", "store", "readOnly", "read_only", "true", True),
+    ("topology", "store", "blobDevice", "blob_device", '"/dev/xvdf"', "/dev/xvdf"),
+    ("topology", "store", "viewBackend", "view_backend", '"erofs-objectmap"', "erofs-objectmap"),
     ("topology", "state", "persistentSize", "persistent_size", "8192", 8192),
     ("topology", "", "qrexecPolicy", "qrexec_policy", "{ rules = [ ]; }", {"rules": []}),
 ]
@@ -72,3 +74,18 @@ def test_obsolete_option_is_rejected(authored_option, duplicate):
     result = evaluate(fields)
     assert result.returncode != 0
     assert f"unknown option(s): {obsolete}" in result.stderr
+
+
+@pytest.mark.parametrize("name", ["chunkSize", "chunk_size"])
+def test_unused_store_chunk_size_is_rejected(repo_root, name):
+    schema = repo_root / "lifecycle/misc/lib/topology.nix"
+    config = f"""{{ domains.test = {{ label = "blue"; backend = {BACKEND} // {{
+      store = ({BACKEND}).store // {{ {name} = 4096; }};
+    }}; }}; }}"""
+    result = subprocess.run(
+        ["nix", "eval", "--impure", "--json", "--expr",
+         f"(import {schema}).mkTopology {config}"],
+        text=True, capture_output=True, check=False,
+    )
+    assert result.returncode != 0
+    assert f"unknown option(s): {name}" in result.stderr
