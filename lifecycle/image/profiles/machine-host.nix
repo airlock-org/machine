@@ -48,6 +48,9 @@
   services.libinput.enable = true;
 
   boot.loader.systemd-boot.enable = true;
+  # Use fewer console cells so firmware renders a readable boot menu on the
+  # laptop display instead of its high-resolution, small-text mode.
+  boot.loader.systemd-boot.consoleMode = "0";
   boot.loader.systemd-boot.configurationLimit = 5;
   boot.loader.timeout = 10;
   boot.loader.efi.canTouchEfiVariables = false;
