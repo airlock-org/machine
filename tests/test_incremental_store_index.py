@@ -190,3 +190,17 @@ def test_incremental_index_survives_physical_extent_relocation(index_store):
     files = extract(second, 'relocated')
     assert (files / Path(a).name / 'payload').read_bytes() == b'original'
     assert (files / Path(b).name / 'payload').read_bytes() == b'new'
+
+
+def test_changed_inherited_object_identity_refuses_index_reuse(index_store):
+    root, add, build, _ = index_store
+    a = add('a', b'original')
+    first = build([a], 1)
+    entry = Path(a).name
+    changed = root / 'tmp/changed.tar'
+    changed.write_bytes(b'not the original object'.ljust(512, b'!'))
+    extent = objects.append_file_to_segment(root, changed, entry, 'changed', 16384)
+    maintenance.publish_blob_location(root, entry, segments.location_from_extent(extent), 'changed', 'test')
+    b = add('b', b'new')
+    with pytest.raises(core.EngineError, match='predecessor object identity changed'):
+        build([a, b], 2, first)

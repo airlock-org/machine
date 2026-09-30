@@ -247,6 +247,7 @@ def index_predecessor(root, paths, previous):
             fail("predecessor index has non-contiguous offsets")
         offset += extent["length"]
     return {"store": previous, "objects": [extent["object"] for extent in entries],
+            "extents": {extent["object"]: extent for extent in entries},
             "offset": offset, "depth": previous.get("index_depth", 0) + 1}
 
 
@@ -587,6 +588,10 @@ def materialize_erofs_objectmap_view(
             )
             size = int(extent["size"])
             offset = int(extent["segment_offset"])
+            if base and entry in base["extents"]:
+                previous = base["extents"][entry]
+                if (size, extent["sha256"]) != (previous["length"], previous["object_sha256"]):
+                    fail("predecessor object identity changed while extending index")
             if size % TAR_BLOCK_SIZE != 0 or offset % TAR_BLOCK_SIZE != 0:
                 fail(
                     f"canonical object extent is not tar-block aligned: {logical_path}"
