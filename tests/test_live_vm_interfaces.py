@@ -1,5 +1,7 @@
 """Installed interfaces needed before a new VM's host generation boots."""
 
+import ast
+import io
 import json
 import os
 from pathlib import Path
@@ -7,6 +9,7 @@ import re
 import shlex
 import subprocess
 import sys
+from types import SimpleNamespace
 
 import pytest
 
@@ -31,6 +34,7 @@ def interfaces():
         receiver = builtins.readFile gui.environment.etc."qubes-rpc/qubes.SyncAppMenus".source;
         receiverUser = gui.environment.etc."qubes/rpc-config/qubes.SyncAppMenus".text;
         desktop = builtins.readFile "${{desktop}}/${{gui.nixpkgs.pkgs.python3.sitePackages}}/qubesappmenus/receive.py";
+        menus = builtins.readFile "${{desktop}}/${{gui.nixpkgs.pkgs.python3.sitePackages}}/qubesappmenus/__init__.py";
         policy = builtins.readFile "${{policy}}/etc/qubes/policy.d/50-airlock-sys-gui.policy";
         controlPolicy = builtins.readFile "${{controlPolicy}}/etc/qubes/policy.d/43-airlock-ctrl-guest.policy";
         prepare = builtins.readFile host.environment.etc."qubes-rpc/airlock.Ctrl.MachinePrepare".source;
@@ -60,6 +64,7 @@ sys.exit(1 if os.environ.get('FAIL_READY') and 'Applications' in sys.argv else 0
     helper.chmod(0o755)
     source = re.sub(r"/nix/store/[^/]+/bin/(airlock-launch-qube-app|airlock-application-menus)",
                     shlex.quote(str(helper)), interfaces["sync"])
+    source = re.sub(r"/nix/store/[^/]+/bin/timeout", "timeout", source)
     for failure in (False, True):
         trace.unlink(missing_ok=True)
         result = subprocess.run(["bash", "-c", source, "sync", "usr-new"],
@@ -103,3 +108,73 @@ def test_preparation_and_admission_are_controller_only(interfaces):
                                     env={**os.environ, "QREXEC_REMOTE_DOMAIN": caller},
                                     capture_output=True)
             assert result.returncode == 1
+
+
+def receiver_namespace(source):
+    # Exercise functions from the actual patched package without connecting
+    # its Qubes parser or importing the host's qrexec/image dependencies.
+    names = {"required_fields", "required_fields_legacy", "appmenus_line_size",
+             "appmenus_line_count", "std_re", "fields_regexp", "CATEGORIES_WHITELIST"}
+    functions = {"sanitise_categories", "get_appmenus", "create_template"}
+    body = [node for node in ast.parse(source).body
+            if (isinstance(node, ast.Assign) and any(
+                isinstance(target, ast.Name) and target.id in names for target in node.targets))
+            or (isinstance(node, ast.FunctionDef) and node.name in functions)]
+    namespace = {"re": re, "os": os, "sys": sys, "shlex": shlex,
+                 "qubesappmenus": SimpleNamespace(AppmenusSubdirs=SimpleNamespace(icons_subdir="apps.icons"))}
+    exec(compile(ast.Module(body=body, type_ignores=[]), "packaged-receiver", "exec"), namespace)
+    return namespace
+
+
+def test_packaged_receiver_preserves_search_metadata_and_uses_fixed_launch_rpc(interfaces, tmp_path, monkeypatch):
+    receiver = receiver_namespace(interfaces["desktop"])
+    monkeypatch.setattr(sys, "stdin", io.StringIO(
+        "example.desktop:Name=Example\n"
+        "example.desktop:Name[fr]=Éditeur\n"
+        "example.desktop:Keywords=graphics;painting;\n"
+        "example.desktop:OnlyShowIn=GNOME;\n"
+        "example.desktop:Icon=example\n"
+        "example.desktop:Exec=touch /tmp/must-not-run\n"
+        "example.desktop:X-Airlock-Source=/nix/store/package/share/applications/example.desktop\n"
+    ))
+    entries = receiver["get_appmenus"](None)
+    path = tmp_path / "example.desktop"
+    receiver["create_template"](str(path), "example", entries["example"], False)
+    output = path.read_text()
+    assert "Name=%VMNAME%: Example" in output
+    assert "Name[fr]=%VMNAME%: Éditeur" in output
+    assert "Keywords=graphics;painting;" in output
+    assert "OnlyShowIn=GNOME;" in output
+    assert "StartupWMClass=%VMNAME%:example" in output
+    assert "Exec=airlock-launch-qube-app Application %VMNAME% qubes.StartApp+example" in output
+    assert "touch /tmp" not in output
+    assert "X-Airlock-Source" not in output
+
+
+def test_packaged_receiver_rejects_control_characters_and_unsafe_ids(interfaces, monkeypatch):
+    receiver = receiver_namespace(interfaces["desktop"])
+    monkeypatch.setattr(sys, "stdin", io.StringIO(
+        "valid.desktop:Name=Example\x1b[31m\n"
+        "bad;command.desktop:Name=Example\n"
+        "valid.desktop:StartupWMClass=class;command\n"
+        "valid.desktop:OnlyShowIn=GNOME;$(command);\n"
+    ))
+    entries = receiver["get_appmenus"](None)
+    assert "Name" not in entries.get("valid", {})
+    assert "StartupWMClass" not in entries.get("valid", {})
+    assert "OnlyShowIn" not in entries.get("valid", {})
+    assert "bad;command" not in entries
+
+
+def test_packaged_qvm_appmenus_uses_uuid_ids_and_wildcard_selection(interfaces):
+    class_node = next(node for node in ast.parse(interfaces["menus"]).body
+                      if isinstance(node, ast.ClassDef) and node.name == "Appmenus")
+    namespace = {}
+    exec(compile(ast.Module(body=[class_node], type_ignores=[]), "packaged-menus", "exec"), namespace)
+    menus = namespace["Appmenus"]()
+    first = SimpleNamespace(uuid="738a6af9-8e51-590d-afe4-790b26fbca79", features={"menu-items": "*"})
+    second = SimpleNamespace(uuid="728a6af9-8e51-590d-afe4-790b26fbca79")
+    assert menus.desktop_name(first, "firefox.desktop") != menus.desktop_name(second, "firefox.desktop")
+    menus.get_available_filenames = lambda vm: ["/cache/firefox.desktop", "/cache/new-app.desktop"]
+    namespace["os"] = os
+    assert set(menus.get_whitelist(first)) == {"firefox.desktop", "new-app.desktop"}

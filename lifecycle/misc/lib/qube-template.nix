@@ -767,6 +767,9 @@ let
         "airlock-role" = "nix-native";
         os = "Linux";
         qrexec = "1";
+        # New Nix application VMs expose future installed apps automatically.
+        # Explicit caller-supplied menu selections still override this default.
+        "menu-items" = "*";
         # A generic launcher can select the stronger Airlock barrier when the
         # guest supplies it, and upstream WaitForSession for other Qubes guests.
         "supported-rpc.airlock.AppSessionReady" =

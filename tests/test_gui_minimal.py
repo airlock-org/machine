@@ -46,7 +46,8 @@ def test_gui_minimal_topology_and_desktop():
         normalPackages = map (p: p.pname or p.name) normal.environment.systemPackages;
         supervised = let c = flake.nixosConfigurations.machine.config.specialisation.usb-lab.configuration; in {{
           failure = c.systemd.services.airlock-machine-autostart.unitConfig.OnFailure;
-          beforeStart = c.systemd.services.airlock-machine-autostart.serviceConfig.ExecStartPre;
+          beforeStart = c.systemd.services.airlock-machine-autostart.serviceConfig.ExecStartPre
+            ++ c.systemd.services.airlock-setup-config-deferred.serviceConfig.ExecStartPre;
           shutdown = c.systemd.services.airlock-boot-shutdown-record.serviceConfig.ExecStart;
           criticalFailure = c.systemd.services.airlock-start-gui-gpu.unitConfig.OnFailure;
           retry = toString c.environment.etc."qubes-rpc/airlock.BootRetry".source;

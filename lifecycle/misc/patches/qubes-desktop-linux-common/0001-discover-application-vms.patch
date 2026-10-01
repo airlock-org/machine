@@ -101,6 +101,17 @@
          elif os.path.exists(self.whitelist_path(vm)):
              with open(self.whitelist_path(vm), encoding='utf-8') as whitelist_f:
                  whitelist = [x.rstrip() for x in whitelist_f]
+@@ -464,8 +465,8 @@
+         Return if a path to a desktop name is for the old (<= R4.1)
+         menu version.
+         """
+-        return not (name.startswith('org.qubes-os.dispvm._') or
+-                    name.startswith('org.qubes-os.vm._') or
++        return not (name.startswith('org.qubes-os.dispvm.') or
++                    name.startswith('org.qubes-os.vm.') or
+                     name.startswith('org.qubes-os.qubes-vm-settings._') or
+                     name.startswith('qubes-vm-directory_') or
+                     name.startswith('qubes-dispvm-directory_'))
 @@ -546,6 +547,8 @@
          whitelist = self.whitelist_path(vm)
          if 'menu-items' in vm.features:
