@@ -3867,8 +3867,8 @@ def check_setup_config_sys_net_order(repo_root: Path, log_dir: Path) -> None:
     assert completed_screen.count("[done]") == 4
     assert "[working]" not in completed_screen
     assert "Elapsed:" in completed_screen
-    assert "VM startup is not yet complete" in completed_screen
-    assert "waiting for required guests" in completed_screen
+    assert "Startup VM configuration is ready; the desktop is starting next." in completed_screen
+    assert "Required hardware and VM checks still need to finish." in completed_screen
 
     _run(
         [
