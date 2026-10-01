@@ -19,8 +19,6 @@
       "usr-home"
     ];
   };
-  airlock.machineDeployment.retireDomains = [ "usr-browser" "sys-dev" ];
-  airlock.machineDeployment.privateVolumeCopies.sys-agent = "sys-dev";
   networking.networkmanager.enable = lib.mkForce false;
   services.tailscale.enable = lib.mkForce false;
   services.openssh.enable = lib.mkForce false;
