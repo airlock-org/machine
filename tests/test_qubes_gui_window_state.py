@@ -127,5 +127,6 @@ def test_window_state_overlay_patches_common_agent_and_daemon():
         "preparedGuiDaemon": [
             "0001-gui-daemon-apply-maximize-window-flags.patch",
             "0002-gui-daemon-apply-interactive-window-move-requests.patch",
+            "0003-gui-daemon-leave-window-chrome-to-applications.patch",
         ],
     }

@@ -61,6 +61,18 @@ in
 {
   imports = [ ./setup.nix ];
   config = lib.mkIf (cfg.session == "gnome") {
+    # Every forwarded window uses application-owned chrome. The focused VM
+    # panel is this session's trusted identity display; do not add title bars
+    # or colour borders, or select decoration policy by application class.
+    nixpkgs.overlays = lib.mkAfter [
+      (_final: prev: {
+        qubes-gui-daemon = prev.qubes-gui-daemon.overrideAttrs (old: {
+          patches = (old.patches or [ ]) ++ [
+            ../../../../patches/qubes-gui-daemon/0003-gui-daemon-leave-window-chrome-to-applications.patch
+          ];
+        });
+      })
+    ];
     # GNOME's greeter and screen locking require GDM. Its NixOS module
     # disables the common sys-gui LightDM default.
     services.displayManager.gdm = {

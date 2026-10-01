@@ -48,10 +48,13 @@ This is a lab default, not automatic monitor/DPI synchronization. Override
 `airlock.appGui.scale` in the guest configuration for other displays (the base
 module defaults to 1). Firefox and Calculator text size was confirmed live.
 
-The outer GNOME title bars remain. Removing duplicate decorations while keeping
-trusted VM identity visible is unfinished; do not treat these changes as
-complete Qubes window-label integration. Recheck launches, scaling, cursor,
-resize/maximize and login/lock after building and booting the updated image.
+GNOME's forwarded-window policy leaves all window chrome to applications. The
+GUI daemon requests no outer title bar or frame and draws no colour border,
+including on override-redirect and docked windows. All forwarded windows use
+the same policy and remain managed normally. The trusted focused VM panel
+indicator identifies only the focused window. Applications that depend on
+external title-bar controls must supply those inside their VM. Manual
+acceptance of move/resize/maximize, dialogs and login/lock remains pending.
 
 ## Deferred: appearance synchronization
 
