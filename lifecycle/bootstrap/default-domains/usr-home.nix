@@ -17,7 +17,7 @@
   features = {
     "airlock-managed" = "1";
     "airlock-role" = "usr-home";
-    "menu-items" = "";
+    "menu-items" = "*";
   };
   services."network-manager" = false;
   state.persistentSize = 17179869184;

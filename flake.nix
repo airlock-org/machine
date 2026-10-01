@@ -260,7 +260,7 @@
       mkMinimalSysGuiDomainEntry =
         system:
         bootstrapDomains.mkSysGuiDomainEntryWith system {
-          personalLaunchers = false;
+          defaultApplicationVM = null;
           configurationName = "airlock-domain-sys-gui-minimal";
         };
 
@@ -342,7 +342,7 @@
 
       mkUsbSysGuiDomainEntry = system:
         bootstrapDomains.mkSysGuiDomainEntryWith system {
-          personalLaunchers = false;
+          defaultApplicationVM = null;
           configurationName = "airlock-domain-sys-gui-usb";
           extraModules = [
             usbSysGuiLoginModule
@@ -350,7 +350,7 @@
           ];
         };
 
-      mkUsbAmdSysGuiDomainEntry = system: desktop: personalLaunchers: directDom0Terminal:
+      mkUsbAmdSysGuiDomainEntry = system: desktop: withHome: directDom0Terminal:
         (mkAirlockQubeBuilders system).mkNixNativeDomain {
           name = "sys-gui";
           guestRole = "sys-gui";
@@ -390,8 +390,8 @@
               airlock.sysGuiGuest = {
                 displayMode = "physical-amd-lab";
                 physicalDesktopOnBoot = true;
-                personalLaunchers.enable = personalLaunchers;
-                sysAgentTailscaleShortcut.enable = personalLaunchers && !directDom0Terminal;
+                defaultApplicationVM = if withHome then "usr-home" else null;
+                sysAgentTailscaleShortcut.enable = withHome && !directDom0Terminal;
               };
               airlock.devDom0Terminal.guest.enable = directDom0Terminal;
               hardware.enableRedistributableFirmware = true;

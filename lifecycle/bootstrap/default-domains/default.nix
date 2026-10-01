@@ -131,7 +131,7 @@ let
   mkSysGuiDomainEntryWith =
     system:
     {
-      personalLaunchers ? true,
+      defaultApplicationVM ? "usr-home",
       configurationName ? "airlock-domain-sys-gui",
       extraModules ? [ ],
     }:
@@ -145,7 +145,7 @@ let
       modules = [
         ({ ... }: {
           networking.hostName = sysGuiRoleDefaults.guestHostName;
-          airlock.sysGuiGuest.personalLaunchers.enable = personalLaunchers;
+          airlock.sysGuiGuest.defaultApplicationVM = defaultApplicationVM;
           # Development/bootstrap login, matching the nested image password.
           # Real deployments supply their own NixOS password configuration.
           users.users.user.initialPassword = "airlock";

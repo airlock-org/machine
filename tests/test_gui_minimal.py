@@ -40,8 +40,9 @@ def test_gui_minimal_topology_and_desktop():
         session = image.services.displayManager.defaultSession;
         guestSession = guest.services.displayManager.defaultSession;
         xfce = guest.services.xserver.desktopManager.xfce.enable;
-        personalLaunchers = guest.airlock.sysGuiGuest.personalLaunchers.enable;
-        normalPersonalLaunchers = normal.airlock.sysGuiGuest.personalLaunchers.enable;
+        defaultApplicationVM = guest.airlock.sysGuiGuest.defaultApplicationVM;
+        discovery = guest.airlock.sysGuiGuest.applicationMenus.enable;
+        normalDefaultApplicationVM = normal.airlock.sysGuiGuest.defaultApplicationVM;
         normalPackages = map (p: p.pname or p.name) normal.environment.systemPackages;
         supervised = let c = flake.nixosConfigurations.machine.config.specialisation.usb-lab.configuration; in {{
           failure = c.systemd.services.airlock-machine-autostart.unitConfig.OnFailure;
@@ -109,12 +110,13 @@ def test_gui_minimal_topology_and_desktop():
         "configPolicy",
         "devMode",
         "proxy",
-        "personalLaunchers",
     ):
         assert report[key] is False, key
-    assert report["normalPersonalLaunchers"] is True
-    assert "airlock-launch-terminal" in report["normalPackages"]
-    assert "airlock-terminal.desktop" in report["normalPackages"]
+    assert report["defaultApplicationVM"] is None
+    assert report["discovery"] is True
+    assert report["normalDefaultApplicationVM"] == "usr-home"
+    assert "airlock-application-menus" in report["normalPackages"]
+    assert "airlock-launch-terminal" not in report["normalPackages"]
     assert "airlock-host-poweroff@airlock.local" in report["gnomeOverrides"]
     assert "airlock-gnome-host-poweroff" in report["gnomeHostPoweroffExtensionSource"]
     assert "activatePowerOff" in report["gnomeHostPoweroffExtensionSource"]

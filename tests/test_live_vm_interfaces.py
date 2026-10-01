@@ -55,10 +55,10 @@ import json, os, sys
 from pathlib import Path
 with Path(os.environ['TRACE']).open('a') as stream:
     stream.write(json.dumps({'args': sys.argv[1:], 'remote': os.environ.get('QREXEC_REMOTE_DOMAIN')}) + '\\n')
-sys.exit(1 if os.environ.get('FAIL_READY') and 'airlock.AppSessionReady' in sys.argv else 0)
+sys.exit(1 if os.environ.get('FAIL_READY') and 'Applications' in sys.argv else 0)
 ''')
     helper.chmod(0o755)
-    source = re.sub(r"/nix/store/[^/]+/bin/(airlock-launch-qube-app|qvm-sync-appmenus)",
+    source = re.sub(r"/nix/store/[^/]+/bin/(airlock-launch-qube-app|airlock-application-menus)",
                     shlex.quote(str(helper)), interfaces["sync"])
     for failure in (False, True):
         trace.unlink(missing_ok=True)
@@ -66,13 +66,13 @@ sys.exit(1 if os.environ.get('FAIL_READY') and 'airlock.AppSessionReady' in sys.
             env={**os.environ, "TRACE": str(trace), "QREXEC_REMOTE_DOMAIN": "dom0",
                  "FAIL_READY": "1" if failure else ""}, capture_output=True, text=True)
         calls = [json.loads(line) for line in trace.read_text().splitlines()]
-        assert calls[0]["args"] == ["Applications", "usr-new", "airlock.AppSessionReady"]
+        assert calls[0]["args"] == ["Applications", "usr-new"]
         if failure:
             assert result.returncode != 0
             assert len(calls) == 1
         else:
             assert result.returncode == 0, result.stderr
-            assert calls[1] == {"args": ["--force-rpc", "usr-new"], "remote": None}
+            assert calls[1] == {"args": ["--sync", "usr-new", "--force"], "remote": None}
     trace.unlink()
     result = subprocess.run(["bash", "-c", source, "sync"],
                             env={**os.environ, "TRACE": str(trace)}, capture_output=True)

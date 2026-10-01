@@ -1,0 +1,122 @@
+--- a/qubesappmenus/receive.py
++++ b/qubesappmenus/receive.py
+@@ -59,7 +59,7 @@
+ appmenus_line_count = 100000
+ 
+ # regexps for sanitization of retrieved values
+-std_re = re.compile(r"\A[/a-zA-Z0-9.,:&()_ +-]*\Z")
++std_re = re.compile(r"\A[^\x00-\x1f\x7f%\\]*\Z")
+ fields_regexp = {
+     "Name": std_re,
+     "GenericName": std_re,
+@@ -68,6 +68,10 @@
+     "Categories": re.compile(r"\A[a-zA-Z0-9/.;:'() -]*\Z"),
+     "Exec": re.compile(r"\A[a-zA-Z0-9()_&>/{}:.= -]*\Z"),
+     "Icon": re.compile(r"\A[a-zA-Z0-9/_.-]*\Z"),
++    "Keywords": re.compile(r"\A[^\x00-\x1f\x7f%\\]*\Z"),
++    "OnlyShowIn": re.compile(r"\A[a-zA-Z0-9_.;-]*\Z"),
++    "NotShowIn": re.compile(r"\A[a-zA-Z0-9_.;-]*\Z"),
++    "X-Airlock-Source": re.compile(r"\A[/a-zA-Z0-9_.+-]*\Z"),
+ }
+ 
+ CATEGORIES_WHITELIST = {
+@@ -143,10 +147,10 @@
+             if not untrusted_line:
+                 break
+             try:
+-                untrusted_line = untrusted_line.decode('ascii')
++                untrusted_line = untrusted_line.decode('utf-8')
+                 untrusted_appmenulist.append(untrusted_line.strip())
+             except UnicodeDecodeError:
+-                # simply ignore non-ASCII lines
++                # Ignore invalid UTF-8 lines
+                 pass
+             appmenus_line_limit_left -= 1
+         p.wait()
+@@ -182,8 +186,9 @@
+             # TODO add key-dependent asserts
+ 
+             # Look only at predefined keys
+-            if untrusted_key in fields_regexp:
+-                if fields_regexp[untrusted_key].match(untrusted_value):
++            field = untrusted_key.split("[", 1)[0]
++            if field in fields_regexp:
++                if fields_regexp[field].match(untrusted_value):
+                     # now values are sanitized
+                     key = untrusted_key
+                     if key == 'Categories':
+@@ -240,10 +245,13 @@
+     else:
+         desktop_entry += "Icon=%XDGICON%\n"
+ 
+-    for key in ["Name", "GenericName"]:
++    for key in values:
++        if key.split("[", 1)[0] not in ("Name", "GenericName"):
++            continue
+         if key in values:
+             desktop_entry += "{0}=%VMNAME%: {1}\n".format(key, values[key])
+ 
++    values.setdefault("StartupWMClass", name)
+     if "StartupWMClass" in values:
+         desktop_entry += "StartupWMClass=%VMNAME%:{0}\n".format(
+             values["StartupWMClass"]
+@@ -252,7 +260,9 @@
+     # force category X-Qubes-VM
+     values["Categories"] = values.get("Categories", "") + "X-Qubes-VM;"
+ 
+-    for key in ["Comment", "Categories"]:
++    for key in values:
++        if key.split("[", 1)[0] not in ("Comment", "Categories", "Keywords", "OnlyShowIn", "NotShowIn"):
++            continue
+         if key in values:
+             desktop_entry += "{0}={1}\n".format(key, values[key])
+ 
+@@ -267,7 +277,7 @@
+         assert ' ' not in name
+         assert ';' not in name
+         assert '%' not in name
+-        desktop_entry += "Exec=qvm-run -q -a --service -- %VMNAME% " \
++        desktop_entry += "Exec=airlock-launch-qube-app Application %VMNAME% " \
+                          "qubes.StartApp+{}\n".format(name)
+         desktop_entry += \
+             "X-Qubes-DispvmExec=qvm-run -q -a --service --dispvm=%VMNAME% " \
+--- a/qubesappmenus/__init__.py
++++ b/qubesappmenus/__init__.py
+@@ -239,7 +239,7 @@
+             prefix = self.qubes_dispvm_desktop
+         else:
+             prefix = self.qubes_vm_desktop
+-        return '.'.join((prefix, vm_name_escape(str(vm)), appmenu_basename))
++        return '.'.join((prefix, str(vm.uuid), appmenu_basename))
+ 
+     def settings_name(self, vm):
+         """Return the basename of the .desktop file for the “Qube Settings”
+@@ -358,7 +358,8 @@
+         changed_appmenus = []
+         if 'menu-items' in vm.features:
+             whitelist = vm.features['menu-items'].split(' ')
+-            appmenus = [x for x in appmenus if os.path.basename(x) in whitelist]
++            if whitelist != ['*']:
++                appmenus = [x for x in appmenus if os.path.basename(x) in whitelist]
+         elif os.path.exists(self.whitelist_path(vm)):
+             with open(self.whitelist_path(vm), encoding='utf-8') as whitelist_f:
+                 whitelist = [x.rstrip() for x in whitelist_f]
+@@ -546,6 +547,8 @@
+         whitelist = self.whitelist_path(vm)
+         if 'menu-items' in vm.features:
+             whitelist = vm.features['menu-items'].split(' ')
++            if whitelist == ['*']:
++                whitelist = None
+         elif os.path.exists(whitelist):
+             with open(whitelist, encoding='utf-8') as whitelist_f:
+                 whitelist = [line.strip() for line in whitelist_f]
+@@ -699,6 +702,9 @@
+         :param vm: VM object
+         :return: list of applications (.desktop file names), or None if not set
+         """
++        if vm.features.get('menu-items') == '*':
++            yield from (os.path.basename(path) for path in self.get_available_filenames(vm))
++            return
+         if 'menu-items' in vm.features:
+             for entry in vm.features['menu-items'].split(' '):
+                 entry = entry.strip()

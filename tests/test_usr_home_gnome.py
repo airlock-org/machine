@@ -73,18 +73,16 @@ def test_gnome_desktop_work_applications_are_routed_to_usr_home():
         applications = import {ROOT}/lifecycle/misc/lib/usr-home-applications.nix {{ inherit pkgs; }};
         workspace = (f.nixosConfigurations.airlock-domain-sys-gui-usb-gui-lab.extendModules {{
           modules = [ ({{ lib, ... }}: {{
-            airlock.sysGuiGuest.personalLaunchers.enable = lib.mkForce true;
+            airlock.sysGuiGuest.defaultApplicationVM = lib.mkForce "usr-home";
           }}) ];
         }}).config;
         minimal = f.nixosConfigurations.airlock-domain-sys-gui-usb-gui-lab.config;
         appGuest = f.nixosConfigurations.airlock-domain-usr-home.config;
         homeGuest = f.nixosConfigurations.airlock-domain-usr-home.config;
       in {{
-        applications = map (application: {{
-          inherit (application) launcher application desktopFile;
-          wmClass = application.wmClass or application.application;
-          package = application.package.pname or application.package.name;
-        }}) applications;
+        applications = map (package: package.pname or package.name) applications;
+        discovery = workspace.airlock.sysGuiGuest.applicationMenus.enable;
+        timer = workspace.systemd.user.timers.airlock-application-menus.timerConfig;
         workspaceCoreApps = workspace.services.gnome.core-apps.enable;
         workspacePackages = map (package: package.name or "") workspace.environment.systemPackages;
         minimalCoreApps = minimal.services.gnome.core-apps.enable;
@@ -183,68 +181,28 @@ def test_gnome_desktop_work_applications_are_routed_to_usr_home():
     assert 'KERNEL=="eth*"' not in report["appGuestUdev"]
     assert report["appGuestVifLink"].endswith("/80-qubes-vif.link")
 
-    expected = {
-        "files": ("org.gnome.Nautilus", "nautilus"),
-        "terminal": ("org.gnome.Console", "gnome-console"),
-        "disk-usage": ("org.gnome.baobab", "baobab"),
-        "audio": ("org.gnome.Decibels", "decibels"),
-        "text-editor": ("org.gnome.TextEditor", "gnome-text-editor"),
-        "calculator": ("org.gnome.Calculator", "gnome-calculator"),
-        "calendar": ("org.gnome.Calendar", "gnome-calendar"),
-        "characters": ("org.gnome.Characters", "gnome-characters"),
-        "clocks": ("org.gnome.clocks", "gnome-clocks"),
-        "contacts": ("org.gnome.Contacts", "gnome-contacts"),
-        "font-viewer": ("org.gnome.font-viewer", "gnome-font-viewer"),
-        "logs": ("org.gnome.Logs", "gnome-logs"),
-        "music": ("org.gnome.Music", "gnome-music"),
-        "system-monitor": ("org.gnome.SystemMonitor", "gnome-system-monitor"),
-        "images": ("org.gnome.Loupe", "loupe"),
-        "documents": ("org.gnome.Papers", "papers"),
-        "videos": ("org.gnome.Showtime", "showtime"),
-        "help": ("org.gnome.Yelp", "yelp"),
-    }
-    assert {
-        application["launcher"]: (application["application"], application["package"])
-        for application in report["applications"]
-    } == expected
-    wm_classes = {
-        application["launcher"]: application["wmClass"]
-        for application in report["applications"]
-    }
-    assert set(wm_classes) == set(expected)
-    assert wm_classes["calculator"] == "gnome-calculator"
-    assert wm_classes["system-monitor"] == "gnome-system-monitor"
-    for launcher, wm_class in wm_classes.items():
-        if launcher not in {"calculator", "system-monitor"}:
-            assert wm_class == next(
-                application["application"]
-                for application in report["applications"]
-                if application["launcher"] == launcher
-            )
+    assert {"nautilus", "gnome-console", "gnome-calculator", "gnome-text-editor"} <= set(report["applications"])
+    assert report["discovery"] is True
+    assert report["timer"]["OnUnitInactiveSec"] == "30s"
     assert report["workspaceCoreApps"] is False
     assert report["minimalCoreApps"] is True
-    assert (
-        "xdg/autostart/airlock-gnome-desktop-shortcuts.desktop"
-        in report["workspaceEtc"]
-    )
+    assert "xdg/autostart/airlock-gnome-desktop-shortcuts.desktop" not in report["workspaceEtc"]
     assert "airlock-qubes-start-app" in report["workspaceStartApp"]
     assert "force-user=" in report["workspaceStartAppConfig"]
     assert "airlock.AppSessionReady" in report["launchHelper"]
     assert "--auto --gui --pass-io --service" in report["launchHelper"]
+    assert "qubes.WaitForSession" in report["launchHelper"]
+    assert "supported-rpc.airlock.AppSessionReady" in report["launchHelper"]
     assert "--foreground --signal=TERM --kill-after=5s 90s" in report["launchHelper"]
     assert "notify-send" in report["launchHelper"]
-    assert "ding@rastersoft.com" in report["workspaceGSettings"]
+    assert "ding@rastersoft.com" not in report["workspaceGSettings"]
 
     packages = set(report["workspacePackages"])
-    for launcher in expected:
-        assert f"airlock-launch-{launcher}" in packages
-    for package in ("gnome-calculator", "gnome-text-editor"):
+    assert "airlock-application-menus" in packages
+    assert not any(name.startswith("airlock-launch-") and name != "airlock-launch-qube-app" for name in packages)
+    for package in ("gnome-calculator", "gnome-text-editor", "nautilus", "firefox"):
         assert not any(name.startswith(f"{package}-") for name in packages)
-    # DING requires the local Nautilus binary for desktop file operations. The
-    # visible Files launcher still calls usr-home through qrexec.
-    assert any(name.startswith("nautilus-") for name in packages)
-    assert any("airlock-usr-home-application-icons" in name for name in packages)
-    assert any("desktop-icons-ng-ding" in name for name in packages)
+    assert not any("airlock-usr-home-application-icons" in name for name in packages)
     assert any(
         package.startswith("gnome-console-") for package in report["minimalPackages"]
     )

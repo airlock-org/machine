@@ -54,6 +54,17 @@ let
     exec ${pkgs.coreutils}/bin/timeout --signal=TERM --kill-after=5s 60s \
       ${agent}/bin/qubes-set-monitor-layout "$@"
   '';
+  openUrl = pkgs.writeShellScript "airlock-open-url-in-vm" ''
+    set -eu
+    [ "''${QREXEC_REMOTE_DOMAIN:-}" = sys-gui ] || exit 1
+    url="''${QREXEC_SERVICE_ARGUMENT:-}"
+    case "$url" in
+      http://*|https://*) ;;
+      *) echo "airlock.OpenUrl accepts only http and https URLs" >&2; exit 2 ;;
+    esac
+    if [ -r /etc/profile ]; then . /etc/profile; fi
+    exec ${pkgs.glib.bin}/bin/gio open "$url"
+  '';
   sessionReady = pkgs.writeShellScript "airlock-app-session-ready" ''
     set -eu
 
@@ -91,6 +102,9 @@ in
     environment.systemPackages = [
       agent
       pkgs.dbus
+      # Packages normally provide themed icons but not the theme index itself.
+      # The generic GetImageRGBA resolver needs it even without a full desktop.
+      pkgs.hicolor-icon-theme
       # qubes.SetMonitorLayout calls these by name.  Without them, a guest
       # that connects before the GuiVM reaches its final display size keeps
       # the initial 1280x800 X screen and its pointer cannot reach the rest of
@@ -158,6 +172,11 @@ in
       "X11/xinit/xinitrc".source = session;
       "qubes-rpc/qubes.SetMonitorLayout".source = monitorLayout;
       "qubes/rpc-config/qubes.SetMonitorLayout".text = "force-user='${config.airlock.qubeGuest.user}'\n";
+      "qubes-rpc/airlock.OpenUrl" = {
+        source = openUrl;
+        mode = "0555";
+      };
+      "qubes/rpc-config/airlock.OpenUrl".text = "force-user='${config.airlock.qubeGuest.user}'\n";
       "qubes-rpc/airlock.AppSessionReady" = {
         source = sessionReady;
         mode = "0555";

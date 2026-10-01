@@ -6,39 +6,12 @@
 }:
 let
   cfg = config.airlock.sysGuiGuest;
-  homeApplications = import ../../lib/usr-home-applications.nix { inherit pkgs; };
-  homeApplicationIcons = pkgs.runCommand "airlock-usr-home-application-icons"
-    {
-      nativeBuildInputs = [ pkgs.coreutils pkgs.findutils ];
-    }
-    ''
-      set -eu
-      ${pkgs.coreutils}/bin/mkdir -p "$out/share"
-      for package in ${lib.concatMapStringsSep " " toString (
-        (map (application: application.package) homeApplications) ++ [ pkgs.firefox ]
-      )}; do
-        for source_root in "$package/share/icons" "$package/share/pixmaps"; do
-          [ -d "$source_root" ] || continue
-          ${pkgs.findutils}/bin/find -L "$source_root" -type f -print0 |
-            while IFS= read -r -d $'\0' source; do
-              relative="''${source#"$package/share/"}"
-              destination="$out/share/$relative"
-              ${pkgs.coreutils}/bin/mkdir -p "$(dirname "$destination")"
-              ${pkgs.coreutils}/bin/ln -sfn "$source" "$destination"
-            done
-        done
-      done
-    '';
   guiAgent = pkgs.qubes-gui-agent-linux;
   guestUser = config.airlock.qubeGuest.user;
   desktopCommon = pkgs.python3.pkgs.qubes-desktop-linux-common.overrideAttrs (old: {
-    postPatch = (old.postPatch or "") + ''
-      # Keep upstream sanitization and per-VM menu management. Use the same
-      # session barrier as Airlock's existing launchers for generated entries.
-      substituteInPlace qubesappmenus/receive.py \
-        --replace-fail 'Exec=qvm-run -q -a --service -- %VMNAME% ' \
-          'Exec=airlock-launch-qube-app Application %VMNAME% '
-    '';
+    patches = (old.patches or [ ]) ++ [
+      ../../patches/qubes-desktop-linux-common/0001-discover-application-vms.patch
+    ];
   });
   hybrid = cfg.displayMode == "hybrid";
   physicalXserver = pkgs.writeShellScript "airlock-gui-physical-xserver" ''
@@ -50,13 +23,18 @@ let
 
     label="$1"
     target="$2"
-    service="$3"
+    service="''${3:-}"
     log="$(${pkgs.coreutils}/bin/mktemp --tmpdir="''${XDG_RUNTIME_DIR:-/tmp}" airlock-app-launch.XXXXXX)"
     trap '${pkgs.coreutils}/bin/rm -f "$log"' EXIT
 
+    readiness_service="$(${appmenusPython}/bin/python3 -c '
+import qubesadmin, sys
+vm = qubesadmin.Qubes().domains[sys.argv[1]]
+print("airlock.AppSessionReady" if vm.features.get("supported-rpc.airlock.AppSessionReady", False) else "qubes.WaitForSession")
+' "$target")" || exit 1
     ${pkgs.coreutils}/bin/timeout --foreground --signal=TERM --kill-after=5s 90s \
       ${pkgs.python3.pkgs.qubes-core-admin-client}/bin/qvm-run \
-      --auto --gui --pass-io --service "$target" airlock.AppSessionReady \
+      --auto --gui --pass-io --service "$target" "$readiness_service" \
       >"$log" 2>&1
     ready_status=$?
     if [ "$ready_status" -ne 0 ]; then
@@ -71,6 +49,7 @@ let
       exit "$ready_status"
     fi
 
+    [ -n "$service" ] || exit 0
     ${pkgs.python3.pkgs.qubes-core-admin-client}/bin/qvm-run \
       --auto --gui --service "$target" "$service" >"$log" 2>&1
     app_status=$?
@@ -82,12 +61,6 @@ let
     fi
     exit "$app_status"
   '';
-  homeApplicationLauncher = application:
-    pkgs.writeShellScriptBin "airlock-launch-${application.launcher}" ''
-      set -eu
-      exec ${appLauncher}/bin/airlock-launch-qube-app ${lib.escapeShellArg application.desktopName} \
-        usr-home qubes.StartApp+${application.application}
-    '';
   syncAppmenus = pkgs.writeShellScriptBin "airlock-sync-qube-appmenus" ''
     set -eu
     [ "$#" -eq 1 ] || {
@@ -95,58 +68,37 @@ let
       exit 2
     }
     # Explicitly start the selected VM, even if its boot autostart is disabled.
-    ${appLauncher}/bin/airlock-launch-qube-app Applications "$1" airlock.AppSessionReady
+    ${appLauncher}/bin/airlock-launch-qube-app Applications "$1"
     unset QREXEC_REMOTE_DOMAIN
-    exec ${desktopCommon}/bin/qvm-sync-appmenus --force-rpc "$1"
+    exec ${pkgs.coreutils}/bin/timeout --signal=TERM --kill-after=5s 90s \
+      ${applicationMenus}/bin/airlock-application-menus --sync "$1" --force
+  '';
+  appmenusPython = pkgs.python3.withPackages (ps: [ desktopCommon ps.qubes-core-admin-client ]);
+  applicationMenus = pkgs.writeShellScriptBin "airlock-application-menus" ''
+    export PATH="${lib.makeBinPath [ pkgs.xdg-utils pkgs.desktop-file-utils pkgs.graphicsmagick ]}:$PATH"
+    exec ${appmenusPython}/bin/python3 ${./application-menus.py} "$@"
   '';
   receiveAppmenus = pkgs.writeShellScript "airlock-receive-qube-appmenus" ''
     set -eu
     [ -z "''${QREXEC_SERVICE_ARGUMENT:-}" ] || exit 2
-    # Qubes policy redirects tagged guests' SyncAppMenus calls to this GUI VM.
-    # The upstream receiver sanitizes the untrusted desktop metadata.
-    exec ${desktopCommon}/bin/qvm-sync-appmenus
+    exec ${pkgs.coreutils}/bin/timeout --signal=TERM --kill-after=5s 90s \
+      ${applicationMenus}/bin/airlock-application-menus --receive
   '';
-  homeApplicationDesktop = application:
-    pkgs.makeDesktopItem {
-      name = application.desktopFile;
-      desktopName = application.desktopName;
-      genericName = application.genericName or "";
-      exec = "airlock-launch-${application.launcher}";
-      icon = application.icon;
-      startupWMClass = "usr-home:${application.wmClass or application.application}";
-      categories = application.categories;
-      mimeTypes = application.mimeTypes or [ ];
-    };
-  homeApplicationByLauncher = launcher:
-    lib.findFirst
-      (application: application.launcher == launcher)
-      (throw "missing usr-home launcher ${launcher}")
-      homeApplications;
-  filesDesktop = homeApplicationDesktop (homeApplicationByLauncher "files");
-  terminalDesktop = homeApplicationDesktop (homeApplicationByLauncher "terminal");
-  browserLauncher = pkgs.writeShellScriptBin "airlock-launch-browser" ''
+  # Web-link routing is a desktop default, independent of the installed browser.
+  # The target VM resolves its own default handler through the normal MIME rules.
+  openUrlLauncher = pkgs.writeShellScriptBin "airlock-open-url" ''
     set -eu
-    if [ "$#" -eq 0 ]; then
-      exec ${appLauncher}/bin/airlock-launch-qube-app Firefox usr-home qubes.StartApp+firefox
-    fi
-    # URI activation is deliberately a separate fixed RPC, rather than a
-    # general shell capability from sys-gui into the browser domain.
-    exec ${appLauncher}/bin/airlock-launch-qube-app Firefox usr-home "airlock.OpenUrl+$1"
+    [ "$#" -eq 1 ] || exit 2
+    exec ${appLauncher}/bin/airlock-launch-qube-app "Web link" \
+      ${lib.escapeShellArg (if cfg.defaultApplicationVM == null then "" else cfg.defaultApplicationVM)} "airlock.OpenUrl+$1"
   '';
-  browserDesktop = pkgs.makeDesktopItem {
-    name = "firefox";
-    desktopName = "Firefox";
-    genericName = "Web Browser";
-    exec = "airlock-launch-browser %u";
-    icon = "firefox";
-    startupWMClass = "usr-home:firefox";
-    categories = [ "Network" "WebBrowser" ];
-    mimeTypes = [
-      "x-scheme-handler/http"
-      "x-scheme-handler/https"
-      "text/html"
-      "application/xhtml+xml"
-    ];
+  openUrlDesktop = pkgs.makeDesktopItem {
+    name = "airlock-open-url";
+    desktopName = "Open web link";
+    exec = "airlock-open-url %u";
+    icon = "web-browser";
+    noDisplay = true;
+    mimeTypes = [ "x-scheme-handler/http" "x-scheme-handler/https" ];
   };
   sysAgentTailscaleEnrollment = pkgs.writeShellScript "airlock-start-sys-agent-tailscale" ''
     set -eu
@@ -165,81 +117,6 @@ let
     icon = "network-workgroup";
     categories = [ "System" "Network" ];
   };
-  gnomeDesktopShortcuts = pkgs.writeShellScript "airlock-gnome-desktop-shortcuts" ''
-    set -eu
-
-    config_home="''${XDG_CONFIG_HOME:-$HOME/.config}"
-    marker="$config_home/airlock/gnome-desktop-shortcuts-v2"
-    [ -e "$marker" ] && exit 0
-
-    desktop="$(${pkgs.xdg-user-dirs}/bin/xdg-user-dir DESKTOP 2>/dev/null || true)"
-    [ -n "$desktop" ] && [ "$desktop" != "$HOME" ] || desktop="$HOME/Desktop"
-    ${pkgs.coreutils}/bin/install -d -m 0700 "$desktop"
-
-    ${lib.concatMapStringsSep "\n" (application: ''
-      ${pkgs.coreutils}/bin/install -m 0700 \
-        ${homeApplicationDesktop application}/share/applications/${application.desktopFile}.desktop \
-        "$desktop/${application.desktopFile}.desktop"
-    '') homeApplications}
-    ${pkgs.coreutils}/bin/install -m 0700 \
-      ${browserDesktop}/share/applications/firefox.desktop \
-      "$desktop/firefox.desktop"
-
-    ${pkgs.coreutils}/bin/install -d -m 0700 "$(${pkgs.coreutils}/bin/dirname "$marker")"
-    : > "$marker"
-  '';
-  panelLaunchers = pkgs.writeShellScript "airlock-bootstrap-desktop-launchers" ''
-    set -eu
-
-    config_home="''${XDG_CONFIG_HOME:-$HOME/.config}"
-    marker="$config_home/airlock/desktop-bootstrap-v1"
-    [ -e "$marker" ] && exit 0
-
-    panel=""
-    for _attempt in $(${pkgs.coreutils}/bin/seq 1 30); do
-      panel="$(${pkgs.xfconf}/bin/xfconf-query -c xfce4-panel -p /panels -l 2>/dev/null |
-        ${pkgs.gnused}/bin/sed -n 's#^\(/panels/panel-[0-9][0-9]*\)$#\1#p' |
-        ${pkgs.coreutils}/bin/head -n 1 || true)"
-      [ -n "$panel" ] && break
-      ${pkgs.coreutils}/bin/sleep 1
-    done
-    [ -n "$panel" ] || exit 0
-
-    # Recreate the panel's plugin-id array with two new launcher plugins.
-    # This desktop-bootstrap action runs only for a fresh Airlock user
-    # profile, preserving later panel changes in the persistent sys-gui home.
-    ids="$(${pkgs.xfconf}/bin/xfconf-query -c xfce4-panel -p "$panel/plugin-ids" 2>/dev/null |
-      ${pkgs.gnugrep}/bin/grep -E '^[0-9]+$' | ${pkgs.coreutils}/bin/tr '\n' ' ' || true)"
-    next=100
-    for id in $ids; do
-      [ "$id" -ge "$next" ] && next=$((id + 1))
-    done
-
-    launcher_root="$config_home/xfce4/panel"
-    ${pkgs.coreutils}/bin/install -d -m 0700 "$launcher_root"
-    for desktop in airlock-files airlock-terminal firefox; do
-      id="$next"
-      next=$((next + 1))
-      ${pkgs.xfconf}/bin/xfconf-query -c xfce4-panel -p "/plugins/plugin-$id" \
-        -n -t string -s launcher
-      ${pkgs.coreutils}/bin/install -d -m 0700 "$launcher_root/launcher-$id"
-      case "$desktop" in
-        airlock-files) source=${filesDesktop}/share/applications/airlock-files.desktop ;;
-        airlock-terminal) source=${terminalDesktop}/share/applications/airlock-terminal.desktop ;;
-        firefox) source=${browserDesktop}/share/applications/firefox.desktop ;;
-      esac
-      ${pkgs.coreutils}/bin/install -m 0600 \
-        "$source" \
-        "$launcher_root/launcher-$id/$desktop.desktop"
-      ids="$ids$id "
-    done
-    # --force-array is necessary when the original panel has a single plugin.
-    # shellcheck disable=SC2086
-    ${pkgs.xfconf}/bin/xfconf-query -c xfce4-panel -p "$panel/plugin-ids" \
-      -a -t int -s $ids
-    ${pkgs.coreutils}/bin/install -d -m 0700 "$(${pkgs.coreutils}/bin/dirname "$marker")"
-    : > "$marker"
-  '';
   # LightDM owns the inner display and authenticates the desktop user. The
   # Qubes agent still owns the outer Xorg display (:1) forwarded to dom0.
   loginXserver = pkgs.writeShellScript "airlock-gui-login-xserver" ''
@@ -312,10 +189,15 @@ in
     default = true;
     description = "install the XFCE session and its Airlock-specific integration";
   };
-  options.airlock.sysGuiGuest.personalLaunchers.enable = lib.mkOption {
+  options.airlock.sysGuiGuest.applicationMenus.enable = lib.mkOption {
     type = lib.types.bool;
     default = true;
-    description = "Install Files and Terminal launchers for usr-home and a Firefox launcher for usr-home.";
+    description = "Discover applications in every VM assigned to this GUI VM.";
+  };
+  options.airlock.sysGuiGuest.defaultApplicationVM = lib.mkOption {
+    type = lib.types.nullOr lib.types.str;
+    default = "usr-home";
+    description = "VM whose default browser handles web links; null for local desktop applications.";
   };
   options.airlock.sysGuiGuest.sysAgentTailscaleShortcut.enable = lib.mkEnableOption
     "the desktop shortcut that enrolls sys-agent in Tailscale";
@@ -355,15 +237,8 @@ in
       pkgs.xfce4-panel
       pkgs.xfdesktop
     ]
-    ++ lib.optionals cfg.personalLaunchers.enable (
-      (map homeApplicationLauncher homeApplications)
-      ++ [
-        browserLauncher
-        browserDesktop
-        homeApplicationIcons
-      ]
-      ++ (map homeApplicationDesktop homeApplications)
-    )
+    ++ lib.optional cfg.applicationMenus.enable applicationMenus
+    ++ lib.optionals (cfg.defaultApplicationVM != null) [ openUrlLauncher openUrlDesktop ]
     ++ lib.optionals cfg.sysAgentTailscaleShortcut.enable [
       sysAgentTailscaleLauncher
       sysAgentTailscaleDesktop
@@ -460,36 +335,34 @@ in
         "${pkgs.qubes-gui-daemon}/etc/xdg/autostart/qubes-icon-receiver.desktop";
       "xdg/autostart/qubes-screen-layout-watches.desktop".source =
         "${pkgs.qubes-gui-daemon}/etc/xdg/autostart/qubes-screen-layout-watches.desktop";
-      "xdg/autostart/airlock-bootstrap-desktop-launchers.desktop" = lib.mkIf (cfg.personalLaunchers.enable && cfg.enableXfce) {
-        text = ''
-          [Desktop Entry]
-          Type=Application
-          Name=Airlock desktop bootstrap
-          Exec=${panelLaunchers}
-          OnlyShowIn=XFCE;
-          X-GNOME-Autostart-Phase=Panel
-        '';
+    };
+
+    # Run in the desktop user's session, where GNOME monitors the normal XDG
+    # application directory. Stopped VMs use the persistent upstream cache.
+    systemd.user.services.airlock-application-menus = lib.mkIf cfg.applicationMenus.enable {
+      description = "Refresh applications from VMs assigned to this GUI VM";
+      after = [ "graphical-session.target" ];
+      partOf = [ "graphical-session.target" ];
+      serviceConfig = {
+        Type = "oneshot";
+        ExecStart = "${applicationMenus}/bin/airlock-application-menus --reconcile";
+        TimeoutStartSec = "10min";
+        KillMode = "control-group";
       };
-      "xdg/autostart/airlock-gnome-desktop-shortcuts.desktop" = lib.mkIf cfg.personalLaunchers.enable {
-        text = ''
-          [Desktop Entry]
-          Type=Application
-          Name=Airlock GNOME desktop shortcuts
-          Exec=${gnomeDesktopShortcuts}
-          OnlyShowIn=GNOME;
-          X-GNOME-Autostart-Phase=Desktop
-        '';
+    };
+    systemd.user.timers.airlock-application-menus = lib.mkIf cfg.applicationMenus.enable {
+      wantedBy = [ "graphical-session.target" ];
+      partOf = [ "graphical-session.target" ];
+      timerConfig = {
+        OnActiveSec = "2s";
+        OnUnitInactiveSec = "30s";
+        AccuracySec = "1s";
       };
     };
 
-    # Canonical desktop IDs keep XFCE's menu, launcher search, dock and MIME
-    # defaults pointed at the two user-facing domains instead of per-VM copies.
-    xdg.mime.defaultApplications = lib.mkIf cfg.personalLaunchers.enable {
-      "inode/directory" = "airlock-files.desktop";
-      "x-scheme-handler/http" = "firefox.desktop";
-      "x-scheme-handler/https" = "firefox.desktop";
-      "text/html" = "firefox.desktop";
-      "application/xhtml+xml" = "firefox.desktop";
+    xdg.mime.defaultApplications = lib.mkIf (cfg.defaultApplicationVM != null) {
+      "x-scheme-handler/http" = "airlock-open-url.desktop";
+      "x-scheme-handler/https" = "airlock-open-url.desktop";
     };
 
     systemd.tmpfiles.rules = [

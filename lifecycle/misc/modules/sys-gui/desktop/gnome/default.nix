@@ -52,8 +52,7 @@ let
   enabledExtensions = [
     "airlock-host-poweroff@airlock.local"
     "airlock-focused-vm@airlock.local"
-  ]
-  ++ lib.optional config.airlock.sysGuiGuest.personalLaunchers.enable "ding@rastersoft.com";
+  ];
   enabledExtensionsGVariant = "[${
     lib.concatMapStringsSep "," (extension: "'${extension}'") enabledExtensions
   }]";
@@ -96,24 +95,16 @@ in
     # GNOME Shell offers gnome-tour on first login when its desktop entry is
     # installed. AirlockOS Setup owns that first-run welcome flow instead.
     environment.gnome.excludePackages = [ pkgs.gnome-tour ];
-    # Where usr-home is part of the topology, applications belong in that
-    # offline desktop-work VM. Minimal profiles without it retain GNOME's
-    # regular core application set.
+    # Connected desktop profiles run applications in their chosen VM. Minimal
+    # profiles retain GNOME's local core apps; both discover attached app VMs.
     services.gnome.core-apps.enable = lib.mkForce (
-      !config.airlock.sysGuiGuest.personalLaunchers.enable
+      config.airlock.sysGuiGuest.defaultApplicationVM == null
     );
     environment.systemPackages = [
       hostPoweroffExtension
       focusedVMExtension
-    ]
-    ++ lib.optionals config.airlock.sysGuiGuest.personalLaunchers.enable [
       # Accessibility controls the sys-gui session itself.
       pkgs.gnome-tecla
-      pkgs.gnomeExtensions.desktop-icons-ng-ding
-      # DING delegates desktop file operations to the Nautilus executable.
-      # The Airlock Files launcher still routes ordinary file-manager use to
-      # usr-home, whose desktop entry takes precedence over Nautilus's.
-      pkgs.nautilus
     ];
 
     # Sys-gui has no NetVM and should not acquire host-facing services merely

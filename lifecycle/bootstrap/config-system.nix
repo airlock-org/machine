@@ -52,14 +52,7 @@ in
 
     domains = airlockConfigDomains;
 
-    qrexecPolicy.rules = [
-      {
-        service = "airlock.OpenUrl";
-        source = "sys-gui";
-        target = "usr-home";
-        action = "allow";
-      }
-    ];
+    qrexecPolicy.rules = [ ];
 
     configAccessPolicy.enable = false;
   };

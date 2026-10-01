@@ -79,6 +79,8 @@ let
     qubes.ClipboardCopy + sys-gui @tag:guivm-sys-gui allow
     qubes.ClipboardPaste + sys-gui @tag:guivm-sys-gui allow
     qubes.SetMonitorLayout * sys-gui @tag:guivm-sys-gui allow
+    airlock.OpenUrl * sys-gui @tag:guivm-sys-gui allow
+    airlock.OpenUrl * @anyvm @anyvm deny
     qubes.StartApp * sys-gui @tag:guivm-sys-gui allow
     qubes.StartApp * sys-gui @dispvm:@tag:guivm-sys-gui allow
     qubes.SyncAppMenus * @tag:guivm-sys-gui dom0 allow target=sys-gui

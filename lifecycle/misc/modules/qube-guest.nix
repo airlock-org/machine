@@ -39,16 +39,32 @@ let
     ps.pyxdg
     qubesDbPython
   ]);
-  # The packaged agent installs this upstream qrexec handler as source only.
-  # Run it with an interpreter that includes its Python dependencies and make
-  # the agent's private Python modules available without relying on /usr paths.
-  qubesStartAppService = pkgs.writeShellScript "airlock-qubes-start-app" ''
+  # RPCs run outside a login shell. Use the active user and system profiles
+  # consistently for discovery, StartApp and icon resolution. Never scan GC roots.
+  applicationEnvironment = pkgs.writeText "airlock-application-environment" ''
     if [ -r /etc/profile ]; then
       . /etc/profile
     fi
-    export XDG_DATA_DIRS="/run/current-system/sw/share:''${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
+    export XDG_DATA_HOME="''${XDG_DATA_HOME:-$HOME/.local/share}"
+    export XDG_DATA_DIRS="$HOME/.nix-profile/share:/etc/profiles/per-user/${cfg.user}/share:/run/current-system/sw/share:''${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
+  '';
+  qubesStartAppService = pkgs.writeShellScript "airlock-qubes-start-app" ''
+    . ${applicationEnvironment}
     export PYTHONPATH="${qubesAgentLinux}/${pkgs.python3.sitePackages}''${PYTHONPATH:+:$PYTHONPATH}"
     exec ${qubesPython}/bin/python ${qubesAgentLinux.src}/qubes-rpc/qubes.StartApp "$@"
+  '';
+  xdgIcon = pkgs.writeShellScript "airlock-xdg-icon" ''
+    . ${applicationEnvironment}
+    exec ${qubesPython}/bin/python ${./qube-guest/scripts/xdg-icon.py} "$@"
+  '';
+  upstreamGetImage = pkgs.runCommand "airlock-qubes-get-image-upstream" { } ''
+    cp ${qubesAgentLinux.src}/qubes-rpc/qubes.GetImageRGBA "$out"
+    substituteInPlace "$out" --replace-fail /usr/lib/qubes/xdg-icon ${xdgIcon}
+  '';
+  getImageService = pkgs.writeShellScript "airlock-qubes-get-image" ''
+    . ${applicationEnvironment}
+    export PATH="${lib.makeBinPath [ pkgs.coreutils pkgs.graphicsmagick pkgs.librsvg ]}:$PATH"
+    exec ${pkgs.bash}/bin/bash ${upstreamGetImage}
   '';
   roleGit = pkgs.gitMinimal;
   airlockCli = pkgs.callPackage ../../runtime/tools/pkgs/airlock-cli { };
@@ -373,23 +389,11 @@ let
     exec ${pkgs.runtimeShell}
   '';
 
-  getAppmenusService = pkgs.writeShellScript "airlock-qubes-get-appmenus" (
-    pkgs.lib.replaceStrings
-      [ "@NIX_0@" "@NIX_1@" ]
-      [
-      "${
-      lib.makeBinPath [
-        pkgs.coreutils
-        pkgs.findutils
-        pkgs.gawk
-        pkgs.glibc.bin
-        pkgs.qubes-core-qubesdb
-      ]
-    }"
-      "${lib.escapeShellArg cfg.user}"
-      ]
-      (builtins.readFile ./qube-guest/scripts/airlock-qubes-get-appmenus.sh)
-  );
+  getAppmenusService = pkgs.writeShellScript "airlock-qubes-get-appmenus" ''
+    . ${applicationEnvironment}
+    export AIRLOCK_VM_PERSISTENCE="$(${pkgs.qubes-core-qubesdb}/bin/qubesdb-read /qubes-vm-persistence 2>/dev/null || printf 'full\n')"
+    exec ${pkgs.python3}/bin/python3 ${./qube-guest/scripts/application-catalog.py}
+  '';
 
 in
 {
@@ -995,6 +999,15 @@ in
     };
 
     environment.etc."qubes/rpc-config/qubes.GetAppmenus" = {
+      text = "force-user='${cfg.user}'\n";
+      mode = "0444";
+    };
+
+    environment.etc."qubes-rpc/qubes.GetImageRGBA" = {
+      source = getImageService;
+      mode = "0555";
+    };
+    environment.etc."qubes/rpc-config/qubes.GetImageRGBA" = {
       text = "force-user='${cfg.user}'\n";
       mode = "0444";
     };

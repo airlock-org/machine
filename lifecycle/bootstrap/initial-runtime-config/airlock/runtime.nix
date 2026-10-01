@@ -70,7 +70,7 @@
       };
       features = {
         "airlock-role" = "usr-home";
-        "menu-items" = "";
+        "menu-items" = "*";
       };
       services."network-manager" = false;
       state.persistentSize = 17179869184;
@@ -191,14 +191,7 @@
       default_netvm = "sys-firewall";
     };
     extraDomains = { };
-    extraQrexecRules = [
-      {
-        service = "airlock.OpenUrl";
-        source = "sys-gui";
-        target = "usr-home";
-        action = "allow";
-      }
-    ];
+    extraQrexecRules = [ ];
   };
 
   # Config authority VMs are fixed-name Nix-native domains. guests.<role>

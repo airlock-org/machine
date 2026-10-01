@@ -4,9 +4,10 @@
 application menus, tray widgets, notifications, and graphical settings tools.
 The connected `usr-home` personal VM owns Firefox, Files and Terminal processes
 and the user's persistent home directory; their windows render in `sys-gui`.
-Its GNOME application catalog also includes local document, image, media,
-calendar, contact, editor, utility and help applications. `sys-gui` exposes
-each through a fixed launcher; it does not install GNOME's broad core app set.
+Its default packages also include document, image, media, calendar, contact,
+editor, utility and help applications. These packages supply their own desktop
+entries; `sys-gui` has no personal-application list or package-specific launchers.
+It does not install GNOME's broad core app set in the connected desktop profile.
 The bootstrap and initial runtime configurations use **user / airlock** for
 the guest login. The dom0 console account remains **airlock / airlock**.
 These are development credentials. Deployments should configure the GUI
@@ -46,6 +47,72 @@ For a fresh full development image, build and boot with
 `AIRLOCK_VM_FRESH=1 make vm-gui-config-run`. Verify guest login, visible cursor,
 VM Manager, logout/relogin, and that config VMs remain halted. Guest login
 diagnostics are in `journalctl -b -u display-manager` inside `sys-gui`.
+
+## Applications across VMs
+
+The desktop user's `airlock-application-menus.timer` starts two seconds after
+the graphical session starts and repeats thirty seconds after each refresh
+finishes. It obtains a complete Qubes inventory and discovers applications in
+every VM whose `guivm` is `sys-gui`, excluding internal VMs, recoverably retired
+VMs and transient automatically deleted disposables. No application or VM name
+is hardcoded into discovery. A new VM must have a working Qubes GUI agent and
+the standard app-menu RPCs; Nix application VMs import `app-gui-guest.nix`.
+
+Each running VM exposes desktop entries from its active system/user profiles
+and user-local XDG application directories. User entries take precedence,
+including `Hidden` entries masking system apps. `NoDisplay`, `TryExec` and
+desktop visibility metadata are respected. Old Nix generations and GC roots
+are not searched. Switching a profile, installing or removing a package, or
+editing a user desktop entry is picked up on a subsequent refresh without a
+sys-gui rebuild. Applications must supply a normal `.desktop` entry.
+
+Upstream Qubes code sanitizes the received metadata, fetches icons using the
+existing RGBA RPC and generates per-VM entries in the ordinary user XDG
+application directory. A small packaged patch retains search keywords,
+localized names and desktop visibility fields, supports `menu-items = "*"`
+for showing every discovered app, and gives application launchers stable IDs
+containing the VM UUID and application desktop ID. Explicit per-VM menu lists
+remain available through Qubes settings. The GUI's copy of an icon is a cache;
+applications and their dependencies remain owned by the originating VM's Nix
+profiles, with no additional GC roots created by the application menu.
+
+GNOME search displays entries such as `usr-home: Firefox` and
+`usr-work: Firefox`. Both launch through `qubes.StartApp` in the named VM,
+preserving separate browser profiles and files. Standard `StartupWMClass`
+metadata is namespaced using the VM name for forwarded-window matching.
+Airlock guests advertise their session-readiness RPC; other Qubes guests use
+upstream `qubes.WaitForSession`. Search does not boot stopped VMs. Selecting a
+launcher can start its VM through the existing Qubes permissions.
+
+Catalogs persist in sys-gui's normal Qubes app-menu cache. Stopped VMs retain
+their last successfully synchronized entries. Failed inventory or catalog
+requests preserve cached apps, while a successful empty snapshot withdraws
+uninstalled apps. Deletion, retirement and GUI reassignment withdraw a VM's
+entries; renaming regenerates cached targets while preserving launcher IDs.
+New VMs publish their initial catalog on their first startup. There is no
+build-time catalog seeding in this version. Workers have bounded timeouts and
+independent per-VM locks; unchanged snapshots skip icon refresh until the
+five-minute periodic icon check.
+
+`airlock.sysGuiGuest.applicationMenus.enable` controls discovery.
+`airlock.sysGuiGuest.defaultApplicationVM` defaults to `usr-home` for web-link
+opening; that VM chooses its own browser using normal MIME defaults. Setting
+it to `null` keeps local applications in minimal desktop profiles. This is
+independent of discovery in other attached VMs. Predefined desktop/panel copies
+are no longer created; users can pin discovered entries directly in GNOME.
+
+For diagnostics in sys-gui, use:
+
+```console
+systemctl --user status airlock-application-menus.timer
+journalctl --user -u airlock-application-menus.service
+airlock-sync-qube-appmenus VM
+```
+
+The last command explicitly starts the selected VM and forces a refresh. The
+background service never autostarts a VM. Hardware acceptance should cover two
+VMs with the same app, favorites/window grouping, install/removal, stopped-VM
+launching, login persistence and VM retirement.
 
 ## Default ownership direction
 

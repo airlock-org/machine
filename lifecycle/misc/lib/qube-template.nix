@@ -767,6 +767,11 @@ let
         "airlock-role" = "nix-native";
         os = "Linux";
         qrexec = "1";
+        # A generic launcher can select the stronger Airlock barrier when the
+        # guest supplies it, and upstream WaitForSession for other Qubes guests.
+        "supported-rpc.airlock.AppSessionReady" =
+          if builtins.hasAttr "qubes-rpc/airlock.AppSessionReady" configuration.config.environment.etc
+          then "1" else "0";
       };
       domain = {
         inherit label netvm services devices;
