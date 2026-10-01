@@ -28,7 +28,7 @@ in
       trap 'rm -rf "$temp"' EXIT
       tar -xzf ${lib.escapeShellArg airlockMachineSeedArchive} -C "$temp" --no-same-owner --no-same-permissions
       [ -d "$temp/repo/.git" ] && [ -f "$temp/manifest.json" ] || { echo 'invalid airlock-machine seed' >&2; exit 1; }
-      [ "$(jq -r '.schema // empty' "$temp/manifest.json")" = airlock.sys-dev-machine-seed.v1 ] || { echo 'unsupported airlock-machine seed' >&2; exit 1; }
+      [ "$(jq -r '.schema // empty' "$temp/manifest.json")" = airlock.sys-agent-machine-seed.v1 ] || { echo 'unsupported airlock-machine seed' >&2; exit 1; }
       revision="$(jq -r '.revision // empty' "$temp/manifest.json")"
       lock_hash="$(jq -r '.lock_hash // empty' "$temp/manifest.json")"
       [ "$(git -C "$temp/repo" rev-parse HEAD)" = "$revision" ]

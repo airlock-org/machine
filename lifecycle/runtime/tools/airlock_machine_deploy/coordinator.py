@@ -28,6 +28,7 @@ from .planning import plan
 from .diagnostics import DeploymentDiagnostics
 from .releases import ReleaseManager
 from .retirement import RetirementManager
+from .private_copies import PrivateVolumeCopies
 from .state import read_json, atomic_json, load_release
 from .validation import validate_staged_generation, validate_admission_receipt
 from .models import DeploymentPhase, DeploymentPlan, DeploymentRecord, Selection
@@ -60,6 +61,7 @@ class Coordinator:
         self.profiles = Path("/nix/var/nix/profiles")
         self.retired_policy = RETIRED_POLICY
         self.retirement = RetirementManager(self)
+        self.private_copies = PrivateVolumeCopies(self)
         self.releases = ReleaseManager(self)
 
     def running_hosts(self):
@@ -185,6 +187,9 @@ class Coordinator:
         result["host_reboot_required"] = (
             str(Path("/run/current-system").resolve()) != desired["host"]
         )
+        if desired.get("privateVolumeCopies"):
+            result["private_copies"] = self.private_copies.inspect(
+                desired["privateVolumeCopies"], old, new)
         result["revision"] = desired["revision"]
         return result
 
@@ -515,7 +520,7 @@ class Coordinator:
                     "--view-backend",
                     store["viewBackend"],
                     "--approved-by",
-                    "sys-dev",
+                    "sys-agent",
                 )
             )
             if match["status"] == "found":
@@ -582,7 +587,7 @@ class Coordinator:
 
         previous = handoff["from"]
         target = handoff["to"]
-        if {previous, target} != {"sys-dev", "sys-net"}:
+        if {previous, target} != {"sys-agent", "sys-net"}:
             raise DeploymentError("unsupported automatic network PCI handoff")
         app = qubesadmin.Qubes()
         network_ports = set()
@@ -738,6 +743,10 @@ class Coordinator:
                     allow_unassigned=bool(interrupted),
                 )
             changes["stop"] = [name for name in changes["stop"] if name in runtime]
+            copy_plan = self.private_copies.inspect(
+                manifest.get("privateVolumeCopies", {}), old, topology)
+            if copy_plan:
+                changes["private_copies"] = copy_plan
             changes["retirement"] = self.retirement.retirement_details(
                 old,
                 changes["retire"],
@@ -857,11 +866,15 @@ class Coordinator:
                 phase("retiring")
                 retired = [self.retirement.retire(entry) for entry in trash_plan]
                 phase("configuring")
+                self.private_copies.prepare(copy_plan)
                 if changes.get("pci_handoff"):
                     self.handoff_network_pci(
                         changes["pci_handoff"], allow_unassigned=bool(interrupted)
                     )
                 self.setup(release, directory)
+                if copy_plan:
+                    phase("copying-private")
+                    self.private_copies.apply(copy_plan)
                 restored = [
                     self.retirement.restore(entry, release, transaction)
                     for entry in restore_plan

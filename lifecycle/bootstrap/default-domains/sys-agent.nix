@@ -1,5 +1,5 @@
 {
-  guestHostName = "sys-dev";
+  guestHostName = "sys-agent";
   label = "red";
   rootImageSizeMiB = 1024;
   netvm = "sys-firewall";
@@ -16,7 +16,7 @@
   };
   features = {
     "airlock-managed" = "1";
-    "airlock-role" = "sys-dev";
+    "airlock-role" = "sys-agent";
     # Explicitly clear the prior provider features on deployed Qubes domains.
     "airlock-auto-network-pci" = "0";
     "airlock-network-provider" = "0";

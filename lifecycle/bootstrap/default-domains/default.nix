@@ -9,7 +9,7 @@ let
   sysNetPrivateSizeBytes = 2147483648;
 
   sysNetRoleDefaults = import ./sys-net.nix { inherit sysNetPrivateSizeBytes; };
-  sysDevRoleDefaults = import ./sys-dev.nix;
+  sysAgentRoleDefaults = import ./sys-agent.nix;
   sysCtrlRoleDefaults = import ./sys-ctrl.nix;
   sysFirewallRoleDefaults = import ./sys-firewall.nix { inherit networkDebug; };
   sysGuiRoleDefaults = import ./sys-gui.nix;
@@ -47,32 +47,32 @@ let
       state = sysNetRoleDefaults.state;
     };
 
-  mkSysDevDomainEntryWith =
+  mkSysAgentDomainEntryWith =
     system:
     { extraSpecialArgs ? { } }:
     let
       qubeBuilders = mkAirlockQubeBuilders system;
     in
     qubeBuilders.mkNixNativeDomain {
-      name = "sys-dev";
-      guestRole = "sys-dev";
+      name = "sys-agent";
+      guestRole = "sys-agent";
       inherit extraSpecialArgs;
       modules = [
-        ({ ... }: { networking.hostName = sysDevRoleDefaults.guestHostName; })
-        ../../misc/modules/sys-dev-guest.nix
+        ({ ... }: { networking.hostName = sysAgentRoleDefaults.guestHostName; })
+        ../../misc/modules/sys-agent-guest.nix
       ];
-      rootImageSizeMiB = sysDevRoleDefaults.rootImageSizeMiB;
+      rootImageSizeMiB = sysAgentRoleDefaults.rootImageSizeMiB;
       kernelName = airlockQubesVmKernelName;
-      label = sysDevRoleDefaults.label;
-      netvm = sysDevRoleDefaults.netvm;
-      prefs = sysDevRoleDefaults.prefs;
-      features = sysDevRoleDefaults.features;
-      services = sysDevRoleDefaults.services;
-      devices = sysDevRoleDefaults.devices;
-      state = sysDevRoleDefaults.state;
+      label = sysAgentRoleDefaults.label;
+      netvm = sysAgentRoleDefaults.netvm;
+      prefs = sysAgentRoleDefaults.prefs;
+      features = sysAgentRoleDefaults.features;
+      services = sysAgentRoleDefaults.services;
+      devices = sysAgentRoleDefaults.devices;
+      state = sysAgentRoleDefaults.state;
     };
 
-  mkSysDevDomainEntry = system: mkSysDevDomainEntryWith system { };
+  mkSysAgentDomainEntry = system: mkSysAgentDomainEntryWith system { };
 
   mkSysCtrlDomainEntryWith =
     system: { extraSpecialArgs ? { } }:
@@ -91,8 +91,8 @@ let
           nix.settings.max-jobs = 1;
         })
         ../../misc/modules/machine-source-seed.nix
-        ../../misc/modules/sys-dev-build-store.nix
-        ../../misc/modules/sys-dev-machine-build.nix
+        ../../misc/modules/sys-agent-build-store.nix
+        ../../misc/modules/sys-agent-machine-build.nix
       ];
       rootImageSizeMiB = sysCtrlRoleDefaults.rootImageSizeMiB;
       kernelName = airlockQubesVmKernelName;
@@ -247,8 +247,8 @@ in
     mkSysGuiDomainEntry
     mkSysGuiDomainEntryWith
     mkSysNetDomainEntry
-    mkSysDevDomainEntry
-    mkSysDevDomainEntryWith
+    mkSysAgentDomainEntry
+    mkSysAgentDomainEntryWith
     mkSysCtrlDomainEntry
     mkSysCtrlDomainEntryWith
     sysFirewallRoleDefaults

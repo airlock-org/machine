@@ -13,7 +13,7 @@ let
   hasConfigValidatorRole = cfg.role == "sys-config-validator";
   hasCmdRole = cfg.role == "cmd";
   hasSysNetRole = cfg.role == "sys-net";
-  hasSysDevRole = cfg.role == "sys-dev";
+  hasSysAgentRole = cfg.role == "sys-agent";
   hasSysCtrlRole = cfg.role == "sys-ctrl";
   hasNetworkDriverRole = hasSysNetRole;
   hasSysGuiRole = cfg.role == "sys-gui";
@@ -24,7 +24,7 @@ let
     || hasConfigStagingRole
     || hasConfigValidatorRole
     || hasCmdRole
-    || hasSysDevRole
+    || hasSysAgentRole
     || hasSysCtrlRole;
   hasConfigInputsImportRole = hasConfigStagingRole || hasConfigValidatorRole;
   qubesAgentLinux = pkgs.qubes-core-agent-linux;
@@ -145,7 +145,7 @@ let
     base = [ ];
     sys-net = networkProviderPackages;
     sys-firewall = networkProviderPackages;
-    sys-dev = [
+    sys-agent = [
       (lib.hiPrio configNix)
       poolSend
     ];
@@ -256,7 +256,7 @@ let
     exec ${poolArtifacts}/bin/airlock-pool-send \
       --physical-store-root ${lib.escapeShellArg "${cfg.configNixStoreRoot}/nix/store"} \
       --nix ${configNix}/bin/airlock-config-nix \
-      ${lib.optionalString (!(builtins.elem cfg.role [ "sys-dev" "sys-ctrl" ])) "--nix-store ${lib.escapeShellArg cfg.configNixStoreRoot}"} \
+      ${lib.optionalString (!(builtins.elem cfg.role [ "sys-agent" "sys-ctrl" ])) "--nix-store ${lib.escapeShellArg cfg.configNixStoreRoot}"} \
       "$@"
   '';
 
@@ -355,14 +355,14 @@ let
     vm_name="$("$qubesdb_read" /name 2>/dev/null || true)"
 
     case "$qdb_role" in
-      sys-ctrl|sys-dev) role="$qdb_role" ;;
+      sys-ctrl|sys-agent) role="$qdb_role" ;;
       "") ;;
       *) role=base ;;
     esac
 
     case "$vm_name" in
       sys-ctrl) role=sys-ctrl ;;
-      sys-dev) role=sys-dev ;;
+      sys-agent) role=sys-agent ;;
     esac
 
     printf 'airlock-policy-probe role=%s user=%s\n' "$role" "$(${pkgs.coreutils}/bin/whoami)"
@@ -413,7 +413,7 @@ in
         "sys-firewall"
         "sys-gui"
         "sys-net"
-        "sys-dev"
+        "sys-agent"
         "sys-ctrl"
       ];
       default = "base";
@@ -959,12 +959,12 @@ in
       mode = "0555";
     };
 
-    environment.etc."qubes-rpc/airlock.PolicyProbe" = lib.mkIf (hasSysCtrlRole || hasSysDevRole) {
+    environment.etc."qubes-rpc/airlock.PolicyProbe" = lib.mkIf (hasSysCtrlRole || hasSysAgentRole) {
       source = policyProbeService;
       mode = "0555";
     };
 
-    environment.etc."qubes/rpc-config/airlock.PolicyProbe" = lib.mkIf (hasSysCtrlRole || hasSysDevRole) {
+    environment.etc."qubes/rpc-config/airlock.PolicyProbe" = lib.mkIf (hasSysCtrlRole || hasSysAgentRole) {
       text = "force-user='${cfg.user}'\n";
       mode = "0444";
     };

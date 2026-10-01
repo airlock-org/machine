@@ -51,3 +51,9 @@ object verification/admission, view preparation and index construction, and
 reports the number of inherited and newly indexed objects for host/controller
 views. This allows changes in preparation cost to be measured separately from
 package transfer volume.
+
+Private-volume replacements use `private_copies.py`: preflight refuses existing
+destination VMs, setup creates the new VM, and the stopped private volume is
+cloned through upstream Qubes. Durable receipts prevent completed copies from
+overwriting replacement data on resume. `privateVolumeCopies` maps new targets
+to sources retired by the same release; clear it with `retireDomains` afterward.

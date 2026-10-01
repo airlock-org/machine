@@ -425,7 +425,7 @@ def test_nix_selection_drives_reservation_assignment_and_start():
     )
     for source, argument, allowed in (
         ("dom0", "", True),
-        ("sys-dev", "", False),
+        ("sys-agent", "", False),
         ("", "", False),
         ("dom0", "unexpected", False),
     ):

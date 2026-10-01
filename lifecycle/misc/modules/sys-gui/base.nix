@@ -148,20 +148,20 @@ let
       "application/xhtml+xml"
     ];
   };
-  sysDevTailscaleEnrollment = pkgs.writeShellScript "airlock-start-sys-dev-tailscale" ''
+  sysAgentTailscaleEnrollment = pkgs.writeShellScript "airlock-start-sys-agent-tailscale" ''
     set -eu
     exec ${pkgs.python3.pkgs.qubes-core-admin-client}/bin/qvm-run \
-      --pass-io --no-gui --service sys-dev airlock.DevTailscaleUp
+      --pass-io --no-gui --service sys-agent airlock.DevTailscaleUp
   '';
-  sysDevTailscaleLauncher = pkgs.writeShellScriptBin "airlock-start-sys-dev-tailscale" ''
-    exec ${pkgs.xterm}/bin/xterm -hold -fa 'DejaVu Sans Mono' -fs 16 -geometry 100x30 -T 'Start sys-dev Tailscale' \
-      -e ${sysDevTailscaleEnrollment}
+  sysAgentTailscaleLauncher = pkgs.writeShellScriptBin "airlock-start-sys-agent-tailscale" ''
+    exec ${pkgs.xterm}/bin/xterm -hold -fa 'DejaVu Sans Mono' -fs 16 -geometry 100x30 -T 'Start sys-agent Tailscale' \
+      -e ${sysAgentTailscaleEnrollment}
   '';
-  sysDevTailscaleDesktop = pkgs.makeDesktopItem {
-    name = "airlock-start-sys-dev-tailscale";
-    desktopName = "Start sys-dev Tailscale";
-    comment = "Enroll sys-dev in Tailscale and display the login URL";
-    exec = "airlock-start-sys-dev-tailscale";
+  sysAgentTailscaleDesktop = pkgs.makeDesktopItem {
+    name = "airlock-start-sys-agent-tailscale";
+    desktopName = "Start sys-agent Tailscale";
+    comment = "Enroll sys-agent in Tailscale and display the login URL";
+    exec = "airlock-start-sys-agent-tailscale";
     icon = "network-workgroup";
     categories = [ "System" "Network" ];
   };
@@ -317,8 +317,8 @@ in
     default = true;
     description = "Install Files and Terminal launchers for usr-home and a Firefox launcher for usr-home.";
   };
-  options.airlock.sysGuiGuest.sysDevTailscaleShortcut.enable = lib.mkEnableOption
-    "the desktop shortcut that enrolls sys-dev in Tailscale";
+  options.airlock.sysGuiGuest.sysAgentTailscaleShortcut.enable = lib.mkEnableOption
+    "the desktop shortcut that enrolls sys-agent in Tailscale";
 
   config = lib.mkIf cfg.enable {
     airlock.inputProxy.receiver.enable = lib.mkDefault (!hybrid);
@@ -364,9 +364,9 @@ in
       ]
       ++ (map homeApplicationDesktop homeApplications)
     )
-    ++ lib.optionals cfg.sysDevTailscaleShortcut.enable [
-      sysDevTailscaleLauncher
-      sysDevTailscaleDesktop
+    ++ lib.optionals cfg.sysAgentTailscaleShortcut.enable [
+      sysAgentTailscaleLauncher
+      sysAgentTailscaleDesktop
     ];
 
     services.udev.packages = [ guiAgent ];

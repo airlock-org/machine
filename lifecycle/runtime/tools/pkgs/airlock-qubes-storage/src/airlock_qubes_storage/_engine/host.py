@@ -158,13 +158,15 @@ def validate_boot(root, system, *, logical_root=None, allow_retired=False):
     return record
 
 
-def refresh_builder(root, role, host_registration, *, incremental=True, statistics=None):
+def refresh_builder(root, role, host_registration, *, incremental=True, statistics=None, seed_role=None):
     """Publish an additive successor; Qubes must attach it only while stopped."""
     root = Path(root)
-    previous = core.read_json(root / f"builders/{role}.json")
-    directory = state.generation_manifest_path(root, f"{role}-builder", previous["generation"]).parent
+    fresh = not (root / f"builders/{role}.json").exists()
+    source_role = seed_role if fresh and seed_role else role
+    previous = core.read_json(root / f"builders/{source_role}.json")
+    directory = state.generation_manifest_path(root, f"{source_role}-builder", previous["generation"]).parent
     registration = builder.merge_registration((directory / "registration").read_text(), host_registration)
-    if hashlib.sha256(registration.encode()).hexdigest() == previous["registration_sha256"]:
+    if not fresh and hashlib.sha256(registration.encode()).hexdigest() == previous["registration_sha256"]:
         return previous
     old = core.read_json(directory / "manifest.json")
     result = admit(root, f"{role}-builder", old["system"], registration, incremental=incremental,
@@ -172,7 +174,7 @@ def refresh_builder(root, role, host_registration, *, incremental=True, statisti
     if statistics is not None:
         statistics.update({"controller_" + name: value for name, value in result.get("timings", {}).items()})
     builder.prepare_builder(root, result, Path(result["manifest"]).parent / "registration",
-                            directory / "flake-inputs.json", predecessor=previous)
+                            directory / "flake-inputs.json", predecessor=None if fresh else previous)
     return core.read_json(root / f"builders/{role}.json")
 
 
@@ -191,6 +193,7 @@ def publish_live(system):
             timings["host_database_seconds"] = time.monotonic() - started
             started = time.monotonic()
             refresh_builder(root, "sys-ctrl", Path(record["registration"]).read_text(), statistics=timings)
+            refresh_builder(root, "sys-agent", Path(record["registration"]).read_text(), seed_role="sys-ctrl")
             timings["controller_base_seconds"] = time.monotonic() - started
             return dict(record, timings=timings)
     temporary = Path(HOST) / "publishing"
@@ -208,6 +211,7 @@ def publish_live(system):
             timings["host_database_seconds"] = time.monotonic() - started
             started = time.monotonic()
             refresh_builder(root, "sys-ctrl", registration, statistics=timings)
+            refresh_builder(root, "sys-agent", registration, seed_role="sys-ctrl")
             timings["controller_base_seconds"] = time.monotonic() - started
             return dict(record, timings=timings)
 

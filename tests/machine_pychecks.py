@@ -378,7 +378,7 @@ def check_qube_guest_policy_probe(repo_root: Path, log_dir: Path) -> None:
         "#!/usr/bin/env bash\n"
         'case "$1" in\n'
         "  /features/airlock-role)\n"
-        "    printf 'sys-dev\\n'\n"
+        "    printf 'sys-agent\\n'\n"
         "    ;;\n"
         "  /name)\n"
         "    printf 'other-name\\n'\n"
@@ -400,7 +400,7 @@ def check_qube_guest_policy_probe(repo_root: Path, log_dir: Path) -> None:
     ).stdout
     (work_dir / "from-feature.log").write_text(second, encoding="utf-8")
     assert re.search(
-        r"^airlock-policy-probe role=sys-dev user=.+$", second
+        r"^airlock-policy-probe role=sys-agent user=.+$", second
     )
 
 
@@ -2574,7 +2574,7 @@ def check_config_candidate_nix_native(repo_root: Path, log_dir: Path) -> None:
               nixNative.domains.bad.role = "sys-config-staging";
             }
             """,
-            "airlock.nixNative.domains.bad.role: expected one of base, cmd, sys-dev, sys-firewall, sys-gui, sys-net",
+            "airlock.nixNative.domains.bad.role: expected one of base, cmd, sys-agent, sys-firewall, sys-gui, sys-net",
         ),
     ]
     invalid_log = result_dir / "invalid.log"
@@ -2608,7 +2608,7 @@ def check_airlock_minimal_guest(repo_root: Path, log_dir: Path) -> None:
       lib = flake.inputs.nixpkgs.lib;
       cfgs = {{
         staging = flake.nixosConfigurations."airlock-domain-sys-ctrl".config;
-        validator = flake.nixosConfigurations."airlock-domain-sys-dev".config;
+        validator = flake.nixosConfigurations."airlock-domain-sys-agent".config;
         vault = flake.nixosConfigurations."airlock-domain-sys-ctrl".config;
       }};
       cfgList = builtins.attrValues cfgs;
@@ -2728,7 +2728,7 @@ def check_airlock_minimal_guest(repo_root: Path, log_dir: Path) -> None:
 def check_airlock_minimal_closure(repo_root: Path, log_dir: Path) -> None:
     shutil.rmtree(log_dir, ignore_errors=True)
     log_dir.mkdir(parents=True)
-    roles = ("sys-ctrl", "sys-dev")
+    roles = ("sys-ctrl", "sys-agent")
     paths = {}
     for role in roles:
         attr = f"{repo_root}#nixosConfigurations.airlock-domain-{role}.config.system.build.toplevel"

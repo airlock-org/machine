@@ -47,6 +47,7 @@ let
     timestamp = airlockSourceTimestamp;
     lockHash = airlockSourceLockHash;
     retireDomains = config.airlock.machineDeployment.retireDomains;
+    privateVolumeCopies = config.airlock.machineDeployment.privateVolumeCopies;
     trashRetentionDays = config.airlock.machineDeployment.trashRetentionDays;
   };
   releaseManifest = pkgs.writeText "airlock-machine-release.json" (builtins.toJSON manifest);

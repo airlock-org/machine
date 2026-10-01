@@ -60,7 +60,7 @@ def test_pool_admission_uses_narrow_root_receiver():
     for target in report["targets"]:
         assert target in report["rootReceiver"]
         assert (
-            f"airlock.Pool.AdmitIncremental +{target} sys-dev dom0 allow"
+            f"airlock.Pool.AdmitIncremental +{target} sys-agent dom0 allow"
             in report["policy"]
         )
     assert "airlock.Pool.AdmitIncremental * @anyvm @anyvm deny" in report["policy"]

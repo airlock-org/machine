@@ -170,7 +170,7 @@ def test_gui_minimal_topology_and_desktop():
     for source, argument, allowed in [
         ("sys-gui", "", True),
         ("sys-gui", "reboot", False),
-        ("sys-dev", "", False),
+        ("sys-agent", "", False),
         ("", "", False),
     ]:
         result = subprocess.run(

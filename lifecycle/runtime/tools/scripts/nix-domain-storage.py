@@ -878,7 +878,7 @@ async def ensure_store(args):
     if missing:
         fail(f"shared-closure mode requires: {', '.join(missing)}")
     result = await ensure_shared_store(args)
-    if args.domain in ("sys-dev", "sys-ctrl"):
+    if args.domain in ("sys-agent", "sys-ctrl"):
         await ensure_builder_store(args)
     return result
 

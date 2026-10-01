@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Submit a committed guest candidate from sys-dev to sys-ctrl."""
+"""Submit a committed guest candidate from sys-agent to sys-ctrl."""
 
 import argparse
 import fcntl
@@ -16,8 +16,8 @@ import tempfile
 import time
 
 SCHEMA = "airlock.sys-ctrl-guest-request.v1"
-SOURCE_SCHEMA = "airlock.sys-dev-machine-source.v1"
-TARGETS = {"sys-dev", "sys-ctrl", "sys-gui", "sys-net", "sys-firewall", "usr-home"}
+SOURCE_SCHEMA = "airlock.sys-agent-machine-source.v1"
+TARGETS = {"sys-agent", "sys-ctrl", "sys-gui", "sys-net", "sys-firewall", "usr-home"}
 REPO = Path("/home/user/dev/airlock-machine")
 MACHINE_SCHEMA = "airlock.sys-ctrl-machine-release.v2"
 STATE = Path.home() / ".local/share/airlock/controller"
@@ -105,8 +105,8 @@ def request(action, target, repo):
 
 
 def serve():
-    if os.environ.get("QREXEC_REMOTE_DOMAIN") != "sys-dev":
-        raise ValueError("only sys-dev may submit candidates")
+    if os.environ.get("QREXEC_REMOTE_DOMAIN") != "sys-agent":
+        raise ValueError("only sys-agent may submit candidates")
     line = sys.stdin.buffer.readline(4097)
     if len(line) > 4096 or not line.endswith(b"\n"):
         raise ValueError("invalid request header")
@@ -154,7 +154,7 @@ def serve():
         record(candidate / "request.json", header)
         archive.seek(0)
         subprocess.run(
-            ["airlock-sys-dev-machine-source", "import", "--revision", revision,
+            ["airlock-sys-agent-machine-source", "import", "--revision", revision,
              "--lock-hash", lock_hash], stdin=archive, check=True,
             stdout=subprocess.DEVNULL,
         )
@@ -170,7 +170,7 @@ def serve():
         return
     configuration = "sys-gui-usb-lab" if target == "sys-gui" else target
     installable = f".#nixosConfigurations.airlock-domain-{configuration}.config.system.build.toplevel"
-    receipt = json.loads(output("airlock-sys-dev-machine-build", "admit", target, installable))
+    receipt = json.loads(output("airlock-sys-agent-machine-build", "admit", target, installable))
     if receipt.get("source_revision") != revision or receipt.get("lock_hash") != lock_hash or receipt.get("domain") != target:
         raise ValueError("admission receipt differs from submitted candidate")
     result = subprocess.run(
@@ -202,7 +202,7 @@ def build_machine_release(revision, lock_hash):
                 saved.update(build_seconds=time.monotonic() - started, build_reused=True)
                 record(build_record, saved)
                 return release
-    release = output("airlock-sys-dev-machine-build", "build",
+    release = output("airlock-sys-agent-machine-build", "build",
                      ".#airlock-machine-release-usb-lab")
     physical = BUILDER_STORE / release.lstrip("/")
     manifest = json.loads((physical / "release.json").read_text())

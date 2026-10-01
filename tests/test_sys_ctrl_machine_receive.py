@@ -126,7 +126,7 @@ def test_machine_failure_returns_bounded_coordinator_error(monkeypatch, capsys):
 @pytest.mark.parametrize('change', ['none', 'state', 'plan', 'identity', 'tamper', 'pruned'])
 def test_prepared_apply_checks_state_without_import_or_binding(monkeypatch, tmp_path, capsys, change):
     monkeypatch.setattr(RECEIVER, 'STATE', tmp_path)
-    checked = {'plan': {'changed': ['sys-dev']}, 'state': 'before'}
+    checked = {'plan': {'changed': ['sys-agent']}, 'state': 'before'}
     calls = []
     def run(args, **kwargs):
         calls.append(args)

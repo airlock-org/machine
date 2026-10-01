@@ -1,6 +1,7 @@
 """Approved builder inputs and explicit, offline, additive base transitions."""
 
 import hashlib
+import json
 import os
 import re
 import shutil
@@ -114,7 +115,7 @@ def prepare_builder(root, admission, registration, offline_inputs_source=None, p
     manifest_path = Path(admission["manifest"])
     manifest = core.read_json(manifest_path)
     builder_domain = manifest["domain"]
-    if builder_domain not in ("sys-dev-builder", "sys-ctrl-builder"):
+    if builder_domain not in ("sys-agent-builder", "sys-ctrl-builder"):
         core.fail("builder preparation is restricted to declared builder domains")
     role = builder_domain.removesuffix("-builder")
     registration = Path(registration).read_bytes()
@@ -125,8 +126,13 @@ def prepare_builder(root, admission, registration, offline_inputs_source=None, p
     if offline_inputs_source is not None and Path(offline_inputs_source).exists():
         offline_bytes = Path(offline_inputs_source).read_bytes()
         offline = core.read_json(offline_inputs_source)
+        # Import the already frozen pre-rename input catalog into the new
+        # builder metadata; the source view and its checksum remain untouched.
+        if offline.get("schema") == "airlock.sys-dev-offline-inputs.v1":
+            offline = dict(offline, schema="airlock.sys-agent-offline-inputs.v1")
+            offline_bytes = (json.dumps(offline, sort_keys=True) + "\n").encode()
         if (
-            offline.get("schema") != "airlock.sys-dev-offline-inputs.v1"
+            offline.get("schema") != "airlock.sys-agent-offline-inputs.v1"
             or not isinstance(offline.get("inputs"), dict)
             or not offline["inputs"]
         ):
@@ -206,10 +212,10 @@ def prepare_builder(root, admission, registration, offline_inputs_source=None, p
     core.atomic_json(root / f"builders/{role}.json", manifest["builder"])
 
 
-def builder_volume_configs(root, pool_name, *, domain="sys-dev", physical_root=None):
+def builder_volume_configs(root, pool_name, *, domain="sys-agent", physical_root=None):
     """Validated boot volumes for an image-seeded builder role."""
     root = Path(root)
-    if domain not in ("sys-dev", "sys-ctrl"):
+    if domain not in ("sys-agent", "sys-ctrl"):
         core.fail("invalid builder domain")
     builder_domain = f"{domain}-builder"
 

@@ -32,7 +32,7 @@ def configuration(tmp_path, monkeypatch):
                 "features": {"airlock-managed": "1"},
                 "backend": {"type": "nix-closure"},
             }
-            for name in ("sys-gui", "sys-dev", "usr-home")
+            for name in ("sys-gui", "sys-agent", "usr-home")
         },
     }
     xml = tmp_path / "qubes.xml"
@@ -142,7 +142,7 @@ def test_initialization_prepares_gui_before_unrelated_autostart_vms(configuratio
     assert not (c.manager.system / "current-topology.json").exists()
     c.manager.configure("setup", ["--apply"], gui=False)
     assert set(boot.read_json(setup_calls(c)[1][-1])["domains"]) == {
-        "sys-dev",
+        "sys-agent",
         "usr-home",
     }
     assert boot.read_json(c.manager.system / "current-topology.json") == c.topology
@@ -265,12 +265,12 @@ def test_gui_inherits_default_netvm_when_not_explicitly_disabled(configuration):
 def test_foreign_volume_cannot_alias_gui_private_disk(configuration):
     c = configuration
     c.manager.configure("setup", ["--apply"], gui=True)
-    c.provision("sys-dev")
+    c.provision("sys-agent")
     tree = ET.parse(c.xml)
     foreign = next(
         d
         for d in tree.getroot().find("domains")
-        if d.findtext("properties/property[@name='name']") == "sys-dev"
+        if d.findtext("properties/property[@name='name']") == "sys-agent"
     ).find("volume-config")
     ET.SubElement(
         foreign, "volume", name="stolen", pool="file", source="sys-gui-private"

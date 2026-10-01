@@ -38,6 +38,13 @@ def validate_release_topology(release, topology) -> None:
         raise DeploymentError("invalid retired domain list")
     if set(retire) & set(topology["domains"]):
         raise DeploymentError("retired domains must be absent from the topology")
+    copies = release.get("privateVolumeCopies", {})
+    if (not isinstance(copies, dict) or any(
+            not isinstance(target, str) or not re.fullmatch(r"[A-Za-z0-9_.-]+", target)
+            or not isinstance(source, str) or source not in retire
+            or target not in topology["domains"] or target == source
+            for target, source in copies.items())):
+        raise DeploymentError("invalid private volume copy map")
     retention = release.get("trashRetentionDays", DEFAULT_TRASH_RETENTION_DAYS)
     if not isinstance(retention, int) or not 1 <= retention <= 3650:
         raise DeploymentError("trash retention must be between 1 and 3650 days")
@@ -75,7 +82,7 @@ def validate_staged_generation(
     approval = info.get("approval", {})
     provenance = info.get("provenance", {})
     if (
-        approval.get("approved_by") not in {"sys-dev", "sys-ctrl"}
+        approval.get("approved_by") not in {"sys-agent", "sys-ctrl"}
         or approval.get("transport") != "qrexec"
         or approval.get("source") != store["source"]
     ):

@@ -38,11 +38,12 @@ class DeploymentPlan(TypedDict):
     retirement: NotRequired[list[RetirementDetail]]
     host_reboot_required: NotRequired[bool]
     revision: NotRequired[str]
+    private_copies: NotRequired[list[dict[str, Any]]]
 
 
 DeploymentPhase = Literal[
     "preflight", "staging", "host-boot-preparation", "stopping", "retiring", "configuring",
-    "host-boot-selection", "starting", "verifying", "reboot-required",
+    "host-boot-selection", "copying-private", "starting", "verifying", "reboot-required",
     "complete", "failed",
 ]
 

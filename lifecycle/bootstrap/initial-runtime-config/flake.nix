@@ -143,12 +143,12 @@
             "sys-firewall"
             "sys-gui"
             "sys-net"
-            "sys-dev"
+            "sys-agent"
           ]
         then
           role
         else
-          throw "airlock.nixNative.${path}.role: expected one of base, cmd, sys-dev, sys-firewall, sys-gui, sys-net";
+          throw "airlock.nixNative.${path}.role: expected one of base, cmd, sys-agent, sys-firewall, sys-gui, sys-net";
       checkedNixNative =
         let
           checked = checkNixNativeKeys "" [ "domains" ] (

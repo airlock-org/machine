@@ -53,7 +53,7 @@ def test_boot_extracts_exact_host_and_specialisation_identity():
 
 
 def load_builder():
-    spec = importlib.util.spec_from_file_location("builder_mount", ROOT / "lifecycle/runtime/tools/scripts/sys-dev-build-store.py")
+    spec = importlib.util.spec_from_file_location("builder_mount", ROOT / "lifecycle/runtime/tools/scripts/sys-agent-build-store.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -74,6 +74,35 @@ def test_offline_additive_transition_preserves_upper_and_refuses_unknown_base(tm
     with pytest.raises(RuntimeError, match="base changed"):
         mount.record_base(tmp_path, previous)
     assert json.loads((tmp_path / "base.json").read_text()) == successor
+
+
+def test_cloned_builder_archives_former_role_without_reusing_its_upper(tmp_path):
+    mount = load_builder()
+    state = tmp_path / "airlock-builder"
+    state.mkdir()
+    previous = {"domain": "former-builder", "generation": 1}
+    (state / "base.json").write_text(json.dumps(previous))
+    (state / "upper").mkdir()
+    (state / "upper/saved-output").write_text("preserved")
+    identity = {"domain": "sys-agent-builder", "generation": 1}
+    mount.archive_foreign_base(state, identity)
+    mount.record_base(state, identity)
+    archive = tmp_path / "airlock-builder-former-builder"
+    assert (archive / "upper/saved-output").read_text() == "preserved"
+    assert not (state / "upper").exists()
+    mount.archive_foreign_base(state, identity)
+    assert json.loads((state / "base.json").read_text()) == identity
+
+
+def test_cloned_builder_refuses_to_replace_an_existing_archive(tmp_path):
+    mount = load_builder()
+    state = tmp_path / "airlock-builder"
+    state.mkdir()
+    (state / "base.json").write_text(json.dumps({"domain": "former-builder"}))
+    (tmp_path / "airlock-builder-former-builder").mkdir()
+    with pytest.raises(RuntimeError, match="archive already exists"):
+        mount.archive_foreign_base(state, {"domain": "sys-agent-builder"})
+    assert (state / "base.json").exists()
 
 
 def publication(tmp_path, monkeypatch):

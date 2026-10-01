@@ -144,7 +144,7 @@ def test_packaged_start_helper_finds_supervisor_with_minimal_path(tmp_path):
     boot_id.write_text("packaged-boot\n")
     topology = tmp_path / "topology.json"
     topology.write_text(
-        '{"domains":{"sys-dev":{"backend":{"system":{"source":"/nix/store/expected"}}}}}'
+        '{"domains":{"sys-agent":{"backend":{"system":{"source":"/nix/store/expected"}}}}}'
     )
     for name in ("qvm-start", "qvm-check", "qvm-ls"):
         executable(tmp_path / "bin" / name, "#!/bin/sh\nexit 0\n")
@@ -164,7 +164,7 @@ def test_packaged_start_helper_finds_supervisor_with_minimal_path(tmp_path):
             'export PATH=/nonexistent; exec "$@"',
             "sh",
             str(package / "bin/airlock-start-qube-ready"),
-            "sys-dev",
+            "sys-agent",
             str(topology),
         ],
         env=env,
@@ -189,7 +189,7 @@ def test_qube_start_requires_qrexec_and_exact_generation(tmp_path):
         json.dumps(
             {
                 "domains": {
-                    "sys-dev": {
+                    "sys-agent": {
                         "backend": {"system": {"source": "/nix/store/expected-system"}}
                     }
                 }
@@ -222,7 +222,7 @@ def test_qube_start_requires_qrexec_and_exact_generation(tmp_path):
         "AIRLOCK_BOOT_ATTEMPT_LOG_DIR": str(tmp_path / "logs"),
     }
     result = subprocess.run(
-        ["bash", str(START_READY), "sys-dev", str(topology)],
+        ["bash", str(START_READY), "sys-agent", str(topology)],
         env=env,
         capture_output=True,
         text=True,
@@ -231,9 +231,9 @@ def test_qube_start_requires_qrexec_and_exact_generation(tmp_path):
     )
     assert result.returncode == 0, result.stderr
     trace = calls.read_text()
-    assert "qvm-start --skip-if-running -- sys-dev" in trace
-    assert "qrexec-client -d sys-dev user:readlink -f /run/current-system" in trace
-    assert "sys-dev is qrexec-ready on /nix/store/expected-system" in trace
+    assert "qvm-start --skip-if-running -- sys-agent" in trace
+    assert "qrexec-client -d sys-agent user:readlink -f /run/current-system" in trace
+    assert "sys-agent is qrexec-ready on /nix/store/expected-system" in trace
 
 
 def test_wrong_guest_generation_fails_and_is_recorded(tmp_path):

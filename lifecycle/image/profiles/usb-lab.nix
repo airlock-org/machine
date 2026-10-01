@@ -2,31 +2,32 @@
 {
   imports = [ ./usb-gui-lab.nix ];
 
-  # sys-dev remains the intentionally privileged Tailnet entry point.
+  # sys-agent remains the intentionally privileged Tailnet entry point.
   airlock.devDom0Terminal = {
     host.enable = true;
-    callers = lib.mkForce [ "sys-dev" ];
+    callers = lib.mkForce [ "sys-agent" ];
   };
   airlock.poolAdmission = {
     enable = true;
     caller = "sys-ctrl";
     targets = [
       "sys-gui"
-      "sys-dev"
+      "sys-agent"
       "sys-ctrl"
       "sys-net"
       "sys-firewall"
       "usr-home"
     ];
   };
-  airlock.machineDeployment.retireDomains = [ "usr-browser" ];
+  airlock.machineDeployment.retireDomains = [ "usr-browser" "sys-dev" ];
+  airlock.machineDeployment.privateVolumeCopies.sys-agent = "sys-dev";
   networking.networkmanager.enable = lib.mkForce false;
   services.tailscale.enable = lib.mkForce false;
   services.openssh.enable = lib.mkForce false;
 
   virtualisation.qubes.packages = [
     (pkgs.writeTextDir "etc/qubes/policy.d/40-airlock-dev-tailscale.policy" ''
-      airlock.DevTailscaleUp + sys-gui sys-dev allow user=root
+      airlock.DevTailscaleUp + sys-gui sys-agent allow user=root
       airlock.DevTailscaleUp * @anyvm @anyvm deny
     '')
   ];
@@ -38,8 +39,8 @@
 
   environment.etc."airlock/usb-lab".text = ''
     experimental general USB lab
-    sys-net owns physical networking; sys-dev provides Tailnet development access through sys-firewall
-    run: tailscale ssh user@sys-dev; then airlock-dom0-shell
+    sys-net owns physical networking; sys-agent provides Tailnet development access through sys-firewall
+    run: tailscale ssh user@sys-agent; then airlock-dom0-shell
   '';
   environment.etc."airlock/boot-role".text = "normal\n";
 }

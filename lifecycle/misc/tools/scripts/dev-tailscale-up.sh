@@ -3,13 +3,13 @@ set -eu
 [ "${QREXEC_REMOTE_DOMAIN:-}" = sys-gui ] || exit 1
 [ -z "${QREXEC_SERVICE_ARGUMENT:-}" ] || exit 1
 
-printf 'Checking the Internet connection from sys-dev...\n'
+printf 'Checking the Internet connection from sys-agent...\n'
 if [ -z "$(ip -4 route show default)" ]; then
-  echo 'No network route in sys-dev. Check sys-net and sys-firewall, then retry.' >&2
+  echo 'No network route in sys-agent. Check sys-net and sys-firewall, then retry.' >&2
   exit 1
 fi
 if ! timeout --kill-after=2s 5s getent ahostsv4 controlplane.tailscale.com >/dev/null; then
-  echo 'DNS is not working from sys-dev. Check the connection and DNS in sys-net and sys-firewall, then retry.' >&2
+  echo 'DNS is not working from sys-agent. Check the connection and DNS in sys-net and sys-firewall, then retry.' >&2
   exit 1
 fi
 if ! curl --silent --show-error --output /dev/null --connect-timeout 5 --max-time 15 https://controlplane.tailscale.com/; then

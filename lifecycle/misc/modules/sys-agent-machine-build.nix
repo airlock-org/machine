@@ -1,21 +1,21 @@
 { config, lib, pkgs, ... }:
 let
   cfg = config.airlock.qubeGuest;
-  role = cfg.role or "sys-dev";
+  role = cfg.role or "sys-agent";
   repo = "/home/${cfg.user}/dev/airlock-machine";
   state = "/home/${cfg.user}/.local/share/airlock/machine-build";
   cache = "/home/${cfg.user}/.cache/airlock-machine-source";
-  sourceTool = pkgs.writeShellScriptBin "airlock-sys-dev-machine-source" ''
+  sourceTool = pkgs.writeShellScriptBin "airlock-sys-agent-machine-source" ''
     set -eu
 
     usage() {
       printf '%s\n' \
-        'usage: airlock-sys-dev-machine-source import --revision REV --lock-hash HASH < source.tar.gz' \
-        '       airlock-sys-dev-machine-source status'
+        'usage: airlock-sys-agent-machine-source import --revision REV --lock-hash HASH < source.tar.gz' \
+        '       airlock-sys-agent-machine-source status'
     }
 
     fail() {
-      printf 'airlock-sys-dev-machine-source: %s\n' "$*" >&2
+      printf 'airlock-sys-agent-machine-source: %s\n' "$*" >&2
       exit 1
     }
 
@@ -37,10 +37,10 @@ let
             --arg seedRevision "$(${pkgs.gitMinimal}/bin/git -C ${lib.escapeShellArg repo} config --get airlock.seedRevision || true)" \
             --arg seedLockHash "$(${pkgs.gitMinimal}/bin/git -C ${lib.escapeShellArg repo} config --get airlock.seedLockHash || true)" \
             --argjson dirty "$dirty" \
-            '{schema: "airlock.sys-dev-machine-source-status.v1", present: true, repo: $repo, revision: $revision, lock_hash: $lockHash, seed_revision: $seedRevision, seed_lock_hash: $seedLockHash, dirty_paths: $dirty}'
+            '{schema: "airlock.sys-agent-machine-source-status.v1", present: true, repo: $repo, revision: $revision, lock_hash: $lockHash, seed_revision: $seedRevision, seed_lock_hash: $seedLockHash, dirty_paths: $dirty}'
         else
           ${pkgs.jq}/bin/jq -n --arg repo ${lib.escapeShellArg repo} \
-            '{schema: "airlock.sys-dev-machine-source-status.v1", present: false, repo: $repo}'
+            '{schema: "airlock.sys-agent-machine-source-status.v1", present: false, repo: $repo}'
         fi
         ;;
       import)
@@ -78,7 +78,7 @@ let
         done
         ${pkgs.gnutar}/bin/tar -xzf "$archive" -C "$temp" --no-same-owner --no-same-permissions
         [ -f "$temp/manifest.json" ] && [ -f "$temp/repo.bundle" ] || fail 'source archive is incomplete'
-        [ "$(${pkgs.jq}/bin/jq -r '.schema // empty' "$temp/manifest.json")" = 'airlock.sys-dev-machine-source.v1' ] || fail 'unsupported source archive schema'
+        [ "$(${pkgs.jq}/bin/jq -r '.schema // empty' "$temp/manifest.json")" = 'airlock.sys-agent-machine-source.v1' ] || fail 'unsupported source archive schema'
         [ "$(${pkgs.jq}/bin/jq -r '.revision // empty' "$temp/manifest.json")" = "$expected_revision" ] || fail 'archive revision differs from requested revision'
         [ "$(${pkgs.jq}/bin/jq -r '.lock_hash // empty' "$temp/manifest.json")" = "$expected_lock_hash" ] || fail 'archive lock hash differs from requested lock hash'
         verify_repo="$temp/verify"
@@ -108,7 +108,7 @@ let
         ;;
     esac
   '';
-  buildTool = pkgs.writeShellScriptBin "airlock-sys-dev-machine-build" ''
+  buildTool = pkgs.writeShellScriptBin "airlock-sys-agent-machine-build" ''
     set -euo pipefail
     # build_installable runs inside command substitution during admission.
     # Bash otherwise clears errexit there and can hide a failed/interrupted build.
@@ -121,13 +121,13 @@ let
 
     usage() {
       printf '%s\n' \
-        'usage: airlock-sys-dev-machine-build preflight [--offline]' \
-        '       airlock-sys-dev-machine-build build [--offline] [.#INSTALLABLE]' \
-        '       airlock-sys-dev-machine-build admit [--offline] TARGET [.#INSTALLABLE]'
+        'usage: airlock-sys-agent-machine-build preflight [--offline]' \
+        '       airlock-sys-agent-machine-build build [--offline] [.#INSTALLABLE]' \
+        '       airlock-sys-agent-machine-build admit [--offline] TARGET [.#INSTALLABLE]'
     }
 
     fail() {
-      printf 'airlock-sys-dev-machine-build: %s\n' "$*" >&2
+      printf 'airlock-sys-agent-machine-build: %s\n' "$*" >&2
       exit 1
     }
 
@@ -151,7 +151,7 @@ let
       expected_lock="$(${pkgs.jq}/bin/jq -er '.lock_hash' "$manifest")"
       actual_lock="$(${pkgs.coreutils}/bin/sha256sum "$repo/flake.lock" | ${pkgs.gawk}/bin/awk '{print $1}')"
       [ "$expected_lock" = "$actual_lock" ] || fail 'checkout flake.lock differs from the image offline inputs'
-      [ "$(${pkgs.jq}/bin/jq -er '.schema' "$manifest")" = airlock.sys-dev-offline-inputs.v1 ] || fail 'invalid offline input manifest'
+      [ "$(${pkgs.jq}/bin/jq -er '.schema' "$manifest")" = airlock.sys-agent-offline-inputs.v1 ] || fail 'invalid offline input manifest'
       local name path
       while IFS="$(printf '\t')" read -r name path; do
         case "$path" in
@@ -189,7 +189,7 @@ let
         --arg storeRoot "$store_root" \
         --argjson availableBytes "$available" \
         --argjson offlineReady "$offline_ready" \
-        '{schema: "airlock.sys-dev-machine-build-preflight.v1", repo: $repo, revision: $revision, lock_hash: $lockHash, store_root: $storeRoot, available_bytes: $availableBytes, offline_inputs_ready: $offlineReady}'
+        '{schema: "airlock.sys-agent-machine-build-preflight.v1", repo: $repo, revision: $revision, lock_hash: $lockHash, store_root: $storeRoot, available_bytes: $availableBytes, offline_inputs_ready: $offlineReady}'
     }
 
     build_installable() {
@@ -278,7 +278,7 @@ let
       --option build-hook "" --store "$store_uri" "$@"
   '';
   deployTool = pkgs.writeShellApplication {
-    name = "airlock-sys-dev-machine-deploy";
+    name = "airlock-sys-agent-machine-deploy";
     runtimeInputs = [
       configNixStore
       pkgs.coreutils
@@ -289,7 +289,7 @@ let
       pkgs.python3.pkgs.qubes-core-qrexec.domU
     ];
     text = ''
-      exec ${pkgs.python3}/bin/python3 ${../../runtime/tools/sys-dev-machine-deploy.py} "$@"
+      exec ${pkgs.python3}/bin/python3 ${../../runtime/tools/sys-agent-machine-deploy.py} "$@"
     '';
   };
   ctrlDeploy = pkgs.writeShellApplication {
@@ -312,7 +312,7 @@ in
     ctrlDeploy
     pkgs.gitMinimal
     pkgs.gnutar
-  ] ++ (if role == "sys-dev" then [ deployTool ] else [ ]);
+  ] ++ (if role == "sys-agent" then [ deployTool ] else [ ]);
   systemd.services.airlock-controller-observe = lib.mkIf (role == "sys-ctrl") {
     description = "Record authoritative dom0 deployment outcomes";
     after = [ "qubes-qrexec-agent.service" ];
@@ -329,7 +329,7 @@ in
   };
   environment.etc."qubes-rpc/airlock.Ctrl.GuestDeploy" = lib.mkIf (role == "sys-ctrl") {
     source = pkgs.writeShellScript "airlock-ctrl-guest-deploy-qrexec" ''
-      [ "''${QREXEC_REMOTE_DOMAIN:-}" = sys-dev ] || exit 1
+      [ "''${QREXEC_REMOTE_DOMAIN:-}" = sys-agent ] || exit 1
       exec ${ctrlDeploy}/bin/airlock-sys-ctrl-guest-deploy serve
     '';
     mode = "0555";

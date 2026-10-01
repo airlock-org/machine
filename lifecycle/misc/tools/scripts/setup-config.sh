@@ -893,7 +893,7 @@ list_auto_network_pci_devices() {
   list_dom0_network_pci_devices > "$network_devices_file"
   {
     # A conventional sys-net must not take dom0's active recovery route during
-    # ordinary setup. sys-dev is the USB-lab transition domain, however: it is
+    # ordinary setup. sys-agent is the USB-lab transition domain, however: it is
     # specifically meant to take that NIC so dom0 can be shut down later.
     if [ "$domain" = "sys-net" ]; then
       list_dom0_default_route_pci_devices
@@ -1861,7 +1861,7 @@ setup_nix_closure_domain() {
   fi
   if [ -n "$staged_generation" ]; then
     # The root-owned coordinator has already validated and retained this exact
-    # pool generation. Its original closure descriptor may live in sys-dev.
+    # pool generation. Its original closure descriptor may live in sys-agent.
     store_artifact="$store_source"
   else
     store_artifact="$(resolve_store_artifact "$store_source")"

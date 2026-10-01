@@ -27,7 +27,7 @@ def is_mountpoint(path, mountinfo=Path("/proc/self/mountinfo")):
     return False
 
 
-def read_identity(metadata, domain="sys-dev"):
+def read_identity(metadata, domain="sys-agent"):
     identity = json.loads((metadata / "identity.json").read_text())
     registration = (metadata / "registration").read_bytes()
     if (
@@ -75,6 +75,29 @@ def record_base(state, identity):
         os.close(fd)
 
 
+def archive_foreign_base(state, identity):
+    """Keep a cloned builder's former upper separate from the new role's base."""
+    target = state / "base.json"
+    if not target.exists():
+        return
+    previous = json.loads(target.read_text())
+    domain = previous.get("domain")
+    if domain == identity["domain"]:
+        return
+    if not isinstance(domain, str) or not re.fullmatch(r"[A-Za-z0-9_-]+-builder", domain):
+        raise RuntimeError("invalid inherited builder domain")
+    archive = state.with_name(state.name + "-" + domain)
+    if archive.exists():
+        raise RuntimeError("inherited builder archive already exists; preserve both layers")
+    state.rename(archive)
+    state.mkdir(mode=0o755)
+    fd = os.open(state.parent, os.O_DIRECTORY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
 def overlay_uri(runtime, state):
     lower = f"local?root={runtime}/lower&read-only=true"
     return (
@@ -112,8 +135,9 @@ def start(args):
             args.store_device,
         )
         identity, registration = read_identity(
-            pool / ".airlock-builder", getattr(args, "domain", "sys-dev")
+            pool / ".airlock-builder", getattr(args, "domain", "sys-agent")
         )
+        archive_foreign_base(state, identity)
         record_base(state, identity)
         lower = runtime / "lower"
         # Nix reads .drv contents during --load-db. Expose the sealed objects
@@ -190,7 +214,7 @@ def main():
     parser.add_argument("--state", default="/rw/airlock-builder")
     parser.add_argument("--runtime", default="/run/airlock-builder")
     parser.add_argument("--user", default="user")
-    parser.add_argument("--domain", choices=("sys-dev", "sys-ctrl"), default="sys-dev")
+    parser.add_argument("--domain", choices=("sys-agent", "sys-ctrl"), default="sys-agent")
     parser.add_argument("--store-device", default="/dev/xvdg")
     parser.add_argument("--blob-device", default="/dev/xvdh")
     parser.add_argument("--nix-store", default="nix-store")

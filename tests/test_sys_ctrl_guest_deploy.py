@@ -16,7 +16,7 @@ SPEC.loader.exec_module(DEPLOY)
 
 def test_controller_rejects_unapproved_caller_before_reading_input(monkeypatch):
     monkeypatch.setenv("QREXEC_REMOTE_DOMAIN", "usr-browser")
-    with pytest.raises(ValueError, match="only sys-dev"):
+    with pytest.raises(ValueError, match="only sys-agent"):
         DEPLOY.serve()
 
 
@@ -27,7 +27,7 @@ def test_submission_rejects_non_guest_targets_before_bundling(target, tmp_path):
 
 
 def test_controller_rejects_unversioned_request_before_import(monkeypatch):
-    monkeypatch.setenv("QREXEC_REMOTE_DOMAIN", "sys-dev")
+    monkeypatch.setenv("QREXEC_REMOTE_DOMAIN", "sys-agent")
     monkeypatch.setattr(DEPLOY.sys, "stdin", io.TextIOWrapper(io.BytesIO(b'{}\n')))
     with pytest.raises(ValueError, match="unsupported request schema"):
         DEPLOY.serve()

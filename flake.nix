@@ -214,8 +214,8 @@
         mkHomeVmDomainEntry
         mkSysFirewallDomainEntry
         mkSysGuiDomainEntry
-        mkSysDevDomainEntry
-        mkSysDevDomainEntryWith
+        mkSysAgentDomainEntry
+        mkSysAgentDomainEntryWith
         mkSysCtrlDomainEntry
         mkSysCtrlDomainEntryWith
         mkSysNetDomainEntry
@@ -227,7 +227,7 @@
           bootstrapDomainEntriesSource = mkBootstrapDomains networkDebug;
           bootstrapDomainEntries = {
             sys-ctrl = bootstrapDomainEntriesSource.mkSysCtrlDomainEntry system;
-            sys-dev = bootstrapDomainEntriesSource.mkSysDevDomainEntry system;
+            sys-agent = bootstrapDomainEntriesSource.mkSysAgentDomainEntry system;
             usr-cmd = bootstrapDomainEntriesSource.mkCmdVmDomainEntry system;
             usr-home = bootstrapDomainEntriesSource.mkHomeVmDomainEntry system;
             sys-net = bootstrapDomainEntriesSource.mkSysNetDomainEntry system;
@@ -246,9 +246,9 @@
         inherit airlockConfigInputs;
       };
 
-      mkPoolAdmissionTestSysDev = system:
+      mkPoolAdmissionTestSysAgent = system:
         let
-          entry = bootstrapDomains.mkSysDevDomainEntry system;
+          entry = bootstrapDomains.mkSysAgentDomainEntry system;
         in
         materializeNixClosureDomain (entry // {
           domain = entry.domain // {
@@ -289,7 +289,7 @@
               }
               // lib.optionalAttrs poolAdmissionTest {
                 airlockConfigDomains = (mkBootstrapConfigDomains system networkDebug) // {
-                  sys-dev = mkPoolAdmissionTestSysDev system;
+                  sys-agent = mkPoolAdmissionTestSysAgent system;
                 };
               }
             )
@@ -315,8 +315,8 @@
             {
               airlock.poolAdmission = {
                 enable = true;
-                caller = "sys-dev";
-                targets = [ "sys-dev" ];
+                caller = "sys-agent";
+                targets = [ "sys-agent" ];
               };
               environment.systemPackages = [ machineDeploy ];
               environment.etc."airlock/machine-profile".text = "vm-pool-admission-test\n";
@@ -391,7 +391,7 @@
                 displayMode = "physical-amd-lab";
                 physicalDesktopOnBoot = true;
                 personalLaunchers.enable = personalLaunchers;
-                sysDevTailscaleShortcut.enable = personalLaunchers && !directDom0Terminal;
+                sysAgentTailscaleShortcut.enable = personalLaunchers && !directDom0Terminal;
               };
               airlock.devDom0Terminal.guest.enable = directDom0Terminal;
               hardware.enableRedistributableFirmware = true;
@@ -409,7 +409,7 @@
           sys-gui-hybrid = mkUsbSysGuiDomainEntry system;
           sys-gui-standalone = mkUsbAmdSysGuiDomainEntry system "gnome" false true;
           sys-gui = mkUsbAmdSysGuiDomainEntry system "gnome" true false;
-          sys-dev = (bootstrapDomains.mkSysDevDomainEntryWith system { inherit extraSpecialArgs; }) // { preparedDomainName = "sys-dev"; };
+          sys-agent = (bootstrapDomains.mkSysAgentDomainEntryWith system { inherit extraSpecialArgs; }) // { preparedDomainName = "sys-agent"; };
           sys-net = (bootstrapDomains.mkSysNetDomainEntry system) // { preparedDomainName = "sys-net"; };
           sys-firewall = (bootstrapDomains.mkSysFirewallDomainEntry system) // { preparedDomainName = "sys-firewall"; };
           sys-ctrl = (bootstrapDomains.mkSysCtrlDomainEntryWith system { inherit extraSpecialArgs; }) // { preparedDomainName = "sys-ctrl"; };
@@ -515,7 +515,7 @@
                     }
                   ];
                 };
-                sys-dev = machineDomain "sys-dev";
+                sys-agent = machineDomain "sys-agent";
                 sys-net = machineDomain "sys-net";
                 sys-firewall = machineDomain "sys-firewall";
                 sys-ctrl = machineDomain "sys-ctrl";
@@ -831,8 +831,8 @@
         (networkDebugBootstrapDomains.mkSysNetDomainEntry "x86_64-linux").configuration;
       nixosConfigurations.airlock-domain-sys-firewall =
         (mkSysFirewallDomainEntry "x86_64-linux").configuration;
-      nixosConfigurations.airlock-domain-sys-dev =
-        (mkSysDevDomainEntry "x86_64-linux").configuration;
+      nixosConfigurations.airlock-domain-sys-agent =
+        (mkSysAgentDomainEntry "x86_64-linux").configuration;
       nixosConfigurations.airlock-domain-sys-ctrl =
         (mkSysCtrlDomainEntry "x86_64-linux").configuration;
       nixosConfigurations.airlock-domain-usr-home =

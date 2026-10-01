@@ -13,8 +13,8 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location(
-    "sys_dev_machine_deploy",
-    ROOT / "lifecycle/runtime/tools/sys-dev-machine-deploy.py",
+    "sys_agent_machine_deploy",
+    ROOT / "lifecycle/runtime/tools/sys-agent-machine-deploy.py",
 )
 DEPLOY = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(DEPLOY)
@@ -146,7 +146,7 @@ def test_build_pins_release_and_checks_committed_provenance(tmp_path, monkeypatc
     receipt = DEPLOY.build("usb-lab", repo, state)
 
     assert receipt == {
-        "schema": "airlock.sys-dev-machine-release.v1",
+        "schema": "airlock.sys-agent-machine-release.v1",
         "revision": manifest["revision"],
         "lock_hash": manifest["lockHash"],
         "profile": "usb-lab",
@@ -227,7 +227,7 @@ def test_transfer_exports_only_paths_missing_from_dom0(tmp_path, monkeypatch):
 
     class ReadingTransferSession(TransferSession):
         def run(self, script, timeout=60):
-            if "qrexec-client -d sys-dev" in script:
+            if "qrexec-client -d sys-agent" in script:
                 self.commands.append((script, timeout))
                 # Reproduce a fast, one-path export that finishes before qrexec
                 # starts opening the FIFO. The writer must wait for this reader.
@@ -246,7 +246,7 @@ def test_transfer_exports_only_paths_missing_from_dom0(tmp_path, monkeypatch):
     assert arguments.read_text().splitlines() == ["--export", added]
     assert session.payload == b"payload"
     transfer_command, timeout = session.commands[-1]
-    assert "qrexec-client -d sys-dev" in transfer_command
+    assert "qrexec-client -d sys-agent" in transfer_command
     assert "gzip -dc" in transfer_command
     assert "nix-store --import" in transfer_command
     assert timeout == 3600
