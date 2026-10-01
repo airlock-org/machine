@@ -56,7 +56,7 @@ in
       {
         service = "airlock.OpenUrl";
         source = "sys-gui";
-        target = "usr-browser";
+        target = "usr-home";
         action = "allow";
       }
     ];

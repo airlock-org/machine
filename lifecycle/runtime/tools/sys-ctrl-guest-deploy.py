@@ -17,7 +17,7 @@ import time
 
 SCHEMA = "airlock.sys-ctrl-guest-request.v1"
 SOURCE_SCHEMA = "airlock.sys-dev-machine-source.v1"
-TARGETS = {"sys-dev", "sys-ctrl", "sys-gui", "sys-net", "sys-firewall", "usr-home", "usr-browser"}
+TARGETS = {"sys-dev", "sys-ctrl", "sys-gui", "sys-net", "sys-firewall", "usr-home"}
 REPO = Path("/home/user/dev/airlock-machine")
 MACHINE_SCHEMA = "airlock.sys-ctrl-machine-release.v2"
 STATE = Path.home() / ".local/share/airlock/controller"

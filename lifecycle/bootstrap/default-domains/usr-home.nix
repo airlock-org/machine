@@ -2,11 +2,11 @@
   guestHostName = "usr-home";
   label = "blue";
   rootImageSizeMiB = 1024;
-  netvm = null;
+  netvm = "sys-firewall";
   prefs = {
     # Reconcile an existing explicit guivm=None as well as fresh VM defaults.
     guivm = "sys-gui";
-    # Keep the offline desktop-work VM ready alongside sys-gui. Its applications
+    # Keep the connected default personal VM ready alongside sys-gui. Its applications
     # own the user's files and shell state while their windows render in sys-gui.
     autostart = true;
     include_in_backups = true;

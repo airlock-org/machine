@@ -212,7 +212,6 @@
         materializeNixClosureDomain
         mkCmdVmDomainEntry
         mkHomeVmDomainEntry
-        mkBrowserVmDomainEntry
         mkSysFirewallDomainEntry
         mkSysGuiDomainEntry
         mkSysDevDomainEntry
@@ -231,7 +230,6 @@
             sys-dev = bootstrapDomainEntriesSource.mkSysDevDomainEntry system;
             usr-cmd = bootstrapDomainEntriesSource.mkCmdVmDomainEntry system;
             usr-home = bootstrapDomainEntriesSource.mkHomeVmDomainEntry system;
-            usr-browser = bootstrapDomainEntriesSource.mkBrowserVmDomainEntry system;
             sys-net = bootstrapDomainEntriesSource.mkSysNetDomainEntry system;
             sys-firewall = bootstrapDomainEntriesSource.mkSysFirewallDomainEntry system;
             sys-gui = bootstrapDomainEntriesSource.mkSysGuiDomainEntry system;
@@ -416,7 +414,6 @@
           sys-firewall = (bootstrapDomains.mkSysFirewallDomainEntry system) // { preparedDomainName = "sys-firewall"; };
           sys-ctrl = (bootstrapDomains.mkSysCtrlDomainEntryWith system { inherit extraSpecialArgs; }) // { preparedDomainName = "sys-ctrl"; };
           usr-home = (bootstrapDomains.mkHomeVmDomainEntry system) // { preparedDomainName = "usr-home"; };
-          usr-browser = (bootstrapDomains.mkBrowserVmDomainEntry system) // { preparedDomainName = "usr-browser"; };
         };
 
       machineGuestEntries = system: mkMachineGuestEntries system { };
@@ -523,7 +520,6 @@
                 sys-firewall = machineDomain "sys-firewall";
                 sys-ctrl = machineDomain "sys-ctrl";
                 usr-home = machineDomain "usr-home";
-                usr-browser = machineDomain "usr-browser";
               };
             };
           })
@@ -841,8 +837,6 @@
         (mkSysCtrlDomainEntry "x86_64-linux").configuration;
       nixosConfigurations.airlock-domain-usr-home =
         (mkHomeVmDomainEntry "x86_64-linux").configuration;
-      nixosConfigurations.airlock-domain-usr-browser =
-        (mkBrowserVmDomainEntry "x86_64-linux").configuration;
       nixosConfigurations.airlock-domain-sys-gui = (mkSysGuiDomainEntry "x86_64-linux").configuration;
     };
 }

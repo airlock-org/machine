@@ -58,7 +58,7 @@
         "${airlockSupport}/lifecycle/misc/modules/usr-home-guest.nix"
       ];
       label = "blue";
-      netvm = null;
+      netvm = "sys-firewall";
       rootImageSizeMiB = 1024;
       prefs = {
         guivm = "sys-gui";
@@ -74,28 +74,6 @@
       };
       services."network-manager" = false;
       state.persistentSize = 17179869184;
-    };
-    usr-browser = {
-      role = "base";
-      configuration.imports = [
-        "${airlockSupport}/lifecycle/misc/modules/usr-browser-guest.nix"
-      ];
-      label = "yellow";
-      netvm = "sys-firewall";
-      rootImageSizeMiB = 1024;
-      prefs = {
-        guivm = "sys-gui";
-        include_in_backups = true;
-        memory = 2048;
-        maxmem = 4096;
-        vcpus = 2;
-      };
-      features = {
-        "airlock-role" = "usr-browser";
-        "menu-items" = "";
-      };
-      services."network-manager" = false;
-      state.persistentSize = 8589934592;
     };
     usr-cmd = {
       role = "cmd";
@@ -217,7 +195,7 @@
       {
         service = "airlock.OpenUrl";
         source = "sys-gui";
-        target = "usr-browser";
+        target = "usr-home";
         action = "allow";
       }
     ];

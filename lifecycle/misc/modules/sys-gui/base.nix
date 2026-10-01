@@ -127,11 +127,11 @@ let
   browserLauncher = pkgs.writeShellScriptBin "airlock-launch-browser" ''
     set -eu
     if [ "$#" -eq 0 ]; then
-      exec ${appLauncher}/bin/airlock-launch-qube-app Firefox usr-browser qubes.StartApp+firefox
+      exec ${appLauncher}/bin/airlock-launch-qube-app Firefox usr-home qubes.StartApp+firefox
     fi
     # URI activation is deliberately a separate fixed RPC, rather than a
     # general shell capability from sys-gui into the browser domain.
-    exec ${appLauncher}/bin/airlock-launch-qube-app Firefox usr-browser "airlock.OpenUrl+$1"
+    exec ${appLauncher}/bin/airlock-launch-qube-app Firefox usr-home "airlock.OpenUrl+$1"
   '';
   browserDesktop = pkgs.makeDesktopItem {
     name = "firefox";
@@ -139,7 +139,7 @@ let
     genericName = "Web Browser";
     exec = "airlock-launch-browser %u";
     icon = "firefox";
-    startupWMClass = "usr-browser:firefox";
+    startupWMClass = "usr-home:firefox";
     categories = [ "Network" "WebBrowser" ];
     mimeTypes = [
       "x-scheme-handler/http"
@@ -315,7 +315,7 @@ in
   options.airlock.sysGuiGuest.personalLaunchers.enable = lib.mkOption {
     type = lib.types.bool;
     default = true;
-    description = "Install Files and Terminal launchers for usr-home and a Firefox launcher for usr-browser.";
+    description = "Install Files and Terminal launchers for usr-home and a Firefox launcher for usr-home.";
   };
   options.airlock.sysGuiGuest.sysDevTailscaleShortcut.enable = lib.mkEnableOption
     "the desktop shortcut that enrolls sys-dev in Tailscale";

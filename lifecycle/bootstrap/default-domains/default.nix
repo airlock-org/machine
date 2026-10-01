@@ -15,7 +15,6 @@ let
   sysGuiRoleDefaults = import ./sys-gui.nix;
   cmdVmRoleDefaults = import ./usr-cmd.nix;
   homeVmRoleDefaults = import ./usr-home.nix;
-  browserVmRoleDefaults = import ./usr-browser.nix;
 
   mkSysNetDomainEntry =
     system:
@@ -216,9 +215,6 @@ let
   mkHomeVmDomainEntry = system:
     mkPersonalVmDomainEntry system "usr-home" homeVmRoleDefaults ../../misc/modules/usr-home-guest.nix;
 
-  mkBrowserVmDomainEntry = system:
-    mkPersonalVmDomainEntry system "usr-browser" browserVmRoleDefaults ../../misc/modules/usr-browser-guest.nix;
-
   materializeNixClosureDomain =
     entry:
     entry.domain
@@ -247,7 +243,6 @@ in
     materializeNixClosureDomain
     mkCmdVmDomainEntry
     mkHomeVmDomainEntry
-    mkBrowserVmDomainEntry
     mkSysFirewallDomainEntry
     mkSysGuiDomainEntry
     mkSysGuiDomainEntryWith

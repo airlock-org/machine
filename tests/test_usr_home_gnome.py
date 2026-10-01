@@ -35,11 +35,11 @@ def test_personal_domains_explicitly_select_the_gui_vm(profile, configuration):
         personalGuiVMs = builtins.listToAttrs (map (name: {{
           inherit name;
           value = topology.domains.${{name}}.prefs.guivm or null;
-        }}) [ "usr-home" "usr-browser" ]);
+        }}) [ "usr-home" ]);
         runtimeGuiVMs = builtins.listToAttrs (map (name: {{
           inherit name;
           value = runtime.nixNative.domains.${{name}}.prefs.guivm or null;
-        }}) [ "usr-home" "usr-browser" ]);
+        }}) [ "usr-home" ]);
       }}
     """
     result = subprocess.run(
@@ -60,7 +60,6 @@ def test_personal_domains_explicitly_select_the_gui_vm(profile, configuration):
     # A global default cannot override a VM's existing explicit guivm=None.
     assert report["personalGuiVMs"] == {
         "usr-home": "sys-gui",
-        "usr-browser": "sys-gui",
     }
     assert report["runtimeGuiVMs"] == report["personalGuiVMs"]
 
@@ -78,7 +77,7 @@ def test_gnome_desktop_work_applications_are_routed_to_usr_home():
           }}) ];
         }}).config;
         minimal = f.nixosConfigurations.airlock-domain-sys-gui-usb-gui-lab.config;
-        appGuest = f.nixosConfigurations.airlock-domain-usr-browser.config;
+        appGuest = f.nixosConfigurations.airlock-domain-usr-home.config;
         homeGuest = f.nixosConfigurations.airlock-domain-usr-home.config;
       in {{
         applications = map (application: {{

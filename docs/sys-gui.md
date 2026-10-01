@@ -2,7 +2,7 @@
 
 `sys-gui` owns LightDM's login screen, desktop session, Qubes Manager,
 application menus, tray widgets, notifications, and graphical settings tools.
-The offline `usr-home` desktop-work VM owns the Files and Terminal processes
+The connected `usr-home` personal VM owns Firefox, Files and Terminal processes
 and the user's persistent home directory; their windows render in `sys-gui`.
 Its GNOME application catalog also includes local document, image, media,
 calendar, contact, editor, utility and help applications. `sys-gui` exposes
@@ -68,7 +68,7 @@ existing Nix-native guest builder. The full image profiles remain unchanged.
 - Network, configuration, application and `sys-gpu` VM images are not selected
   as dependencies of this image. Their flake outputs remain available.
 - Files/Firefox launchers, their panel bootstrap and their MIME defaults are
-  omitted because `usr-home` and `usr-browser` do not exist here. The normal
+  omitted because `usr-home` does not exist here. The normal
   GUI guest keeps those launchers.
 - A single boot setup unit applies and records the entire small topology;
   no deferred provisioning, network-provider startup or config workflow runs.

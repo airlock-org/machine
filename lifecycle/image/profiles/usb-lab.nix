@@ -17,9 +17,9 @@
       "sys-net"
       "sys-firewall"
       "usr-home"
-      "usr-browser"
     ];
   };
+  airlock.machineDeployment.retireDomains = [ "usr-browser" ];
   networking.networkmanager.enable = lib.mkForce false;
   services.tailscale.enable = lib.mkForce false;
   services.openssh.enable = lib.mkForce false;

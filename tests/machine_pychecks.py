@@ -1744,24 +1744,18 @@ def check_personal_domains(repo_root: Path, log_dir: Path) -> None:
     )
     domains = json.loads(topology_json.read_text(encoding="utf-8"))
     home = domains["usr-home"]
-    browser = domains["usr-browser"]
+    assert "usr-browser" not in domains
 
-    assert home["netvm"] is None
+    assert home["netvm"] == "sys-firewall"
     assert home["prefs"]["autostart"] is True
     assert home["backend"]["state"]["persistent"] == "usr-home-private"
     assert home["features"]["menu-items"] == ""
-    assert browser["netvm"] == "sys-firewall"
-    assert browser["backend"]["state"]["persistent"] == "usr-browser-private"
-    assert browser["features"]["menu-items"] == ""
 
     home_guest = (
         repo_root / "lifecycle/misc/modules/usr-home-guest.nix"
     ).read_text(encoding="utf-8")
     home_applications = (
         repo_root / "lifecycle/misc/lib/usr-home-applications.nix"
-    ).read_text(encoding="utf-8")
-    browser_guest = (
-        repo_root / "lifecycle/misc/modules/usr-browser-guest.nix"
     ).read_text(encoding="utf-8")
     sys_gui_guest = (
         repo_root / "lifecycle/misc/modules/sys-gui/base.nix"
@@ -1779,8 +1773,8 @@ def check_personal_domains(repo_root: Path, log_dir: Path) -> None:
     assert "pkgs.nautilus" in home_applications
     assert 'launcher = "terminal"' in home_applications
     assert "pkgs.gnome-console" in home_applications
-    assert "pkgs.firefox" in browser_guest
-    assert "airlock.OpenUrl" in browser_guest
+    assert "pkgs.firefox" in home_guest
+    assert "airlock.OpenUrl" in home_guest
     assert 'application = "org.gnome.Nautilus"' in home_applications
     assert 'application = "org.gnome.Console"' in home_applications
     assert "qubes.StartApp+${application.application}" in sys_gui_guest
@@ -1791,7 +1785,7 @@ def check_personal_domains(repo_root: Path, log_dir: Path) -> None:
     assert "qubes.StartApp+firefox" in sys_gui_guest
     assert "airlock-launch-qube-app" in sys_gui_guest
     assert "usr-home qubes.StartApp+${application.application}" in sys_gui_guest
-    assert "Firefox usr-browser qubes.StartApp+firefox" in sys_gui_guest
+    assert "Firefox usr-home qubes.StartApp+firefox" in sys_gui_guest
     assert '"inode/directory" = "airlock-files.desktop"' in sys_gui_guest
     assert '"x-scheme-handler/https" = "firefox.desktop"' in sys_gui_guest
     assert "airlock-bootstrap-desktop-launchers" in sys_gui_guest
@@ -1801,8 +1795,8 @@ def check_personal_domains(repo_root: Path, log_dir: Path) -> None:
     assert "airlock-files airlock-terminal firefox" in sys_gui_guest
     assert "X-GNOME-Autostart-Phase=Panel" in sys_gui_guest
     assert "usr-home = {" in runtime
-    assert "usr-browser = {" in runtime
-    assert 'target = "usr-browser";' in runtime
+    assert "usr-browser = {" not in runtime
+    assert 'target = "usr-home";' in runtime
 
 
 def check_cmd_role(repo_root: Path, log_dir: Path) -> None:

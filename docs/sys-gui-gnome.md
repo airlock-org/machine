@@ -1,3 +1,8 @@
+The default personal desktop now runs Firefox, files and terminal applications in
+connected `usr-home`, using `sys-firewall` for internet access. The separate
+`usr-browser` VM is no longer part of the default topology. Firefox starts with
+a fresh profile; no browser data is imported from the retired VM.
+
 # GNOME sys-gui milestone
 
 Status: GNOME and forwarded Firefox/Calculator windows verified live on the
