@@ -35,3 +35,16 @@ USB image assembly, flashing, provisioning, development-host orchestration,
 and cross-repository deployment tests live in the main `airlock` repository.
 That repository pins this one as its `airlock-machine/` Git submodule and adapts the same machine definitions
 to the prepared-store USB image format.
+
+VM removal uses recoverable retirement before permanent deletion. Rollback can
+retire a VM added by a trial release; a normal topology removal declares the
+exact removed names in `airlock.machineDeployment.retireDomains`. Retirement
+stops the VM and retains its private volume under its original Qubes identity.
+
+Permanent purge requires every retained release and bootable host profile that
+references the VM to have been safely pruned. The running host and immediate
+rollback release remain protected. Apply another committed release that omits
+the retired VM, then boot that release before pruning the trial and purging its
+exact trash record. Reapplying the same release does not advance the rollback
+choice. The typed prune and purge interfaces check these references and storage
+ownership; confirmation or a retention-deadline override cannot bypass them.
