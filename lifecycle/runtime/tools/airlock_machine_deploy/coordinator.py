@@ -794,6 +794,15 @@ class Coordinator:
                 self.command("airlock-host-store", "validate" if manifest.get("hostPool") else "publish", manifest["host"])
                 self.install_boot_hook(release, baseline)
                 self.stage(release, topology, changes["stage"], directory)
+                # Complete fallible boot preparation before disrupting guests.
+                # Installation and sealing preserve the previous boot default.
+                phase("host-boot-preparation")
+                self.command("airlock-host-store", "protect-boot")
+                self.command(
+                    "nix-env", "-p", "/nix/var/nix/profiles/system", "--set", manifest["host"],
+                )
+                self.command("airlock-host-store", "install-boot", manifest["host"], timeout=600)
+                self.command("airlock-host-store", "seal-boot", "--keep-default")
                 trash_plan = [
                     self.retirement.prepare_retirement(
                         name,
@@ -818,7 +827,6 @@ class Coordinator:
                         "profile": manifest["profile"],
                     },
                 )
-                self.command("airlock-host-store", "bind-machine", manifest["host"])
                 phase("stopping")
                 for name in changes["stop"]:
                     if diagnostics:
@@ -857,20 +865,6 @@ class Coordinator:
                     self.retirement.restore(entry, release, transaction)
                     for entry in restore_plan
                 ]
-                phase("host-boot-selection")
-                self.command(
-                    "nix-env",
-                    "-p",
-                    "/nix/var/nix/profiles/system",
-                    "--set",
-                    manifest["host"],
-                )
-                self.command(
-                    "airlock-host-store", "install-boot", manifest["host"],
-                    timeout=600,
-                )
-                self.command("airlock-host-store", "seal-boot")
-                self.command("airlock-host-store", "select", manifest["host"])
                 phase("starting")
                 for name in changes["start"]:
                     if name not in self.running():
@@ -883,6 +877,9 @@ class Coordinator:
                         self.command("qvm-start", name, timeout=240)
                 phase("verifying")
                 observed = self.verify(topology, set(changes["start"]))
+                phase("host-boot-selection")
+                self.command("airlock-host-store", "bind-machine", manifest["host"])
+                self.command("airlock-host-store", "select", manifest["host"])
                 pending = str(Path("/run/current-system").resolve()) != manifest["host"]
                 phase(
                     "reboot-required" if pending else "complete",

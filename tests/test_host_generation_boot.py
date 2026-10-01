@@ -296,6 +296,73 @@ def test_boot_install_profile_filter_does_not_modify_real_history(tmp_path):
     assert (filtered / 'system').readlink() == Path('system-2-link')
 
 
+@pytest.mark.parametrize('failed', [False, True])
+def test_boot_installer_keeps_real_default_until_explicit_selection(tmp_path, monkeypatch, failed):
+    import subprocess
+    from airlock_qubes_storage import host_install
+
+    profiles, loader = tmp_path / 'profiles', tmp_path / 'loader'
+    profiles.mkdir()
+    system = tmp_path / 'available-system'
+    system.mkdir()
+    (profiles / 'system').symlink_to(system)
+    entries = loader / 'entries'
+    entries.mkdir(parents=True)
+    previous = 'airlock-xen-previous.conf'
+    (entries / previous).write_text('verified old entry\n')
+    original = f'default {previous}\npreferred {previous}\ntimeout 10\n'
+    (loader / 'loader.conf').write_text(original)
+    calls = []
+    monkeypatch.setattr(host_install.host, 'command', lambda *args: calls.append(args))
+
+    def upstream(args, **kwargs):
+        staged = Path(calls[-1][2])
+        assert calls[-1][-1] == str(loader)
+        (staged / 'loader.conf').write_text('default xen-new.conf\npreferred xen-new.conf\ntimeout 5\n')
+        (staged / 'entries/xen-new.conf').write_text('new entry\n')
+        assert (loader / 'loader.conf').read_text() == original
+        assert not (entries / 'xen-new.conf').exists()
+        if failed:
+            raise subprocess.CalledProcessError(1, args)
+
+    monkeypatch.setattr(host_install.subprocess, 'run', upstream)
+    if failed:
+        with pytest.raises(subprocess.CalledProcessError):
+            host_install.install('/nix/store/' + 'a' * 32 + '-system', profiles, loader)
+        assert (loader / 'loader.conf').read_text() == original
+        assert not (entries / 'xen-new.conf').exists()
+    else:
+        host_install.install('/nix/store/' + 'a' * 32 + '-system', profiles, loader)
+        assert (entries / 'xen-new.conf').read_text() == 'new entry\n'
+        assert (loader / 'loader.conf').read_text() == original.replace('timeout 10', 'timeout 5')
+    assert (entries / previous).read_text() == 'verified old entry\n'
+    assert calls[-2:] == [('umount', str(loader)), ('umount', str(profiles))]
+
+
+def test_interrupted_loader_publication_preserves_previous_default(tmp_path, monkeypatch):
+    from airlock_qubes_storage import host_install
+    loader, staged = tmp_path / 'loader', tmp_path / 'staged'
+    for directory in (loader, staged):
+        (directory / 'entries').mkdir(parents=True)
+    original = 'default airlock-old.conf\n'
+    (loader / 'loader.conf').write_text(original)
+    (loader / 'entries/airlock-old.conf').write_text('old\n')
+    (staged / 'loader.conf').write_text('default new.conf\n')
+    (staged / 'entries/new.conf').write_text('new\n')
+    write = host_install.core.atomic_write
+
+    def interrupt(path, text, **kwargs):
+        if Path(path) == loader / 'loader.conf':
+            raise OSError('interrupted publication')
+        return write(path, text, **kwargs)
+
+    monkeypatch.setattr(host_install.core, 'atomic_write', interrupt)
+    with pytest.raises(OSError, match='interrupted publication'):
+        host_install.publish_loader(staged, loader)
+    assert (loader / 'loader.conf').read_text() == original
+    assert (loader / 'entries/airlock-old.conf').read_text() == 'old\n'
+
+
 def test_live_metadata_seed_includes_committed_wal_and_is_not_overwritten(tmp_path):
     import sqlite3
     source, target = tmp_path / 'source.sqlite', tmp_path / 'generation/seed.sqlite'

@@ -63,7 +63,7 @@ def inventory(esp, system):
     return entries
 
 
-def seal(root, esp):
+def seal(root, esp, *, keep_default=False):
     root = Path(root)
     esp = Path(esp)
     for path in (root / "host/boots").glob("*.json"):
@@ -125,7 +125,7 @@ def seal(root, esp):
             selected = verify(root, esp, record)
             remove_native_duplicates(esp, record["system"], selected)
 
-    if (esp / "loader/loader.conf").exists() and any(
+    if not keep_default and (esp / "loader/loader.conf").exists() and any(
             presentation.identity(path.read_text()).get("airlock-role") == "normal"
             for path in (esp / "loader/entries").glob("*.conf")):
         select_entry(esp, presentation.newest_normal(esp / "loader/entries"))
@@ -249,11 +249,11 @@ def select_entry(esp, entry):
     if Path(entry).name != entry:
         core.fail("invalid loader entry name")
     path = Path(esp) / "loader/loader.conf"
-    # The selected pool system can be older (rollback or recovery). Selection
-    # must not establish an older persistent boot default. Older systems remain
-    # available for manual selection at the physical menu, even without EFI vars.
-    default = presentation.newest_normal(Path(esp) / "loader/entries")
+    # A newer installed entry can belong to an unfinished deployment. Only the
+    # explicitly verified selection is eligible to become the default.
+    if not (Path(esp) / 'loader/entries' / entry).is_file():
+        core.fail('selected loader entry is missing')
     lines = [line for line in path.read_text().splitlines()
              if not line.split() or line.split()[0] not in ("default", "preferred")]
     presentation.clear_saved_default()
-    core.atomic_write(path, "\n".join([f"default {default}", *lines]) + "\n")
+    core.atomic_write(path, "\n".join([f"default {entry}", *lines]) + "\n")

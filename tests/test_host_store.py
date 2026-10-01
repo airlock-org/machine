@@ -471,10 +471,23 @@ def test_sealed_entries_preserve_boot_generation_and_source_order(tmp_path, monk
     assert presentation.fields(entries[2].read_text())['title'] == 'Airlock (recovery, 2026-09-30_14:30-abcdef0)'
     assert artifacts.verify(root, esp, {'system': B, 'generation': 2}) == entries[0].name
     artifacts.select_entry(esp, entries[1].name)
-    assert presentation.fields((esp / 'loader/loader.conf').read_text())['default'] == entries[0].name
+    assert presentation.fields((esp / 'loader/loader.conf').read_text())['default'] == entries[1].name
     before = {path: path.read_bytes() for path in esp.rglob('*') if path.is_file()}
-    artifacts.seal(root, esp)
+    artifacts.seal(root, esp, keep_default=True)
     assert {path: path.read_bytes() for path in esp.rglob('*') if path.is_file()} == before
+
+
+def test_boot_preparation_seals_new_artifacts_without_selecting_them(tmp_path, monkeypatch):
+    root, esp, artifacts, presentation = boot_artifact_fixture(tmp_path, monkeypatch)
+    artifacts.seal(root, esp)
+    previous = 'airlock-xen-2-normal.conf'
+    artifacts.select_entry(esp, previous)
+    before = (esp / 'loader/loader.conf').read_bytes()
+    artifacts.seal(root, esp, keep_default=True)
+    assert (esp / 'loader/loader.conf').read_bytes() == before
+    assert artifacts.verify(root, esp, {'system': B, 'generation': 2}) == 'airlock-xen-10-normal.conf'
+    artifacts.select_entry(esp, previous)
+    assert presentation.fields((esp / 'loader/loader.conf').read_text())['default'] == previous
 
 
 @pytest.mark.parametrize('fault', [None, 'entry', 'kernel'])

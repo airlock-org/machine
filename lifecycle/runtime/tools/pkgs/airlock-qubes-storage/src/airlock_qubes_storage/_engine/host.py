@@ -314,10 +314,13 @@ def allocated(path):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("action", choices=("validate", "publish", "select", "seal-boot", "retire", "status", "recover",
+    parser.add_argument("action", choices=("validate", "publish", "select", "protect-boot", "seal-boot", "retire", "status", "recover",
                                            "checkpoint-machine", "bind-machine", "install-boot"))
     parser.add_argument("system", nargs="?")
+    parser.add_argument("--keep-default", action="store_true")
     args = parser.parse_args()
+    if args.keep_default and args.action != 'seal-boot':
+        parser.error('--keep-default is available only for seal-boot')
     if args.action in ("publish", "select", "retire", "recover", "bind-machine", "install-boot") and not args.system:
         parser.error("system is required")
     if args.action == "install-boot":
@@ -351,10 +354,14 @@ def main():
         result = publish_live(args.system)
     elif args.action == "select":
         result = select(args.system)
+    elif args.action == "protect-boot":
+        # A manual recovery boot can leave a failed newer entry as the default.
+        # Re-establish the already booted, validated host before preparation.
+        result = select(core.read_json(Path(POOL) / 'host/running.json')['system'])
     elif args.action == "seal-boot":
         from ..host_artifacts import seal
         with admission_lock(POOL):
-            seal(POOL, "/boot")
+            seal(POOL, "/boot", keep_default=args.keep_default)
         result = {"sealed": True}
     elif args.action == "retire":
         result = retire(args.system)

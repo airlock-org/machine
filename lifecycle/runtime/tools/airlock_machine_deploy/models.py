@@ -41,7 +41,7 @@ class DeploymentPlan(TypedDict):
 
 
 DeploymentPhase = Literal[
-    "preflight", "staging", "stopping", "retiring", "configuring",
+    "preflight", "staging", "host-boot-preparation", "stopping", "retiring", "configuring",
     "host-boot-selection", "starting", "verifying", "reboot-required",
     "complete", "failed",
 ]

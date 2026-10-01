@@ -721,6 +721,49 @@ def test_stage_failure_never_stops_or_selects(machine, tmp_path, topology):
     assert not any(call[0] == "qvm-shutdown" for call in machine.calls)
 
 
+@pytest.mark.parametrize('action', ['install-boot', 'seal-boot'])
+def test_boot_preparation_failure_preserves_running_guests_and_machine_selection(
+    machine, tmp_path, topology, action
+):
+    before = set(machine.live)
+    machine.fail = ('airlock-host-store', action)
+    with pytest.raises(deploy.DeploymentError, match='simulated failure'):
+        machine.apply(new_release(tmp_path, topology))
+    assert machine.live == before
+    assert machine.pointer() is None
+    assert machine.status()['failed_phase'] == 'host-boot-preparation'
+    assert not any(call[0] == 'qvm-shutdown' or call[:2] == ('airlock-host-store', 'select')
+                   for call in machine.calls)
+
+
+def test_boot_default_is_selected_after_guest_verification(machine, tmp_path, topology, monkeypatch):
+    verify = machine.verify
+
+    def verified(*args, **kwargs):
+        assert not any(call[:2] == ('airlock-host-store', 'select') for call in machine.calls)
+        result = verify(*args, **kwargs)
+        machine.calls.append(('guests-verified',))
+        return result
+
+    monkeypatch.setattr(machine, 'verify', verified)
+    machine.apply(new_release(tmp_path, topology))
+    prepared = machine.calls.index(('airlock-host-store', 'seal-boot', '--keep-default'))
+    stopped = next(i for i, call in enumerate(machine.calls) if call[0] == 'qvm-shutdown')
+    selected = next(i for i, call in enumerate(machine.calls)
+                    if call[:2] == ('airlock-host-store', 'select'))
+    assert prepared < stopped < machine.calls.index(('guests-verified',)) < selected
+
+
+def test_guest_start_failure_keeps_previous_host_binding_and_boot_choice(machine, tmp_path, topology):
+    machine.fail = 'qvm-start'
+    with pytest.raises(deploy.DeploymentError, match='simulated failure'):
+        machine.apply(new_release(tmp_path, topology))
+    assert machine.status()['failed_phase'] == 'starting'
+    assert ('airlock-host-store', 'protect-boot') in machine.calls
+    assert not any(call[:2] in (('airlock-host-store', 'select'), ('airlock-host-store', 'bind-machine'))
+                   for call in machine.calls)
+
+
 def test_stage_reuses_sys_dev_admitted_generation(machine, tmp_path, topology):
     machine.pool_match = 17
     result = machine.apply(new_release(tmp_path, topology))

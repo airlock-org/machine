@@ -6,6 +6,7 @@ changing the real profiles, deleting history, or mounting old host stores.
 """
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -29,19 +30,50 @@ def copy_profiles(source, target):
             copy_profiles(path, target / path.name)
 
 
-def install(system):
+def publish_loader(staged, loader):
+    """Publish prepared entries while preserving the current boot choice."""
+    staged, loader = Path(staged), Path(loader)
+    previous = (loader / 'loader.conf').read_text().splitlines()
+    choices = [line for line in previous if line.split() and line.split()[0] in ('default', 'preferred')]
+    if not any(line.split()[0] == 'default' for line in choices):
+        core.fail('boot preparation requires an existing default')
+    protected = {line.split()[1].removesuffix('.conf') for line in choices}
+    entries = loader / 'entries'
+    for path in (staged / 'entries').glob('*.conf'):
+        core.atomic_write(entries / path.name, path.read_text())
+    for path in entries.glob('*.conf'):
+        if (not (staged / 'entries' / path.name).exists()
+                and not path.name.startswith('airlock-') and path.stem not in protected):
+            path.unlink()
+    core.fsync_dir(entries)
+    lines = [line for line in (staged / 'loader.conf').read_text().splitlines()
+             if not line.split() or line.split()[0] not in ('default', 'preferred')]
+    core.atomic_write(loader / 'loader.conf', '\n'.join([*choices, *lines]) + '\n')
+
+
+def install(system, profiles=Path('/nix/var/nix/profiles'), loader=Path('/boot/loader')):
     core.store_entry(system)
-    profiles = Path('/nix/var/nix/profiles')
     with tempfile.TemporaryDirectory(prefix='airlock-boot-profiles-') as directory:
         copied = Path(directory) / 'profiles'
         copy_profiles(profiles, copied)
         if not (copied / 'system').exists():
             core.fail('selected host profile is unavailable for boot installation')
+        # Upstream rewrites the default as part of installation. Keep its
+        # loader edits private until installation succeeds, then publish entries
+        # without selecting an unfinished deployment. EFI payloads remain on
+        # the real ESP; retained payloads have their own independently sealed copies.
+        staged_loader = Path(directory) / 'loader'
+        shutil.copytree(loader, staged_loader)
         host.command('mount', '--bind', str(copied), str(profiles))
         try:
-            subprocess.run([system + '/bin/switch-to-configuration', 'boot'], check=True)
+            host.command('mount', '--bind', str(staged_loader), str(loader))
+            try:
+                subprocess.run([system + '/bin/switch-to-configuration', 'boot'], check=True)
+            finally:
+                host.command('umount', str(loader))
         finally:
             host.command('umount', str(profiles))
+        publish_loader(staged_loader, loader)
 
 
 if __name__ == '__main__':
