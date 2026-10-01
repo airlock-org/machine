@@ -148,8 +148,15 @@ def refresh_presentation(descriptor_path, esp):
             metadata = presentation.identity(text)
             number = presentation.generation(text)
             system = metadata["airlock-system"]
+            source = presentation.source_metadata(system)
+            if source is None and "airlock-revision" not in metadata:
+                # The descriptor already authenticates these retained bytes.
+                # Older entries may predate source labels, and their host may
+                # be absent from this store view. Preserve the verified entry
+                # rather than inventing provenance or blocking a new release.
+                continue
             target = presentation.format_entry(text, number, metadata["airlock-role"], system,
-                                               presentation.source_metadata(system))
+                                               source)
             if target != text:
                 relative = str(path.relative_to(esp))
                 changes.append({"path": relative, "text": target,

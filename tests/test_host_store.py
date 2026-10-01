@@ -477,6 +477,35 @@ def test_sealed_entries_preserve_boot_generation_and_source_order(tmp_path, monk
     assert {path: path.read_bytes() for path in esp.rglob('*') if path.is_file()} == before
 
 
+@pytest.mark.parametrize('fault', [None, 'entry', 'kernel'])
+def test_sealing_preserves_verified_retained_entry_without_source_labels(tmp_path, monkeypatch, fault):
+    root, esp, artifacts, presentation = boot_artifact_fixture(tmp_path, monkeypatch)
+    artifacts.seal(root, esp)
+    descriptor_path = root / 'host/artifacts' / (host.key(A) + '.json')
+    descriptor = core.read_json(descriptor_path)
+    entry = esp / 'loader/entries' / descriptor['entries'][0]['entry']
+    # Reproduce a descriptor sealed before source provenance was introduced.
+    text = '\n'.join(line for line in entry.read_text().splitlines()
+                     if not line.startswith(('# airlock-revision ', '# airlock-timestamp '))) + '\n'
+    text = text.replace('title Airlock (2026-09-30_14:30-abcdef0)', 'title Airlock (legacy generation 2)')
+    entry.write_text(text)
+    descriptor['entries'][0]['files'][str(entry.relative_to(esp))] = {
+        'size': entry.stat().st_size, 'sha256': core.hash_file(entry)}
+    core.atomic_json(descriptor_path, descriptor)
+    # Historical host paths need not be mounted in the current generation.
+    monkeypatch.setattr(presentation, 'source_metadata', lambda system: None)
+    if fault:
+        corrupt = entry if fault == 'entry' else esp / 'EFI/airlock/kernel.efi'
+        corrupt.write_bytes(b'corrupt')
+        with pytest.raises(core.EngineError, match='corrupt boot artifact'):
+            artifacts.seal(root, esp)
+    else:
+        artifacts.seal(root, esp)
+        assert entry.read_text() == text
+        assert artifacts.verify(root, esp, {'system': A, 'generation': 1}) == entry.name
+    assert core.read_json(descriptor_path) == descriptor
+
+
 @pytest.mark.parametrize('fault', ['entry', 'kernel', 'interruption'])
 def test_current_presentation_refresh_verifies_and_resumes(tmp_path, monkeypatch, fault):
     root, esp, artifacts, presentation = boot_artifact_fixture(tmp_path, monkeypatch)
