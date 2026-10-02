@@ -57,8 +57,12 @@ let
     . ${applicationEnvironment}
     exec ${qubesPython}/bin/python ${./qube-guest/scripts/xdg-icon.py} "$@"
   '';
-  upstreamGetImage = pkgs.runCommand "airlock-qubes-get-image-upstream" { } ''
+  upstreamGetImage = pkgs.runCommand "airlock-qubes-get-image-upstream" {
+    nativeBuildInputs = [ pkgs.patch ];
+  } ''
     cp ${qubesAgentLinux.src}/qubes-rpc/qubes.GetImageRGBA "$out"
+    chmod u+w "$out"
+    patch "$out" < ${../patches/qubes-core-agent-linux/0001-render-svg-icons-with-librsvg.patch}
     substituteInPlace "$out" --replace-fail /usr/lib/qubes/xdg-icon ${xdgIcon}
   '';
   getImageService = pkgs.writeShellScript "airlock-qubes-get-image" ''

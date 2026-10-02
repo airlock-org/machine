@@ -17,6 +17,33 @@ ROOT = Path(__file__).resolve().parents[1]
 pytestmark = pytest.mark.nix
 
 
+def test_icon_rpc_renders_complex_application_svgs():
+    expression = f'''
+      let
+        f = builtins.getFlake "{ROOT}";
+        cfg = f.nixosConfigurations.airlock-domain-usr-home.config;
+        pkgs = cfg.nixpkgs.pkgs;
+        handler = cfg.environment.etc."qubes-rpc/qubes.GetImageRGBA".source;
+      in pkgs.runCommand "airlock-complex-svg-icons" {{}} ''
+        mkdir -p "$out"
+        printf '%s\\n' "${{pkgs.gnome-contacts}}/share/icons/hicolor/scalable/apps/org.gnome.Contacts.svg" | ${{handler}} > "$out/contacts.rgba"
+        printf '%s\\n' "${{pkgs.gnome-logs}}/share/icons/hicolor/scalable/apps/org.gnome.Logs.svg" | ${{handler}} > "$out/logs.rgba"
+        printf '%s\\n' "${{pkgs.gnome-font-viewer}}/share/icons/hicolor/scalable/apps/org.gnome.font-viewer.svg" | ${{handler}} > "$out/fonts.rgba"
+      ''
+    '''
+    result = subprocess.run(
+        [str(ROOT / "lifecycle/misc/tools/scripts/airlock-nix.sh"),
+         "build", "--impure", "--no-link", "--print-out-paths", "--expr", expression],
+        cwd=ROOT, check=True, text=True, capture_output=True,
+    )
+    output = Path(os.environ["AIRLOCK_NIX_ROOT"]) / result.stdout.strip().lstrip("/")
+    for name in ("contacts", "logs", "fonts"):
+        dimensions, pixels = (output / f"{name}.rgba").read_bytes().split(b"\n", 1)
+        width, height = map(int, dimensions.split())
+        assert 0 < width <= 512 and 0 < height <= 512
+        assert len(pixels) == width * height * 4
+
+
 @pytest.fixture(scope="module")
 def interfaces():
     expression = f'''
