@@ -20,7 +20,7 @@ in
     path = [ pkgs.coreutils pkgs.gitMinimal pkgs.gnugrep pkgs.gnutar pkgs.gzip pkgs.gawk pkgs.jq ];
     script = ''
       set -eu
-      repo=/home/${config.airlock.qubeGuest.user}/dev/airlock-machine
+      repo=${lib.escapeShellArg config.airlock.qubeGuest.configRepoPath}
       [ ! -e "$repo" ] || exit 0
       cache=/home/${config.airlock.qubeGuest.user}/.cache/airlock-machine-source
       install -d -m 0700 -o ${config.airlock.qubeGuest.user} -g users "$(dirname "$cache")" "$cache" "$(dirname "$repo")"

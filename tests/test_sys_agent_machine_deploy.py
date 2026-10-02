@@ -34,7 +34,16 @@ def test_guest_apply_delegates_to_controller(monkeypatch):
     calls = []
     monkeypatch.setattr(DEPLOY.subprocess, "call", lambda argv: calls.append(argv) or 0)
     assert DEPLOY.main(["guest-apply", "--target", "usr-home"]) == 0
-    assert calls == [["airlock-sys-ctrl-guest-deploy", "apply", "usr-home"]]
+    assert calls == [["airlock-sys-ctrl-guest-deploy", "apply", "usr-home",
+                      "--repo", "/home/user/airlock-machine"]]
+
+
+def test_guest_plan_passes_explicit_checkout_to_controller(monkeypatch, tmp_path):
+    calls = []
+    monkeypatch.setattr(DEPLOY.subprocess, "call", lambda argv: calls.append(argv) or 0)
+    assert DEPLOY.main(["guest-plan", "--target", "sys-agent", "--repo", str(tmp_path)]) == 0
+    assert calls == [["airlock-sys-ctrl-guest-deploy", "plan", "sys-agent",
+                      "--repo", str(tmp_path)]]
 
 
 @pytest.mark.parametrize("action", ["build", "plan", "apply"])

@@ -418,9 +418,11 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="action", required=True)
     for action in ("plan", "apply"):
-        sub.add_parser(action).add_argument("target", choices=sorted(TARGETS))
+        guest = sub.add_parser(action)
+        guest.add_argument("target", choices=sorted(TARGETS))
+        guest.add_argument("--repo", type=Path, default=Path.home() / "airlock-machine")
     for action in ("machine-build", "machine-plan", "machine-apply"):
-        sub.add_parser(action).add_argument("--repo", type=Path, default=REPO)
+        sub.add_parser(action).add_argument("--repo", type=Path, default=Path.home() / "airlock-machine")
     sub.add_parser("serve")
     sub.add_parser("observe")
     args = parser.parse_args()

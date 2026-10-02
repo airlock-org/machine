@@ -15,7 +15,7 @@ import sys
 import time
 import uuid
 
-DEFAULT_REPO = Path("/home/user/dev/airlock-machine")
+DEFAULT_REPO = Path("/home/user/airlock-machine")
 DEFAULT_STATE = Path("/home/user/.local/share/airlock/machine-deploy")
 DEFAULT_STORE_ROOT = Path("/rw/airlock-builder/merged")
 REMOTE_INVENTORY = "nix --extra-experimental-features nix-command path-info --all"
@@ -354,6 +354,7 @@ def main(argv=None):
             "airlock-sys-ctrl-guest-deploy",
             args.action.removeprefix("guest-"),
             args.target,
+            "--repo", str(args.repo),
         ])
     if args.action in ("build", "plan", "apply") and not args.legacy_dom0:
         return subprocess.call(["airlock-sys-ctrl-guest-deploy", "machine-" + args.action,

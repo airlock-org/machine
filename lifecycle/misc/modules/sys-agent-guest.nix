@@ -49,6 +49,7 @@ in
     pkgs.zellij
   ];
   fonts.packages = [ pkgs.dejavu_fonts ];
+  airlock.qubeGuest.configRepoPath = lib.mkDefault "/home/${cfg.user}/airlock-machine";
   environment.sessionVariables = {
     CODEX_HOME = cfg.codexHome;
     AIRLOCK_DATA_ROOT = workspaceState;
@@ -61,16 +62,19 @@ in
     UV_PYTHON_DOWNLOADS = "never";
   };
   environment.etc."airlock/sys-agent/AGENTS.md".source = ./sys-agent/AGENTS.md;
+  environment.etc."airlock/sys-agent/home-AGENTS.md".source = ./sys-agent/home-AGENTS.md;
   systemd.services.airlock-sys-agent-workspace = {
-    description = "Initialize persistent sys-agent Codex guidance";
+    description = "Initialize persistent sys-agent workspace and guidance";
     wantedBy = [ "multi-user.target" ];
     requires = [ "airlock-qubes-rw-init.service" ];
     after = [ "airlock-qubes-rw-init.service" ];
-    before = [ "qubes-qrexec-agent.service" ];
+    before = [ "airlock-machine-source-seed.service" "qubes-qrexec-agent.service" ];
     path = [ pkgs.coreutils ];
     script = ''
       ${pkgs.bash}/bin/bash ${./sys-agent/workspace-init.sh} \
-        ${lib.escapeShellArg cfg.codexHome} /etc/airlock/sys-agent/AGENTS.md
+        ${lib.escapeShellArg cfg.codexHome} /etc/airlock/sys-agent/AGENTS.md \
+        ${lib.escapeShellArg "/home/${cfg.user}"} /etc/airlock/sys-agent/home-AGENTS.md \
+        ${lib.escapeShellArg cfg.configRepoPath}
     '';
     serviceConfig = {
       Type = "oneshot";

@@ -11,8 +11,62 @@ ROOT = Path(__file__).resolve().parents[1]
 INIT = ROOT / "lifecycle/misc/modules/sys-agent/workspace-init.sh"
 
 
-def initialize(codex_state, instructions):
-    subprocess.run(["bash", str(INIT), str(codex_state), str(instructions)], check=True)
+def initialize(codex_state, instructions, guest_home=None, home_instructions=None):
+    guest_home = guest_home or codex_state.parent
+    guest_home.mkdir(parents=True, exist_ok=True)
+    home_instructions = home_instructions or instructions
+    subprocess.run([
+        "bash", str(INIT), str(codex_state), str(instructions),
+        str(guest_home), str(home_instructions), str(guest_home / "airlock-machine"),
+    ], check=True)
+
+
+def test_workspace_moves_existing_checkout_with_local_work_and_follows_home_guidance(tmp_path):
+    guest_home = tmp_path / "home"
+    old_repo = guest_home / "dev/airlock-machine"
+    old_repo.mkdir(parents=True)
+    subprocess.run(["git", "init", "-q", str(old_repo)], check=True)
+    (old_repo / "local-work").write_text("uncommitted work")
+    subprocess.run(["git", "-C", str(old_repo), "config", "airlock.test", "retained"], check=True)
+    intro = tmp_path / "intro.md"
+    intro.write_text("generation one")
+    state = guest_home / ".codex"
+    initialize(state, tmp_path / "instructions.md", guest_home, intro)
+    new_repo = guest_home / "airlock-machine"
+    assert not old_repo.exists()
+    assert (new_repo / "local-work").read_text() == "uncommitted work"
+    assert subprocess.check_output([
+        "git", "-C", str(new_repo), "config", "airlock.test",
+    ], text=True).strip() == "retained"
+    assert (guest_home / "AGENTS.md").is_symlink()
+    intro.write_text("generation two")
+    initialize(state, tmp_path / "instructions.md", guest_home, intro)
+    assert (guest_home / "AGENTS.md").read_text() == "generation two"
+
+
+@pytest.mark.parametrize("existing", ["file", "symlink", "dangling-symlink"])
+def test_workspace_preserves_home_intro_and_destination(tmp_path, existing):
+    guest_home = tmp_path / "home"
+    old_repo = guest_home / "dev/airlock-machine"
+    (old_repo / ".git").mkdir(parents=True)
+    (old_repo / "local-work").write_text("old work")
+    new_repo = guest_home / "airlock-machine"
+    new_repo.mkdir()
+    (new_repo / "local-work").write_text("new work")
+    intro = guest_home / "AGENTS.md"
+    custom = tmp_path / "custom.md"
+    custom.write_text("custom intro")
+    if existing == "file":
+        intro.write_text("custom intro")
+    else:
+        intro.symlink_to(custom if existing == "symlink" else tmp_path / "missing")
+    initialize(guest_home / ".codex", tmp_path / "system.md", guest_home)
+    assert (old_repo / "local-work").read_text() == "old work"
+    assert (new_repo / "local-work").read_text() == "new work"
+    if existing == "dangling-symlink":
+        assert intro.readlink() == tmp_path / "missing"
+    else:
+        assert intro.read_text() == "custom intro"
 
 
 def test_workspace_guidance_follows_generation_without_replacing_user_state(tmp_path):
@@ -63,6 +117,8 @@ def test_sys_agent_console_tools_and_guidance_use_existing_management_interfaces
         guiEnabled = c.systemd.services.qubes-gui-agent.enable;
         readyConfig = c.environment.etc."qubes/rpc-config/airlock.AppSessionReady".text;
         instructions = builtins.readFile c.environment.etc."airlock/sys-agent/AGENTS.md".source;
+        intro = builtins.readFile c.environment.etc."airlock/sys-agent/home-AGENTS.md".source;
+        repoPath = c.airlock.qubeGuest.configRepoPath;
         workspace = {{ inherit (c.systemd.services.airlock-sys-agent-workspace)
           after before requires serviceConfig; }};
         assertionsPass = builtins.all (a: a.assertion) c.assertions;
@@ -93,5 +149,9 @@ def test_sys_agent_console_tools_and_guidance_use_existing_management_interfaces
     assert report["workspace"]["serviceConfig"]["User"] == "user"
     assert "airlock-qubes-rw-init.service" in report["workspace"]["after"]
     assert "qubes-qrexec-agent.service" in report["workspace"]["before"]
+    assert "airlock-machine-source-seed.service" in report["workspace"]["before"]
+    assert report["repoPath"] == "/home/user/airlock-machine"
+    assert "~/airlock-machine" in report["intro"]
+    assert len(report["intro"].splitlines()) <= 12
     for command in ("plan", "apply", "status", "verify", "resume", "rollback"):
         assert f"airlock-sys-agent-machine-deploy {command}" in report["instructions"]

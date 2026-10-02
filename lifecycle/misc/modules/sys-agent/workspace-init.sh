@@ -3,6 +3,25 @@ set -euo pipefail
 
 codex_state="$1"
 instructions="$2"
+guest_home="$3"
+home_instructions="$4"
+repo="$5"
+
+# Relocate the entire existing checkout, including local branches and edits,
+# before first-boot source seeding can create a checkout at the new location.
+old_repo="$guest_home/dev/airlock-machine"
+if [ "$old_repo" != "$repo" ] && [ -e "$old_repo" ] && [ ! -L "$old_repo" ]; then
+  if [ ! -e "$repo" ] && [ ! -L "$repo" ]; then
+    [ -d "$old_repo/.git" ] || { echo "Not a Git checkout: $old_repo" >&2; exit 1; }
+    mv -T -- "$old_repo" "$repo"
+  else
+    echo "Preserving both existing checkout paths: $old_repo and $repo" >&2
+  fi
+fi
+
+if [ ! -e "$guest_home/AGENTS.md" ] && [ ! -L "$guest_home/AGENTS.md" ]; then
+  ln -s "$home_instructions" "$guest_home/AGENTS.md"
+fi
 install -d -m 0700 "$codex_state"
 # A stable /etc link follows system generations. Preserve user-written guidance
 # and deliberate overrides, including an existing dangling symlink.

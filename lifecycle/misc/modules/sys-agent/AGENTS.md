@@ -13,7 +13,7 @@ asking for permission; apply a deployment when the user's request authorizes it.
   `sys-firewall`; `sys-net` owns the network device.
 - `sys-ctrl` builds committed sources and submits validated artifacts. Dom0
   owns Xen, Qubes policy, VM configuration, and journalled deployment.
-- The editable machine checkout is `/home/user/dev/airlock-machine`. Start
+- The editable machine checkout is `~/airlock-machine`. Start
   with `git status`, `AGENTS.md`, `README.md`, and `docs/sys-agent.md` there.
 - Guest modules are in `lifecycle/misc/modules/`; built-in VM defaults are in
   `lifecycle/bootstrap/default-domains/`. `flake.nix` exposes configurations

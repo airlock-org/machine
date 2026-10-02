@@ -6,7 +6,7 @@ to sys-gui. It is discovered from the VM's own desktop entries, like apps in
 usr-home. Open it and start Codex in the persistent machine checkout:
 
 ```sh
-cd ~/dev/airlock-machine
+cd ~/airlock-machine
 codex
 ```
 
@@ -22,6 +22,11 @@ run `codex login --device-auth` in sys-agent, then complete the displayed code
 using Firefox in usr-home. API-key login is also available. Credentials remain
 inside sys-agent; the system does not import another VM's browser profile or
 embed authentication in the machine configuration.
+
+`~/AGENTS.md` is a brief introduction pointing to `~/airlock-machine` and the
+full installed guidance. On upgrade, the previous `~/dev/airlock-machine`
+checkout moves as a whole, preserving local branches and uncommitted files.
+An existing destination or user-written home introduction is preserved.
 
 `CODEX_HOME` points at `~/.codex`. On first boot, a symlink there named
 `AGENTS.md` points at `/etc/airlock/sys-agent/AGENTS.md`, which contains the VM

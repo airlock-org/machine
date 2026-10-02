@@ -84,7 +84,8 @@ def build_script(tmp_path):
         tools = builtins.listToAttrs (map (name: {{ inherit name; value = "/tools"; }})
           [ "coreutils" "gitMinimal" "jq" "gawk" "gnugrep" ]);
         module = import {ROOT}/lifecycle/misc/modules/sys-agent-machine-build.nix {{
-          config.airlock.qubeGuest = {{ user = "user"; configNixStoreRoot = "/unused"; }};
+          config.airlock.qubeGuest = {{ user = "user"; configNixStoreRoot = "/unused";
+            configRepoPath = "/home/user/airlock-machine"; }};
           lib.escapeShellArg = x: x;
           pkgs = tools // {{ writeShellScriptBin = name: text: text; }};
         }};
