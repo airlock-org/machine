@@ -3,5 +3,6 @@
   "description": "Visual VM workspace groups with coloured labels; window movement remains unrestricted.",
   "uuid": "airlock-vm-workspaces@airlock.local",
   "shell-version": ["50"],
+  "session-modes": ["user", "unlock-dialog"],
   "version": 1
 }

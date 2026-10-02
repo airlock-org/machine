@@ -29,13 +29,13 @@ def javascript(tmp_path):
         target.write_text(source.read_text())
         modules[name] = json.dumps(target.as_uri())
     imports = (
-        f"import {{MAX_SLOTS,readLayout,reconcileGroups,serializeLayout,workspaceContents,initialDestination}} from {modules['model']};\n"
+        f"import {{MAX_SLOTS,readLayout,reconcileGroups,reuseWorkspaces,serializeLayout,workspaceContents,initialDestination}} from {modules['model']};\n"
         f"import {{WindowIdentityCache,LOCAL,UNKNOWN,validateIdentity}} from {modules['identity']};\n"
         f"import {{parseInventory}} from {modules['inventory']};\n"
     )
     controller = tmp_path / "extension.mjs"
     controller.write_text(
-        imports + "const {Clutter,Gio,GLib,Meta,St,Main,PanelMenu,Extension}=globalThis.shellMocks;\n"
+        imports + "const {Clutter,Gio,GLib,Meta,St,Main,PanelMenu,PopupMenu,Extension}=globalThis.shellMocks;\n"
         + re.sub(r"^import .*;\n", "", (EXTENSION / "extension.js").read_text(), flags=re.MULTILINE)
     )
 
@@ -57,7 +57,7 @@ def javascript(tmp_path):
 def test_groups_preserve_uuid_slots_on_rename_and_inventory_failure(javascript):
     javascript("""
 const groups=reconcileGroups([],inventory);
-assert.deepEqual(groups.map(g=>g.key),[HOME,AGENT,'local']);
+assert.deepEqual(groups.map(g=>g.key),[HOME,AGENT]);
 const workspace={}; groups[0].slots=[workspace,{}];
 inventory.set(HOME,{name:'usr-renamed',color:'#0000ff',running:false});
 reconcileGroups(groups,inventory);
@@ -67,7 +67,7 @@ reconcileGroups(groups,new Map());
 assert.equal(groups[0].name,'Unavailable VM');
 assert.equal(groups[0].slots[0],workspace);
 assert.deepEqual(readLayout(serializeLayout(groups)),[
- {key:HOME,count:2},{key:AGENT,count:1},{key:'local',count:1}]);
+ {key:HOME,count:2},{key:AGENT,count:1}]);
 """)
 
 
@@ -75,9 +75,9 @@ def test_layout_validation_and_limit(javascript):
     javascript("""
 for(const text of ['{','null','[]','{"version":2,"groups":[]}']) assert.deepEqual(readLayout(text),[]);
 const groups=[{key:HOME,count:2},{key:HOME,count:3},{key:'fake',count:1},
- {key:AGENT,count:1.5},{key:'local',count:0},{key:'local',count:34}];
-assert.deepEqual(readLayout(JSON.stringify({version:1,groups})),[{key:HOME,count:2},{key:'local',count:34}]);
-assert.deepEqual(readLayout(JSON.stringify({version:1,groups:[{key:HOME,count:36}]})),[]);
+ {key:AGENT,count:1.5},{key:'local',count:4},{key:AGENT,count:34}];
+assert.deepEqual(readLayout(JSON.stringify({version:1,groups})),[{key:HOME,count:2},{key:AGENT,count:34}]);
+assert.deepEqual(readLayout(JSON.stringify({version:1,groups:[{key:HOME,count:36}]})),[{key:HOME,count:36}]);
 const many=new Map(Array.from({length:100},(_,i)=>[
  `00000000-0000-0000-0000-${String(i).padStart(12,'0')}`,{name:`usr-${i}`,color:null}]));
 assert.equal(reconcileGroups([],many).length,MAX_SLOTS);
@@ -87,6 +87,7 @@ assert.equal(reconcileGroups([],many).length,MAX_SLOTS);
 def test_mixed_marker_is_based_on_verified_window_identity(javascript):
     javascript("""
 assert.deepEqual(workspaceContents('usr-home',[]),{mixed:false,names:[]});
+assert.deepEqual(workspaceContents('usr-home',[LOCAL]),{mixed:false,names:[]});
 assert.equal(workspaceContents('usr-home',[{kind:'vm',name:'usr-home'}]).mixed,false);
 assert.deepEqual(workspaceContents('usr-home',[
  {kind:'vm',name:'sys-agent'},{kind:'vm',name:'sys-agent'},UNKNOWN]),
@@ -96,7 +97,34 @@ const first={},second={},other={}; groups[0].slots=[first,second]; groups[0].las
 assert.equal(initialDestination(groups,{kind:'vm',name:'usr-home'},other,null),second);
 assert.equal(initialDestination(groups,{kind:'vm',name:'usr-home'},first,null),first);
 assert.equal(initialDestination(groups,UNKNOWN,other,null),null);
+assert.equal(initialDestination(groups,LOCAL,other,null),null);
 assert.equal(initialDestination(groups,{kind:'vm',name:'usr-home'},other,other),other);
+""")
+
+
+def test_existing_empty_slots_are_reused_without_a_gui_group(javascript):
+    javascript("""
+const workspaces=[{},{},{},{}];
+const groups=reconcileGroups([],inventory);
+const unused=reuseWorkspaces(groups,workspaces,new Set());
+assert.deepEqual(groups.map(g=>g.slots),[[workspaces[0]],[workspaces[1]]]);
+assert.deepEqual(unused,[workspaces[2],workspaces[3]]);
+assert.equal(groups.some(g=>g.key==='local'),false);
+assert.deepEqual(reuseWorkspaces([],workspaces,new Set()),[]);
+const saved={version:1,groups:[{key:HOME,count:1},{key:AGENT,count:1},{key:'local',count:4}]};
+assert.deepEqual(readLayout(JSON.stringify(saved)),[{key:HOME,count:1},{key:AGENT,count:1}]);
+""")
+
+
+def test_occupied_leftovers_keep_their_workspace_objects(javascript):
+    javascript("""
+const workspaces=[{},{},{},{}];
+const groups=reconcileGroups([],inventory);
+groups[0].slots=[workspaces[0]];groups[1].slots=[workspaces[1]];
+const unused=reuseWorkspaces(groups,workspaces,new Set([workspaces[3]]));
+assert.deepEqual(unused,[workspaces[2]]);
+assert.deepEqual(groups[0].slots,[workspaces[0],workspaces[3]]);
+assert.deepEqual(groups[1].slots,[workspaces[1]]);
 """)
 
 
@@ -113,13 +141,22 @@ class Actor extends Signals {
  set_child(child){this.add_child(child);}
  destroy_all_children(){this.children=[];}
  destroy(){this.destroyed=true;}
+ hide(){this.visible=false;}
  set_label(label){this.label=label;}
  add_style_class_name(name){this.classes.add(name);}
  remove_style_class_name(name){this.classes.delete(name);}
 }
+const allWindows=new Set();
+class Menu {
+ constructor(){this.actor=new Actor();this.items=[];}
+ removeAll(){this.items=[];}addMenuItem(item){this.items.push(item);}
+ toggle(){this.open=!this.open;}close(){this.open=false;}destroy(){this.actor.destroy();}
+}
+class MenuItem extends Actor {constructor(label){super({label});}setSensitive(value){this.reactive=value;}}
 class Workspace {
  constructor(manager){this.manager=manager;}
  index(){return this.manager.workspaces.indexOf(this);}
+ list_windows(){return [...allWindows].filter(window=>window.workspace===this);}
  activate(){this.manager.current=this;this.manager.emit('workspace-switched');}
 }
 class Manager extends Signals {
@@ -128,10 +165,11 @@ class Manager extends Signals {
  get_workspace_by_index(index){return this.workspaces[index];}
  get_active_workspace(){return this.current;}
  append_new_workspace(){const w=new Workspace(this);this.workspaces.push(w);this.emit('workspace-added');return w;}
+ remove_workspace(workspace){this.workspaces.splice(workspace.index(),1);this.emit('workspace-removed');}
  reorder_workspace(workspace,index){this.workspaces.splice(workspace.index(),1);this.workspaces.splice(index,0,workspace);}
 }
 class Window extends Signals {
- constructor(workspace,kind=0){super();this.workspace=workspace;this.kind=kind;this.moves=0;}
+ constructor(workspace,kind=0){super();this.workspace=workspace;this.kind=kind;this.moves=0;allWindows.add(this);}
  get_window_type(){return this.kind;}
  get_client_type(){return 1;}
  get_transient_for(){return null;}
@@ -166,8 +204,9 @@ globalThis.shellMocks={
  timeout_add:(_priority,_delay,callback)=>{const id=sources.size+1;sources.set(id,callback);return id;},
  Source:{remove:id=>sources.delete(id)}},
  Meta:{WindowType:{NORMAL:0,DIALOG:1,MODAL_DIALOG:2},WindowClientType:{WAYLAND:1}},
- St:{BoxLayout:Actor,Widget:Actor,Label:Actor,Button:Actor,ScrollView:Actor,PolicyType:{AUTOMATIC:1,NEVER:2}},
- Main:{panel:{addToStatusArea(){}},sessionMode:new Signals()},PanelMenu:{Button:Actor},Extension:class {}
+ St:{BoxLayout:Actor,Widget:Actor,Label:Actor,Button:Actor,ScrollView:Actor,PolicyType:{EXTERNAL:3,NEVER:2},Side:{TOP:0}},
+ Main:{panel:{addToStatusArea(){},menuManager:{addMenu(){}}},uiGroup:new Actor(),sessionMode:new Signals()},
+ PanelMenu:{Button:Actor},PopupMenu:{PopupMenu:Menu,PopupMenuItem:MenuItem},Extension:class {}
 };
 const inventoryText=JSON.stringify(Object.fromEntries([...inventory].map(([uuid,vm])=>[uuid,{uuid,...vm,label:vm.color}])));
 const finishInventory=()=>reads.at(-1).callback(inventoryFile,{text:inventoryText});
@@ -187,11 +226,11 @@ assert.equal(existing.workspace,localWorkspace);
 assert.equal(agentWorkspace.index(),2);
 const foreign=new Window(home.slots[0]);ext._watch(foreign);
 ext._identities.set(foreign,{kind:'vm',name:'sys-agent',color:'#cc0000'});ext._refresh();
-assert.equal(ext._buttons.find(b=>b.workspace===home.slots[0]).button.label,'1!');
+assert.equal(ext._buttons.find(b=>b.workspace===home.slots[0]).button.mixed,true);
 foreign.change_workspace(agentWorkspace);
 assert.equal(foreign.workspace,agentWorkspace);assert.equal(foreign.moves,1);
-assert.equal(ext._buttons.find(b=>b.workspace===agentWorkspace).button.label,'1');
-const add=ext._box.children[0].children.at(-1);add.emit('clicked');
+assert.equal(ext._buttons.find(b=>b.workspace===agentWorkspace).button.mixed,false);
+const add=ext._menu.items[0];add.emit('activate');
 assert.equal(home.slots.length,3);assert.equal(wm.current,home.slots.at(-1));
 ext.disable();assert.equal(existing.handlers.size,0);assert.equal(foreign.handlers.size,0);
 assert.equal(settings.get('org.gnome.mutter')['dynamic-workspaces'],true);
@@ -209,6 +248,18 @@ ext._loadInventory();reads.at(-1).callback(inventoryFile,{error:true});
 assert.deepEqual(ext._groups,groups);
 const late=reads.at(-1);ext.disable();late.callback(inventoryFile,{text:inventoryText});
 assert.equal(ext._indicator.destroyed,true);
+""", shell=True)
+
+
+def test_unchanged_inventory_preserves_buttons_and_an_open_menu(javascript):
+    javascript("""
+const ext=new Controller();ext.enable();finishInventory();
+const button=ext._buttons[0].button,item=ext._menu.items[0];
+ext._menuButton.emit('clicked');assert.equal(ext._menu.open,true);
+ext._loadInventory();finishInventory();
+assert.equal(ext._buttons[0].button,button);assert.equal(ext._menu.items[0],item);
+assert.equal(ext._menu.open,true);
+ext.disable();
 """, shell=True)
 
 
@@ -252,4 +303,23 @@ mode.isLocked=true;mode.emit('updated');assert.equal(ext._indicator.visible,fals
 mode.isLocked=false;mode.emit('updated');assert.equal(ext._indicator.visible,true);
 settings.get('org.gnome.desktop.wm.preferences')['num-workspaces']=7;
 ext.disable();assert.equal(settings.get('org.gnome.desktop.wm.preferences')['num-workspaces'],7);
+""", shell=True)
+
+
+def test_controller_removes_only_redundant_empty_slots_and_keeps_menu_hidden_on_lock(javascript):
+    javascript("""
+wm.workspaces.push(new Workspace(wm),new Workspace(wm));
+const existing=new Window(wm.workspaces[3]);actors.push({meta_window:existing});
+const ext=new Controller();ext.enable();
+assert.equal(ext._indicator.visible,false);
+finishInventory();
+assert.equal(wm.n_workspaces,3);
+assert.equal(existing.moves,0);assert.equal(wm.workspaces.includes(existing.workspace),true);
+assert.equal(ext._groups.some(g=>g.key==='local'),false);
+assert.equal(ext._groups.find(g=>g.key===HOME).slots.includes(existing.workspace),true);
+ext._menuButton.emit('clicked');assert.equal(ext._menu.open,true);
+const mode=globalThis.shellMocks.Main.sessionMode;mode.isLocked=true;mode.emit('updated');
+assert.equal(ext._indicator.visible,false);assert.equal(ext._menu.open,false);
+assert.equal(wm.n_workspaces,3);assert.equal(ext._active,true);
+ext.disable();
 """, shell=True)

@@ -116,22 +116,29 @@ normal GNOME presentation.
 
 ## VM workspace visual prototype
 
-The GNOME top panel shows contiguous workspace groups with VM names and Qubes
-label colours. Numbered buttons switch workspaces; `+` adds an empty workspace
-beside that VM's existing slots and switches to it. The active slot is highlighted.
-Groups come from the same trusted inventory as application search, with a local
-`sys-gui` group. A bounded horizontal scroll area keeps larger layouts accessible.
+The GNOME top panel shows contiguous application-VM workspace groups with readable
+VM names and small dots in their Qubes label colours. A wider dot marks the active
+workspace. Clicking a dot switches to that workspace; clicking a VM name returns
+to its last used workspace. The `⋮` menu adds an adjacent workspace to a chosen
+VM. Groups come from the same trusted inventory as application search. Sys-gui
+has no dedicated group: its local windows share ordinary application workspaces.
+A bounded horizontal scroll area keeps larger layouts accessible.
 
 New normal application windows receive a one-time placement suggestion based on
 the trusted Qubes window identity reader. They open in their VM's active or last
 used slot. Existing windows are left in place when the extension starts. Window
 movement remains unrestricted: overview dragging, keyboard shortcuts and sticky
-windows work as usual. A yellow `!` marks a slot containing another VM's windows
-or windows whose origin has not yet been identified. The focused-VM indicator
+windows work as usual. Workspace button accessibility descriptions include the
+VMs actually present; native sys-gui windows are excluded from that list.
+The focused-VM indicator
 continues to show the actual focused window's origin. These groups are a visual
 experiment and provide no isolation or enforcement beyond existing Qubes policy.
 
-The extension temporarily uses static workspaces so empty slots survive. Its
+The extension temporarily uses static workspaces so requested empty slots survive.
+Initial slots reuse existing workspaces; redundant empty workspaces are removed.
+Occupied leftovers retain their workspace objects under the personal VM's group.
+The controller remains active while the desktop is locked, with its panel and
+menu hidden, so locking does not restore the old workspace count. Its
 layout is stored in the desktop user's `airlock-vm-workspaces/layout.json` beneath
 the XDG state directory. UUIDs preserve groups across VM renames; stopped or absent
 VMs retain their slots, with absent VMs labelled `Unavailable VM`. The prototype

@@ -1,9 +1,12 @@
-.airlock-workspaces { spacing: 10px; }
-.airlock-workspace-group { spacing: 3px; }
-.airlock-workspace-name { font-size: 11px; margin-right: 2px; }
-.airlock-workspace-dot { width: 7px; height: 7px; border-radius: 4px; margin-right: 3px; }
-.airlock-workspace-slot { border-radius: 5px; padding: 0 5px; font-size: 11px; color: #bbb; }
-.airlock-workspace-slot:hover { background-color: rgba(255,255,255,0.15); }
-.airlock-workspace-slot.active { background-color: rgba(255,255,255,0.25); color: white; }
-.airlock-workspace-slot.mixed { color: #f6d32d; }
-.airlock-workspace-add { padding: 0 3px; color: #aaa; }
+.airlock-workspace-panel { spacing: 6px; }
+.airlock-workspaces { spacing: 14px; }
+.airlock-workspace-group { spacing: 1px; }
+.airlock-workspace-name { margin-right: 4px; padding: 0 2px; border-radius: 5px; }
+.airlock-workspace-name:hover { background-color: rgba(255,255,255,0.12); }
+.airlock-workspace-dot { width: 6px; height: 6px; border-radius: 3px; }
+.airlock-workspace-dot.active { width: 18px; }
+.airlock-workspace-slot { border-radius: 5px; padding: 0 5px; }
+.airlock-workspace-slot:hover { background-color: rgba(255,255,255,0.12); }
+.airlock-workspace-slot.active { background-color: rgba(255,255,255,0.08); }
+.airlock-workspace-menu { padding: 0 5px; border-radius: 5px; color: #bbb; }
+.airlock-workspace-menu:hover { background-color: rgba(255,255,255,0.12); color: white; }

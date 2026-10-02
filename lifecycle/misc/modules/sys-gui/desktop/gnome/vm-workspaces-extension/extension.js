@@ -5,10 +5,11 @@ import Meta from 'gi://Meta';
 import St from 'gi://St';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
+import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import {WindowIdentityCache, LOCAL, UNKNOWN, validateIdentity} from './identity.js';
 import {parseInventory} from './inventory.js';
-import {MAX_SLOTS, readLayout, reconcileGroups, serializeLayout, workspaceContents, initialDestination} from './model.js';
+import {MAX_SLOTS, readLayout, reconcileGroups, reuseWorkspaces, serializeLayout, workspaceContents, initialDestination} from './model.js';
 
 const READER = '@identityReader@';
 const TYPES = [Meta.WindowType.NORMAL, Meta.WindowType.DIALOG, Meta.WindowType.MODAL_DIALOG];
@@ -24,6 +25,7 @@ export default class VMWorkspacesExtension extends Extension {
         this._pendingPlacement = new Set();
         this._cache = new WindowIdentityCache();
         this._inventory = new Map();
+        this._inventoryFingerprint = null;
         this._inventoryRevision = 0;
         this._cancellable = new Gio.Cancellable();
         this._wm = global.workspace_manager;
@@ -50,16 +52,23 @@ export default class VMWorkspacesExtension extends Extension {
             for (let i = 0; i < group.slots.length && index < this._wm.n_workspaces; i++)
                 group.slots[i] = this._wm.get_workspace_by_index(index++);
         }
-        const local = this._groups.find(g => g.key === 'local');
-        while (index < this._wm.n_workspaces)
-            local.slots.push(this._wm.get_workspace_by_index(index++));
         this._indicator = new PanelMenu.Button(0, 'VM workspaces', true);
         this._box = new St.BoxLayout({style_class: 'airlock-workspaces'});
         // Limit panel width while retaining access to groups through horizontal scrolling.
         this._scroll = new St.ScrollView({style: 'max-width: 620px;',
-            hscrollbar_policy: St.PolicyType.AUTOMATIC, vscrollbar_policy: St.PolicyType.NEVER});
+            hscrollbar_policy: St.PolicyType.EXTERNAL, vscrollbar_policy: St.PolicyType.NEVER});
         this._scroll.set_child(this._box);
-        this._indicator.add_child(this._scroll);
+        const panel = new St.BoxLayout({style_class: 'airlock-workspace-panel'});
+        panel.add_child(this._scroll);
+        this._menuButton = new St.Button({label: '⋮', style_class: 'airlock-workspace-menu',
+            can_focus: true, accessible_name: 'Workspace actions'});
+        panel.add_child(this._menuButton);
+        this._indicator.add_child(panel);
+        this._menu = new PopupMenu.PopupMenu(this._menuButton, 0, St.Side.TOP);
+        Main.uiGroup.add_child(this._menu.actor);
+        this._menu.actor.hide();
+        Main.panel.menuManager.addMenu(this._menu);
+        this._menuButton.connect('clicked', () => this._menu.toggle());
         Main.panel.addToStatusArea('airlock-vm-workspaces', this._indicator, 2, 'left');
         this._connect(this._wm, 'workspace-switched', () => this._refresh());
         this._connect(this._wm, 'workspace-added', () => this._queue());
@@ -114,22 +123,30 @@ export default class VMWorkspacesExtension extends Extension {
     _sync() {
         // Never reuse indexes as slot identity: insertion must keep neighbouring
         // workspaces and all their windows attached to the same VM label.
-        const existing = new Set(Array.from({length: this._wm.n_workspaces},
-            (_, index) => this._wm.get_workspace_by_index(index)));
+        if (!this._groups.length) {
+            this._ownedCount = this._wm.n_workspaces;
+            this._render();
+            return;
+        }
+        const workspaces = Array.from({length: this._wm.n_workspaces},
+            (_, index) => this._wm.get_workspace_by_index(index));
+        const occupied = new Set(workspaces.filter(workspace => workspace.list_windows()
+            .some(window => TYPES.includes(window.get_window_type()))));
+        const unused = reuseWorkspaces(this._groups, workspaces, occupied);
         for (const group of this._groups) {
             for (let i = 0; i < group.slots.length; i++) {
-                if (!existing.has(group.slots[i]))
+                if (!group.slots[i])
                     group.slots[i] = this._wm.append_new_workspace(false, global.get_current_time());
             }
             if (!group.slots.includes(group.lastUsed))
                 group.lastUsed = null;
         }
-        const assigned = new Set(this._groups.flatMap(g => g.slots));
-        const local = this._groups.find(g => g.key === 'local');
-        for (let i = 0; i < this._wm.n_workspaces; i++) {
-            const workspace = this._wm.get_workspace_by_index(i);
-            if (!assigned.has(workspace))
-                local.slots.push(workspace);
+        if (unused.includes(this._wm.get_active_workspace()))
+            this._groups[0].slots[0].activate(global.get_current_time());
+        for (const workspace of unused) {
+            // Only redundant empty slots are removed. Occupied objects retain
+            // their windows and are assigned a normal application-group label.
+            this._wm.remove_workspace(workspace, global.get_current_time());
         }
         this._groups.flatMap(g => g.slots).forEach((workspace, index) => {
             if (workspace.index() !== index)
@@ -142,54 +159,77 @@ export default class VMWorkspacesExtension extends Extension {
     }
 
     _sessionChanged() {
-        this._indicator.visible = !Main.sessionMode.isLocked && !Main.sessionMode.isGreeter;
+        this._indicator.visible = this._groups.length > 0 &&
+            !Main.sessionMode.isLocked && !Main.sessionMode.isGreeter;
+        if (!this._indicator.visible)
+            this._menu.close();
     }
 
     _loadInventory() {
         const revision = ++this._inventoryRevision;
         const cancellable = this._cancellable;
         this._inventoryFile.load_contents_async(cancellable, (file, result) => {
+            let inventory;
             try {
                 const [, bytes] = file.load_contents_finish(result);
                 if (!this._active || cancellable.is_cancelled() || revision !== this._inventoryRevision || bytes.length > 1048576)
                     return;
-                this._inventory = parseInventory(new TextDecoder().decode(bytes));
-                reconcileGroups(this._groups, this._inventory);
-                this._sync();
+                inventory = parseInventory(new TextDecoder().decode(bytes));
+            } catch (_error) {
+                return; // Retain the previous valid snapshot.
+            }
+            const fingerprint = JSON.stringify([...inventory].sort(([a], [b]) => a.localeCompare(b)));
+            if (fingerprint === this._inventoryFingerprint) {
                 this._queue();
-            } catch (_error) { /* Retain the previous valid snapshot. */ }
+                return;
+            }
+            this._inventory = inventory;
+            reconcileGroups(this._groups, this._inventory);
+            try {
+                this._sync();
+                this._inventoryFingerprint = fingerprint;
+                this._queue();
+            } catch (error) {
+                this._inventoryFingerprint = null;
+                console.error(`Airlock workspace layout: ${error.message}`);
+            }
         });
     }
 
     _render() {
         this._box.destroy_all_children();
+        this._menu.removeAll();
         this._buttons = [];
         for (const group of this._groups) {
             const box = new St.BoxLayout({style_class: 'airlock-workspace-group'});
-            if (group.color)
-                box.add_child(new St.Widget({style_class: 'airlock-workspace-dot',
-                    y_align: Clutter.ActorAlign.CENTER, style: `background-color: ${group.color};`}));
-            box.add_child(new St.Label({text: group.name, style_class: 'airlock-workspace-name',
-                y_align: Clutter.ActorAlign.CENTER}));
+            const name = new St.Button({label: group.name, style_class: 'airlock-workspace-name',
+                can_focus: true, accessible_name: `Switch to ${group.name}`});
+            name.connect('clicked', () => (group.lastUsed ?? group.slots[0]).activate(global.get_current_time()));
+            box.add_child(name);
             group.slots.forEach((workspace, i) => {
-                const button = new St.Button({label: `${i + 1}`, style_class: 'airlock-workspace-slot', can_focus: true});
+                const button = new St.Button({style_class: 'airlock-workspace-slot', can_focus: true});
+                const dot = new St.Widget({style_class: 'airlock-workspace-dot',
+                    y_align: Clutter.ActorAlign.CENTER,
+                    style: `background-color: ${group.color ?? '#bbb'};`});
+                button.set_child(dot);
                 button.connect('clicked', () => workspace.activate(global.get_current_time()));
-                this._buttons.push({group, workspace, button, number: i + 1});
+                this._buttons.push({group, workspace, button, dot, number: i + 1});
                 box.add_child(button);
             });
-            const add = new St.Button({label: '+', style_class: 'airlock-workspace-add', can_focus: true,
-                accessible_name: `Add workspace for ${group.name}`});
-            add.reactive = this._wm.n_workspaces < MAX_SLOTS;
-            add.connect('clicked', () => {
+            const add = new PopupMenu.PopupMenuItem(`Add workspace to ${group.name}`);
+            add.setSensitive(this._wm.n_workspaces < MAX_SLOTS);
+            add.connect('activate', () => {
                 if (this._wm.n_workspaces >= MAX_SLOTS)
                     return;
+                this._menu.close();
                 group.slots.push(null);
                 this._sync();
                 group.slots.at(-1).activate(global.get_current_time());
             });
-            box.add_child(add);
+            this._menu.addMenuItem(add);
             this._box.add_child(box);
         }
+        this._sessionChanged();
         this._refresh();
     }
 
@@ -197,17 +237,18 @@ export default class VMWorkspacesExtension extends Extension {
         if (!this._active || !this._buttons)
             return;
         const active = this._wm.get_active_workspace();
-        for (const {group, workspace, button, number} of this._buttons) {
+        for (const {group, workspace, button, dot, number} of this._buttons) {
             const identities = [...this._windows.keys()].filter(w => w.located_on_workspace(workspace))
                 .map(w => this._identities.get(w) ?? UNKNOWN);
             const contents = workspaceContents(group.name, identities);
-            button.set_label(`${number}${contents.mixed ? '!' : ''}`);
             button.accessible_name = `${group.name}, workspace ${number}${contents.names.length ? `; windows from ${contents.names.join(', ')}` : '; empty'}`;
-            for (const [name, enabled] of [['active', workspace === active], ['mixed', contents.mixed]]) {
-                if (enabled)
-                    button.add_style_class_name(name);
-                else
-                    button.remove_style_class_name(name);
+            button.mixed = contents.mixed;
+            if (workspace === active) {
+                dot.add_style_class_name('active');
+                button.add_style_class_name('active');
+            } else {
+                dot.remove_style_class_name('active');
+                button.remove_style_class_name('active');
             }
             if (workspace === active)
                 group.lastUsed = workspace;
@@ -242,6 +283,8 @@ export default class VMWorkspacesExtension extends Extension {
                 if (!this._active || cancellable.is_cancelled() || !this._windows.has(window))
                     continue;
                 this._identities.set(window, validateIdentity(identity));
+                if (identity.kind === 'local')
+                    this._pendingPlacement.delete(window);
                 if (this._pendingPlacement.has(window) && identity.kind !== 'unknown') {
                     const destination = initialDestination(this._groups, identity, window.get_workspace(),
                         window.get_transient_for()?.get_workspace());
@@ -333,6 +376,7 @@ export default class VMWorkspacesExtension extends Extension {
         }
         this._windows.clear();
         this._cache.clear();
+        this._menu.destroy();
         this._indicator.destroy();
         // Restore preferences only when they still match our last settings.
         // Keep occupied workspace objects until GNOME handles its normal cleanup.
