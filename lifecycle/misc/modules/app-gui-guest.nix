@@ -97,6 +97,10 @@ in
   };
 
   config = {
+    # Headless NixOS profiles do not link these by default. The standard icon
+    # RPC must see package icons and theme indexes through the active profile.
+    environment.pathsToLink = [ "/share/icons" "/share/pixmaps" ];
+
     # Qubes supplies a private X server and forwards individual windows to the
     # GuiVM. App VMs do not need their own desktop or display manager.
     environment.systemPackages = [
