@@ -230,8 +230,8 @@ export default class VMSearchExtension extends Extension {
             } catch (error) {
                 // Missing/transient cache snapshots preserve the last complete
                 // inventory. Search itself never asks Qubes to start a VM.
-                if (!error.matches?.(Gio.IOErrorEnum, Gio.IOErrorEnum.NOT_FOUND) &&
-                    !error.matches?.(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED))
+                if (!error.matches?.(Gio.io_error_quark(), Gio.IOErrorEnum.NOT_FOUND) &&
+                    !error.matches?.(Gio.io_error_quark(), Gio.IOErrorEnum.CANCELLED))
                     logError(error, 'Airlock VM search inventory');
             }
         });

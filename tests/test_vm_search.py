@@ -152,7 +152,7 @@ const Clutter={ActorAlign:{CENTER:1},Orientation:{HORIZONTAL:0,VERTICAL:1}};
 const St={Widget:Actor,BoxLayout:Actor,Label:Actor};
 const Pango={WrapMode:{WORD_CHAR:1},EllipsizeMode:{NONE:0}};
 const callbacks=[];
-const Gio={IOErrorEnum:{NOT_FOUND:1,CANCELLED:2}};
+const Gio={IOErrorEnum:{NOT_FOUND:1,CANCELLED:2},io_error_quark:()=>42};
 const Search={GridSearchResults:Grid,SearchResultsView:class {}};
 globalThis.shellMocks={Clutter,St,Pango,Gio,Search,GObject:{registerClass:cls=>cls},GLib:{},Shell:{},Main:{},Extension:class {},InjectionManager:class {}};
 function provider(names) {
@@ -232,8 +232,11 @@ assert.equal(extension._inventory.get(HOME).name,'usr-home');assert.equal(refres
 globalThis.logError=()=>{};
 extension._loadInventory();requests[2](result('{'),{});
 assert.equal(extension._inventory.get(HOME).name,'usr-home');
+extension._loadInventory();
+requests[3]({load_contents_finish(){throw {matches(domain,code){assert.equal(domain,42);return code===Gio.IOErrorEnum.NOT_FOUND;}};}},{});
+assert.equal(extension._inventory.get(HOME).name,'usr-home');
 extension._loadInventory();extension._active=false;
-requests[3](result(JSON.stringify(data)),{});
+requests[4](result(JSON.stringify(data)),{});
 assert.equal(extension._inventory.get(HOME).name,'usr-home');
 """, presentation=True)
 
