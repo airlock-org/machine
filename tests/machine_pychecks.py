@@ -5719,6 +5719,8 @@ def check_config_apply_domain_references(repo_root: Path, log_dir: Path) -> None
                 "AIRLOCK_USE_HOST_NIX_STORE": "1",
                 "AIRLOCK_SYSTEM_STATE_DIR": str(state_dir),
                 "AIRLOCK_SYSTEM_ETC_DIR": str(etc_dir),
+                # RPC commands are mocked; never wait for the live VM's sockets.
+                "AIRLOCK_QREXEC_RUN_DIR": str(case_dir / "no-qrexec-runtime"),
             }
         )
         result = _run(
@@ -6072,6 +6074,8 @@ def check_config_apply_nix_domain_materialization(
             "CANDIDATE_COMMIT_FIXTURE": commit,
             "DEPLOYMENT_TAR_CAPTURE_FIXTURE": str(deployment_tar_capture),
             "SYSTEM_STATE_DIR_FIXTURE": str(state_dir),
+            # RPC commands are mocked; never wait for the live VM's sockets.
+            "AIRLOCK_QREXEC_RUN_DIR": str(work_dir / "no-qrexec-runtime"),
             "AIRLOCK_XEN_CAPABILITIES": str(capabilities),
             "AIRLOCK_LOG_DIR": str(apply_log_dir),
             "AIRLOCK_USE_HOST_NIX_STORE": "1",
