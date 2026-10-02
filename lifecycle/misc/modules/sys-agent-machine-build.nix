@@ -64,7 +64,7 @@ let
         done
         printf '%s' "$expected_revision" | ${pkgs.gnugrep}/bin/grep -Eq '^[0-9a-f]{40,64}$' || fail 'invalid revision'
         printf '%s' "$expected_lock_hash" | ${pkgs.gnugrep}/bin/grep -Eq '^[0-9a-f]{64}$' || fail 'invalid lock hash'
-        ${pkgs.coreutils}/bin/install -d -m 0700 ${lib.escapeShellArg cache} ${lib.escapeShellArg state}
+        ${pkgs.coreutils}/bin/install -d -m 0700 ${lib.escapeShellArg cache} ${lib.escapeShellArg state} ${lib.escapeShellArg (builtins.dirOf repo)}
         temp="$(${pkgs.coreutils}/bin/mktemp -d ${lib.escapeShellArg "${cache}/import.XXXXXX"})"
         trap '${pkgs.coreutils}/bin/rm -rf "$temp"' EXIT
         archive="$temp/source.tar.gz"
