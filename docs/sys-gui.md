@@ -84,6 +84,26 @@ Airlock guests advertise their session-readiness RPC; other Qubes guests use
 upstream `qubes.WaitForSession`. Search does not boot stopped VMs. Selecting a
 launcher can start its VM through the existing Qubes permissions.
 
+The GNOME session includes the Airlock VM Search extension. Application search
+uses full-name rows grouped under VM headings with their Qubes label colours;
+stopped VMs keep their cached applications and show a `Stopped` heading hint.
+Group order follows the highest-ranked GNOME match in each VM, and rows retain
+GNOME's ordering within their group. Names wrap, headings do not take keyboard
+focus, and the existing overview scroll view handles larger result sets without
+the original six-tile limit hiding another VM's applications. Application icons
+retain their original colours.
+
+The extension reads the existing `airlock-appmenus/inventory.json` cache and
+joins it to launcher UUIDs. It never derives VM identity or CSS colours from
+guest-supplied names. Cache updates and application installation changes refresh
+active searches. Failed cache reads preserve the last valid snapshot; unmatched
+entries keep their full names under `Other applications`. Local applications
+and system actions have separate groups. GNOME still owns matching, activation,
+context menus, favorites and keyboard navigation. Disabling the extension restores
+the normal application results display. Its display hooks target GNOME 50 and
+need validation when upgrading Shell. The favorites dash and app grid use their
+normal GNOME presentation.
+
 Catalogs persist in sys-gui's normal Qubes app-menu cache. Stopped VMs retain
 their last successfully synchronized entries. Failed inventory or catalog
 requests preserve cached apps, while a successful empty snapshot withdraws

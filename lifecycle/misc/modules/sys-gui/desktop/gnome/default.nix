@@ -49,9 +49,23 @@ let
     '';
     passthru = { inherit identityReader; };
   };
+  vmSearchExtension = pkgs.stdenvNoCC.mkDerivation {
+    pname = "airlock-gnome-vm-search";
+    version = "1";
+    src = ./vm-search-extension;
+    dontBuild = true;
+    installPhase = ''
+      runHook preInstall
+      extension_dir="$out/share/gnome-shell/extensions/airlock-vm-search@airlock.local"
+      mkdir -p "$extension_dir"
+      cp extension.js model.js metadata.json stylesheet.css "$extension_dir/"
+      runHook postInstall
+    '';
+  };
   enabledExtensions = [
     "airlock-host-poweroff@airlock.local"
     "airlock-focused-vm@airlock.local"
+    "airlock-vm-search@airlock.local"
   ];
   enabledExtensionsGVariant = "[${
     lib.concatMapStringsSep "," (extension: "'${extension}'") enabledExtensions
@@ -103,6 +117,7 @@ in
     environment.systemPackages = [
       hostPoweroffExtension
       focusedVMExtension
+      vmSearchExtension
       # Accessibility controls the sys-gui session itself.
       pkgs.gnome-tecla
     ];
