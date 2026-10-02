@@ -62,10 +62,28 @@ let
       runHook postInstall
     '';
   };
+  vmWorkspacesExtension = pkgs.stdenvNoCC.mkDerivation {
+    pname = "airlock-gnome-vm-workspaces";
+    version = "1";
+    src = ./vm-workspaces-extension;
+    dontBuild = true;
+    installPhase = ''
+      runHook preInstall
+      extension_dir="$out/share/gnome-shell/extensions/airlock-vm-workspaces@airlock.local"
+      mkdir -p "$extension_dir"
+      cp extension.js model.js metadata.json stylesheet.css "$extension_dir/"
+      cp ${./focused-vm-extension/state.js} "$extension_dir/identity.js"
+      cp ${./vm-search-extension/model.js} "$extension_dir/inventory.js"
+      substituteInPlace "$extension_dir/extension.js" \
+        --replace-fail '@identityReader@' '${identityReader}'
+      runHook postInstall
+    '';
+  };
   enabledExtensions = [
     "airlock-host-poweroff@airlock.local"
     "airlock-focused-vm@airlock.local"
     "airlock-vm-search@airlock.local"
+    "airlock-vm-workspaces@airlock.local"
   ];
   enabledExtensionsGVariant = "[${
     lib.concatMapStringsSep "," (extension: "'${extension}'") enabledExtensions
@@ -118,6 +136,7 @@ in
       hostPoweroffExtension
       focusedVMExtension
       vmSearchExtension
+      vmWorkspacesExtension
       # Accessibility controls the sys-gui session itself.
       pkgs.gnome-tecla
     ];

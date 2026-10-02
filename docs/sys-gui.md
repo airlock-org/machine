@@ -114,6 +114,33 @@ the normal application results display. Its display hooks target GNOME 50 and
 need validation when upgrading Shell. The favorites dash and app grid use their
 normal GNOME presentation.
 
+## VM workspace visual prototype
+
+The GNOME top panel shows contiguous workspace groups with VM names and Qubes
+label colours. Numbered buttons switch workspaces; `+` adds an empty workspace
+beside that VM's existing slots and switches to it. The active slot is highlighted.
+Groups come from the same trusted inventory as application search, with a local
+`sys-gui` group. A bounded horizontal scroll area keeps larger layouts accessible.
+
+New normal application windows receive a one-time placement suggestion based on
+the trusted Qubes window identity reader. They open in their VM's active or last
+used slot. Existing windows are left in place when the extension starts. Window
+movement remains unrestricted: overview dragging, keyboard shortcuts and sticky
+windows work as usual. A yellow `!` marks a slot containing another VM's windows
+or windows whose origin has not yet been identified. The focused-VM indicator
+continues to show the actual focused window's origin. These groups are a visual
+experiment and provide no isolation or enforcement beyond existing Qubes policy.
+
+The extension temporarily uses static workspaces so empty slots survive. Its
+layout is stored in the desktop user's `airlock-vm-workspaces/layout.json` beneath
+the XDG state directory. UUIDs preserve groups across VM renames; stopped or absent
+VMs retain their slots, with absent VMs labelled `Unavailable VM`. The prototype
+supports adding and switching slots, with at most 36 total, and has no removal or
+group-reordering controls yet. Disabling the extension restores the original
+workspace preferences. GNOME 50 workspace and panel APIs need validation on
+Shell upgrades. All code and packaging are confined to `sys-gui`; no guest GUI
+agent, qrexec policy or host control authority changes are required.
+
 Catalogs persist in sys-gui's normal Qubes app-menu cache. Stopped VMs retain
 their last successfully synchronized entries. Failed inventory or catalog
 requests preserve cached apps, while a successful empty snapshot withdraws

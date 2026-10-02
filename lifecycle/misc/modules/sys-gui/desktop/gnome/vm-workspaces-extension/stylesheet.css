@@ -1,0 +1,9 @@
+.airlock-workspaces { spacing: 10px; }
+.airlock-workspace-group { spacing: 3px; }
+.airlock-workspace-name { font-size: 11px; margin-right: 2px; }
+.airlock-workspace-dot { width: 7px; height: 7px; border-radius: 4px; margin-right: 3px; }
+.airlock-workspace-slot { border-radius: 5px; padding: 0 5px; font-size: 11px; color: #bbb; }
+.airlock-workspace-slot:hover { background-color: rgba(255,255,255,0.15); }
+.airlock-workspace-slot.active { background-color: rgba(255,255,255,0.25); color: white; }
+.airlock-workspace-slot.mixed { color: #f6d32d; }
+.airlock-workspace-add { padding: 0 3px; color: #aaa; }
