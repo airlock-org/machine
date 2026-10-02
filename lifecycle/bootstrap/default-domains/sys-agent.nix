@@ -5,7 +5,7 @@
   netvm = "sys-firewall";
   prefs = {
     autostart = true;
-    guivm = null;
+    guivm = "sys-gui";
     include_in_backups = true;
     # Whole-machine Nix evaluation exceeds 4 GiB RSS.
     memory = 8192;
@@ -17,6 +17,7 @@
   features = {
     "airlock-managed" = "1";
     "airlock-role" = "sys-agent";
+    "menu-items" = "*";
     # Explicitly clear the prior provider features on deployed Qubes domains.
     "airlock-auto-network-pci" = "0";
     "airlock-network-provider" = "0";

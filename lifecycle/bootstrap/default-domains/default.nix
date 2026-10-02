@@ -58,7 +58,11 @@ let
       guestRole = "sys-agent";
       inherit extraSpecialArgs;
       modules = [
-        ({ ... }: { networking.hostName = sysAgentRoleDefaults.guestHostName; })
+        ({ lib, ... }: {
+          networking.hostName = sysAgentRoleDefaults.guestHostName;
+          # Match the personal application VMs on the current lab display.
+          airlock.appGui.scale = lib.mkDefault 3;
+        })
         ../../misc/modules/sys-agent-guest.nix
       ];
       rootImageSizeMiB = sysAgentRoleDefaults.rootImageSizeMiB;

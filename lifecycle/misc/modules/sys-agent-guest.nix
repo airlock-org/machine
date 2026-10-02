@@ -1,6 +1,15 @@
-{ pkgs, ... }:
+{ config, lib, pkgs, ... }:
+let
+  cfg = config.airlock.qubeGuest;
+  workspaceState = "/home/${cfg.user}/.local/state/airlock";
+in
 {
-  imports = [ ./sys-agent-machine-build.nix ./sys-agent-build-store.nix ./machine-source-seed.nix ];
+  imports = [
+    ./app-gui-guest.nix
+    ./sys-agent-machine-build.nix
+    ./sys-agent-build-store.nix
+    ./machine-source-seed.nix
+  ];
 
   # sys-agent is an intentionally privileged USB-lab development domain. It
   # remains the Tailnet entry point for the development-only dom0 qrexec shell.
@@ -29,7 +38,46 @@
     serviceConfig.BindPaths = [ "/rw/config/tailscale:/var/lib/tailscale" ];
     serviceConfig.ExecStartPost = [ "${pkgs.tailscale}/bin/tailscale set --hostname=sys-agent" ];
   };
-  environment.systemPackages = [ pkgs.jq ];
+  environment.systemPackages = [
+    pkgs.codex
+    pkgs.gnome-console
+    pkgs.gnumake
+    pkgs.jq
+    pkgs.python3
+    pkgs.ripgrep
+    pkgs.uv
+    pkgs.zellij
+  ];
+  fonts.packages = [ pkgs.dejavu_fonts ];
+  environment.sessionVariables = {
+    CODEX_HOME = cfg.codexHome;
+    AIRLOCK_DATA_ROOT = workspaceState;
+    AIRLOCK_LOG_DIR = "${workspaceState}/logs";
+    AIRLOCK_NIX_ROOT = cfg.configNixStoreRoot;
+    # The installed nix wrapper already selects the approved overlay store.
+    # Do not let development-host helpers inject a different store setting.
+    AIRLOCK_NIX_CONFIGURED = "1";
+    UV_PYTHON = "${pkgs.python3}/bin/python3";
+    UV_PYTHON_DOWNLOADS = "never";
+  };
+  environment.etc."airlock/sys-agent/AGENTS.md".source = ./sys-agent/AGENTS.md;
+  systemd.services.airlock-sys-agent-workspace = {
+    description = "Initialize persistent sys-agent Codex guidance";
+    wantedBy = [ "multi-user.target" ];
+    requires = [ "airlock-qubes-rw-init.service" ];
+    after = [ "airlock-qubes-rw-init.service" ];
+    before = [ "qubes-qrexec-agent.service" ];
+    path = [ pkgs.coreutils ];
+    script = ''
+      ${pkgs.bash}/bin/bash ${./sys-agent/workspace-init.sh} \
+        ${lib.escapeShellArg cfg.codexHome} /etc/airlock/sys-agent/AGENTS.md
+    '';
+    serviceConfig = {
+      Type = "oneshot";
+      RemainAfterExit = true;
+      User = cfg.user;
+    };
+  };
   environment.etc."qubes-rpc/airlock.DevTailscaleUp" = {
     source = pkgs.writeShellScript "airlock-dev-tailscale-up" ''
       export PATH=${pkgs.lib.makeBinPath [ pkgs.coreutils pkgs.glibc.bin pkgs.iproute2 pkgs.curl pkgs.tailscale ]}:$PATH
