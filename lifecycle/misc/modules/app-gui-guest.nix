@@ -109,6 +109,10 @@ in
       # Packages normally provide themed icons but not the theme index itself.
       # The generic GetImageRGBA resolver needs it even without a full desktop.
       pkgs.hicolor-icon-theme
+      # GTK's built-in fallback covers only a few icons. Forwarded applications
+      # also need the standard action icons (for example tab-new-symbolic) in
+      # their own VM's active profile, without installing a desktop there.
+      pkgs.adwaita-icon-theme
       # qubes.SetMonitorLayout calls these by name.  Without them, a guest
       # that connects before the GuiVM reaches its final display size keeps
       # the initial 1280x800 X screen and its pointer cannot reach the rest of

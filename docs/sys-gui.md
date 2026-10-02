@@ -124,6 +124,11 @@ build-time catalog seeding in this version. Workers have bounded timeouts and
 independent per-VM locks; unchanged snapshots skip icon refresh until the
 five-minute periodic icon check.
 
+The shared `app-gui-guest.nix` configuration exposes Hicolor and Adwaita icon
+assets in each application VM's active profile. Applications resolve their own
+toolbar and action icons there, including in headless guests such as sys-agent;
+these assets do not require a desktop session or per-application overrides.
+
 `airlock.sysGuiGuest.applicationMenus.enable` controls discovery.
 `airlock.sysGuiGuest.defaultApplicationVM` defaults to `usr-home` for web-link
 opening; that VM chooses its own browser using normal MIME defaults. Setting
