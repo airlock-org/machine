@@ -74,9 +74,9 @@ in
 {
   imports = [ ./setup.nix ];
   config = lib.mkIf (cfg.session == "gnome") {
-    # Every forwarded window uses application-owned chrome. The focused VM
-    # panel is this session's trusted identity display; do not add title bars
-    # or colour borders, or select decoration policy by application class.
+    # Applications own their title bars. The trusted GUI daemon adds a thin
+    # VM-coloured outline only for forwarded sys-* windows; the focused VM
+    # panel identifies every VM. Decoration policy never uses application class.
     nixpkgs.overlays = lib.mkAfter [
       (_final: prev: {
         qubes-gui-daemon = prev.qubes-gui-daemon.overrideAttrs (old: {

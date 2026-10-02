@@ -50,6 +50,16 @@ diagnostics are in `journalctl -b -u display-manager` inside `sys-gui`.
 
 ## Applications across VMs
 
+In GNOME, forwarded applications supply their own title bars. The trusted Qubes
+GUI daemon requests no additional window-manager decorations. Forwarded windows
+from VMs named `sys-*` have a two-pixel outline in their Qubes label colour
+(for example, red for `sys-agent`). The daemon draws this on the outer pixels
+of the forwarded window using the VM identity supplied by Qubes, independently
+of application names or classes. Docked tray icons have no added outline.
+Personal VM windows such as `usr-home` have no added outline; their native
+application edges and GNOME shadows remain. The focused VM panel identifies
+windows from every VM. Applications running directly in sys-gui are unaffected.
+
 The desktop user's `airlock-application-menus.timer` starts two seconds after
 the graphical session starts and repeats thirty seconds after each refresh
 finishes. It obtains a complete Qubes inventory and discovers applications in
