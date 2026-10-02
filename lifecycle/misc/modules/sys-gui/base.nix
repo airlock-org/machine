@@ -11,6 +11,7 @@ let
   desktopCommon = pkgs.python3.pkgs.qubes-desktop-linux-common.overrideAttrs (old: {
     patches = (old.patches or [ ]) ++ [
       ../../patches/qubes-desktop-linux-common/0001-discover-application-vms.patch
+      ../../patches/qubes-desktop-linux-common/0002-preserve-application-icon-colours.patch
     ];
   });
   hybrid = cfg.displayMode == "hybrid";

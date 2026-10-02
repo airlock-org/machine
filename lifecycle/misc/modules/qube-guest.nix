@@ -36,7 +36,11 @@ let
   qubesPython = pkgs.python3.withPackages (ps: [
     ps.dbus-python
     ps.pygobject3
-    ps.pyxdg
+    (ps.pyxdg.overrideAttrs (old: {
+      patches = (old.patches or [ ]) ++ [
+        ../patches/pyxdg/0001-correct-icon-theme-size-defaults.patch
+      ];
+    }))
     qubesDbPython
   ]);
   # RPCs run outside a login shell. Use the active user and system profiles

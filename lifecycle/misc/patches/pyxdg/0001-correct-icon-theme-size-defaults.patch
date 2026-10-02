@@ -1,0 +1,42 @@
+--- a/xdg/IconTheme.py
++++ b/xdg/IconTheme.py
+@@ -62,18 +62,18 @@
+     def getMaxSize(self, directory):
+         value = self.get('MaxSize', type="integer", group=directory)
+-        if value or value == 0:
++        if self.hasKey('MaxSize', group=directory):
+             return value
+         else:
+             return self.getSize(directory)
+     def getMinSize(self, directory):
+         value = self.get('MinSize', type="integer", group=directory)
+-        if value or value == 0:
++        if self.hasKey('MinSize', group=directory):
+             return value
+         else:
+             return self.getSize(directory)
+     def getThreshold(self, directory):
+         value = self.get('Threshold', type="integer", group=directory)
+-        if value or value == 0:
++        if self.hasKey('Threshold', group=directory):
+             return value
+         else:
+             return 2
+@@ -419,7 +419,7 @@
+     MaxSize = theme.getMaxSize(subdir)
+     if Type == "Fixed":
+         return Size == iconsize
+-    elif Type == "Scaleable":
++    elif Type == "Scalable":
+         return MinSize <= iconsize <= MaxSize
+     elif Type == "Threshold":
+         return Size - Threshold <= iconsize <= Size + Threshold
+@@ -437,7 +437,7 @@
+         if iconsize < MinSize:
+             return MinSize - iconsize
+         elif iconsize > MaxSize:
+-            return MaxSize - iconsize
++            return iconsize - MaxSize
+         return 0
+     elif Type == "Threshold":
+         if iconsize < Size - Threshold:

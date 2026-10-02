@@ -1,12 +1,15 @@
 """Installed interfaces needed before a new VM's host generation boots."""
 
 import ast
+import filecmp
 import io
+import itertools
 import json
 import os
 from pathlib import Path
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 from types import SimpleNamespace
@@ -15,6 +18,31 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 pytestmark = pytest.mark.nix
+
+
+def test_icon_rpc_selects_largest_suitable_packaged_bitmap():
+    expression = f'''
+      let
+        f = builtins.getFlake "{ROOT}";
+        cfg = f.nixosConfigurations.airlock-domain-usr-home.config;
+        pkgs = cfg.nixpkgs.pkgs;
+        handler = cfg.environment.etc."qubes-rpc/qubes.GetImageRGBA".source;
+      in pkgs.runCommand "airlock-icon-size-selection" {{
+        XDG_DATA_DIRS = "${{pkgs.hicolor-icon-theme}}/share:${{pkgs.firefox}}/share";
+      }} ''
+        printf 'xdgicon:firefox\\n' | ${{handler}} > "$out"
+      ''
+    '''
+    result = subprocess.run(
+        [str(ROOT / "lifecycle/misc/tools/scripts/airlock-nix.sh"),
+         "build", "--impure", "--no-link", "--print-out-paths", "--expr", expression],
+        cwd=ROOT, text=True, capture_output=True,
+    )
+    assert result.returncode == 0, result.stderr
+    output = Path(os.environ["AIRLOCK_NIX_ROOT"]) / result.stdout.strip().lstrip("/")
+    dimensions, pixels = output.read_bytes().split(b"\n", 1)
+    assert tuple(map(int, dimensions.split())) == (128, 128)
+    assert len(pixels) == 128 * 128 * 4
 
 
 def test_icon_rpc_renders_complex_application_svgs():
@@ -34,8 +62,9 @@ def test_icon_rpc_renders_complex_application_svgs():
     result = subprocess.run(
         [str(ROOT / "lifecycle/misc/tools/scripts/airlock-nix.sh"),
          "build", "--impure", "--no-link", "--print-out-paths", "--expr", expression],
-        cwd=ROOT, check=True, text=True, capture_output=True,
+        cwd=ROOT, text=True, capture_output=True,
     )
+    assert result.returncode == 0, result.stderr
     output = Path(os.environ["AIRLOCK_NIX_ROOT"]) / result.stdout.strip().lstrip("/")
     for name in ("contacts", "logs", "fonts"):
         dimensions, pixels = (output / f"{name}.rgba").read_bytes().split(b"\n", 1)
@@ -191,6 +220,32 @@ def test_packaged_receiver_rejects_control_characters_and_unsafe_ids(interfaces,
     assert "StartupWMClass" not in entries.get("valid", {})
     assert "OnlyShowIn" not in entries.get("valid", {})
     assert "bad;command" not in entries
+
+
+def test_packaged_menus_restore_original_icon_bytes_without_rewriting_cache(
+    interfaces, tmp_path,
+):
+    class_node = next(node for node in ast.parse(interfaces["menus"]).body
+                      if isinstance(node, ast.ClassDef) and node.name == "Appmenus")
+    namespace = {"filecmp": filecmp, "shutil": shutil, "os": os, "itertools": itertools}
+    exec(compile(ast.Module(body=[class_node], type_ignores=[]), "packaged-menus", "exec"), namespace)
+    menus = namespace["Appmenus"]()
+    source, destination = tmp_path / "source", tmp_path / "icons"
+    source.mkdir()
+    destination.mkdir()
+    original = source / "example.png"
+    original.write_bytes(b"original application colour pixels")
+    cached = destination / original.name
+    cached.write_bytes(b"old blue tint")
+    os.utime(cached, (original.stat().st_mtime + 60,) * 2)
+    menus.icons_dir = lambda vm: str(destination)
+    menus.whitelist_path = lambda vm: str(tmp_path / "whitelist")
+    guest = SimpleNamespace(features={"menu-items": "*"}, klass="StandaloneVM")
+    menus.appicons_create(guest, srcdirs=(str(source),))
+    assert cached.read_bytes() == original.read_bytes()
+    timestamp = cached.stat().st_mtime_ns
+    menus.appicons_create(guest, srcdirs=(str(source),))
+    assert cached.stat().st_mtime_ns == timestamp
 
 
 def test_packaged_qvm_appmenus_uses_uuid_ids_and_wildcard_selection(interfaces):

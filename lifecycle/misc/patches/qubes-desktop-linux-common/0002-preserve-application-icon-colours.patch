@@ -1,0 +1,20 @@
+--- a/qubesappmenus/__init__.py
++++ b/qubesappmenus/__init__.py
+@@ -24,6 +24,7 @@
+ """Handle menu entries for starting applications in qubes"""
+ import contextlib
++import filecmp
+ import subprocess
+ import sys
+ import os
+ import os.path
+@@ -575,7 +576,7 @@
+             dst_icon = os.path.join(dstdir, icon)
+             if not os.path.exists(dst_icon) or force or \
+-                    os.path.getmtime(src_icon) > os.path.getmtime(dst_icon):
+-                qubesimgconverter.tint(src_icon, dst_icon, vm.label.color)
++                    not filecmp.cmp(src_icon, dst_icon, shallow=False):
++                shutil.copyfile(src_icon, dst_icon)
+ 
+         for icon in os.listdir(dstdir):
+             if icon not in expected_icons:
