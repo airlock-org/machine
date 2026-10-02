@@ -99,7 +99,9 @@ class Backend:
             return None
         if str(getattr(vm, "guivm", "")) != self.app.local_name:
             return None
-        if "airlock-retired" in vm.tags:
+        # Tags.__contains__ uses admin.vm.tag.Get, which the GUI policy denies.
+        # Iteration uses the permitted read-only admin.vm.tag.List interface.
+        if "airlock-retired" in set(vm.tags):
             return None
         if vm.features.get("internal", False):
             return None

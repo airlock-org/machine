@@ -298,6 +298,34 @@ def test_membership_comes_from_qubes_and_excludes_unassigned_retired_vms(change)
     assert backend.description(guest) is None
 
 
+@pytest.mark.parametrize("retired", [False, True])
+def test_gui_inventory_uses_permitted_tag_listing(retired):
+    class ListOnlyTags:
+        def __iter__(self):
+            return iter(["airlock-retired"] if retired else ["guivm-sys-gui"])
+
+        def __contains__(self, tag):
+            raise PermissionError("admin.vm.tag.Get is denied to sys-gui")
+
+    guest = SimpleNamespace(
+        name="usr-home",
+        uuid=HOME_ID,
+        guivm="sys-gui",
+        tags=ListOnlyTags(),
+        features={},
+        klass="StandaloneVM",
+        label=SimpleNamespace(color="#0000ff"),
+        is_running=lambda: True,
+    )
+    backend = object.__new__(MENUS.Backend)
+    backend.app = SimpleNamespace(local_name="sys-gui")
+    description = backend.description(guest)
+    if retired:
+        assert description is None
+    else:
+        assert description["uuid"] == HOME_ID
+
+
 @pytest.fixture
 def sync_backend(state, tmp_path, monkeypatch):
     backend = object.__new__(MENUS.Backend)
