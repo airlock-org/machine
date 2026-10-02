@@ -36,8 +36,8 @@ def javascript(tmp_path):
             f"import {{describeResult, groupResults, parseInventory}} from {json.dumps(model.as_uri())};\n"
             f"const HOME={json.dumps(HOME)}, AGENT={json.dumps(AGENT)};\n"
             "const app=(vm,name='org.gnome.Console')=>`org.qubes-os.vm.${vm}.${name}.desktop`;\n"
-            "const snapshot=()=>({[HOME]:{uuid:HOME,name:'usr-home',label:'#3465a4',running:true},"
-            "[AGENT]:{uuid:AGENT,name:'sys-agent',label:'#cc0000',running:false}});\n"
+            "const snapshot=()=>({[HOME]:{uuid:HOME,name:'usr-home',label:'0x3465a4',running:true},"
+            "[AGENT]:{uuid:AGENT,name:'sys-agent',label:'0xcc0000',running:false}});\n"
         )
         if presentation:
             header += SHELL_MOCKS + f"\nconst {{VMSearchResults, default: VMSearchExtension}} = await import({json.dumps(extension.as_uri())});\n"
@@ -96,6 +96,10 @@ assert.equal(describeResult(app(HOME),'usr-home: Console',parseInventory(JSON.st
 def test_guest_names_cannot_supply_vm_identity_or_css(javascript):
     javascript("""
 const data=snapshot();
+for(const label of ['0x3465a4','#3465A4']) {
+ data[HOME].label=label;
+ assert.equal(parseInventory(JSON.stringify(data)).get(HOME).color,'#3465a4');
+}
 data[HOME].label='red; width:10000px';
 data[AGENT].uuid=HOME;
 const inventory=parseInventory(JSON.stringify(data));

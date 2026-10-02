@@ -2,7 +2,7 @@
 // from an application's display name or icon.
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const VM_NAME = /^[A-Za-z][A-Za-z0-9_.-]{0,30}$/;
-const COLOR = /^#[0-9a-fA-F]{6}$/;
+const COLOR = /^(?:#|0x)([0-9a-fA-F]{6})$/;
 const LAUNCHER = /^org\.qubes-os\.(vm|dispvm)\.([0-9a-f-]{36})\..+\.desktop$/;
 
 export function parseInventory(text) {
@@ -15,9 +15,10 @@ export function parseInventory(text) {
             typeof item.name !== 'string' || !VM_NAME.test(item.name) ||
             typeof item.running !== 'boolean')
             continue;
+        const color = typeof item.label === 'string' ? COLOR.exec(item.label) : null;
         inventory.set(identity, {
             name: item.name,
-            color: typeof item.label === 'string' && COLOR.test(item.label) ? item.label : null,
+            color: color ? `#${color[1].toLowerCase()}` : null,
             running: item.running,
         });
     }
