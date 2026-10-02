@@ -27,6 +27,8 @@ embed authentication in the machine configuration.
 full installed guidance. On upgrade, the previous `~/dev/airlock-machine`
 checkout moves as a whole, preserving local branches and uncommitted files.
 An existing destination or user-written home introduction is preserved.
+If you already had a `.venv` in the moved checkout, run
+`uv sync --locked --reinstall` once to refresh launchers containing the old path.
 
 `CODEX_HOME` points at `~/.codex`. On first boot, a symlink there named
 `AGENTS.md` points at `/etc/airlock/sys-agent/AGENTS.md`, which contains the VM
