@@ -8,6 +8,7 @@ import configparser
 import os
 from pathlib import Path
 import re
+import shlex
 import shutil
 import sys
 
@@ -24,6 +25,28 @@ FIELDS = {
     "NotShowIn",
 }
 DESKTOP_ID = re.compile(r"[A-Za-z0-9._-]+\Z")
+ENV_ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=.*\Z")
+
+
+def executable_window_class(command):
+    # X11 clients commonly use the executable name as their resource name.
+    # Infer it before replacing Exec with the safe Qubes launcher. Explicit
+    # StartupWMClass remains authoritative; wrappers/DBus-only entries may
+    # still need that application-supplied hint.
+    try:
+        arguments = shlex.split(command)
+    except ValueError:
+        return None
+    if arguments and Path(arguments[0]).name == "env":
+        arguments.pop(0)
+        while arguments and ENV_ASSIGNMENT.fullmatch(arguments[0]):
+            arguments.pop(0)
+        if arguments and arguments[0] == "--":
+            arguments.pop(0)
+    if not arguments or arguments[0].startswith("-"):
+        return None
+    executable = Path(arguments[0]).name
+    return executable if DESKTOP_ID.fullmatch(executable) else None
 
 
 def application_dirs(environ):
@@ -112,6 +135,11 @@ def catalog(directories, *, persistence="full", rw=Path("/rw"), environ=None):
                 for key, value in entry.items()
                 if key.split("[", 1)[0] in FIELDS and "\n" not in value
             }
+            if not values.get("StartupWMClass"):
+                values.pop("StartupWMClass", None)
+                window_class = executable_window_class(entry.get("Exec", ""))
+                if window_class:
+                    values["StartupWMClass"] = window_class
             # No guest command is executed in the GUI VM. StartApp resolves the
             # original desktop entry inside the originating VM.
             values["Exec"] = "qubes-desktop-run " + desktop_id

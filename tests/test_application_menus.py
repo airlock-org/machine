@@ -65,7 +65,35 @@ def test_install_and_uninstall_need_no_application_specific_configuration(tmp_pa
 
 def test_dbus_activated_app_does_not_need_an_exec_field(tmp_path):
     desktop(tmp_path, "org.example.App.desktop", Exec="", DBusActivatable="true")
-    assert "org.example.App.desktop" in CATALOG.catalog([tmp_path])
+    entry = CATALOG.catalog([tmp_path])["org.example.App.desktop"]
+    assert "StartupWMClass" not in entry
+
+
+@pytest.mark.parametrize(
+    "command,window_class",
+    [
+        ("kgx", "kgx"),
+        ('"/nix/store/example-package/bin/new-app" %U', "new-app"),
+        ('env APP_MODE="some value" /run/current-system/sw/bin/new-app %f', "new-app"),
+        ("env -- new-app", "new-app"),
+        ("env APP_MODE=value", None),
+        ("env -u APP_MODE new-app", None),
+        ('"unterminated', None),
+        ("%k", None),
+    ],
+)
+def test_missing_window_class_uses_original_exec_metadata(
+    tmp_path, command, window_class
+):
+    desktop(tmp_path, "org.example.App.desktop", Exec=command)
+    entry = CATALOG.catalog([tmp_path])["org.example.App.desktop"]
+    assert entry.get("StartupWMClass") == window_class
+    assert entry["Exec"] == "qubes-desktop-run org.example.App.desktop"
+
+
+def test_application_window_class_takes_precedence_over_executable(tmp_path):
+    desktop(tmp_path, Exec="different-launcher", StartupWMClass="AppWindow")
+    assert CATALOG.catalog([tmp_path])["firefox.desktop"]["StartupWMClass"] == "AppWindow"
 
 
 def test_unreadable_subdirectory_aborts_snapshot(tmp_path, monkeypatch):
