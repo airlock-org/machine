@@ -502,6 +502,16 @@ def machine(tmp_path, topology, monkeypatch):
     return Machine(tmp_path / "state", baseline, topology)
 
 
+@pytest.fixture
+def readiness_clock(monkeypatch):
+    clock = [0]
+    monkeypatch.setattr(deploy.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(
+        deploy.time, "sleep", lambda seconds: clock.__setitem__(0, clock[0] + seconds)
+    )
+    return clock
+
+
 def new_release(tmp_path, topology):
     new = deepcopy(topology)
     new["domains"]["usr-home"]["backend"]["system"]["source"] += "-new"
@@ -630,7 +640,7 @@ def test_boot_start_refuses_missing_gpu_guard(machine):
 @pytest.mark.parametrize("action", ["verify", "apply"])
 @pytest.mark.parametrize("rebooted", [False, True])
 def test_verification_scopes_manually_running_guests_to_apply_boot(
-    machine, tmp_path, topology, monkeypatch, action, rebooted
+    machine, tmp_path, topology, monkeypatch, action, rebooted, readiness_clock
 ):
     monkeypatch.setattr(deploy, "boot_id", lambda: "apply-boot")
     topology["domains"]["usr-browser"]["prefs"]["autostart"] = False
@@ -648,7 +658,7 @@ def test_verification_scopes_manually_running_guests_to_apply_boot(
         return machine.verify_selected() if action == "verify" else machine.apply(release)
 
     if not rebooted:
-        with pytest.raises(deploy.DeploymentError, match="usr-browser: failed to start"):
+        with pytest.raises(deploy.DeploymentError, match="usr-browser: readiness timed out"):
             check()
         return
     check()
@@ -657,12 +667,12 @@ def test_verification_scopes_manually_running_guests_to_apply_boot(
     # A repeated check must retain cold-boot semantics.
     check()
     machine.live.remove("usr-home")
-    with pytest.raises(deploy.DeploymentError, match="usr-home: failed to start"):
+    with pytest.raises(deploy.DeploymentError, match="usr-home: readiness timed out"):
         check()
 
 
 def test_post_reboot_verification_checks_autostart_dependencies_and_manual_guests(
-    machine, tmp_path, topology, monkeypatch
+    machine, tmp_path, topology, monkeypatch, readiness_clock
 ):
     monkeypatch.setattr(deploy, "boot_id", lambda: "apply-boot")
     topology["domains"]["sys-agent"]["prefs"]["autostart"] = False
@@ -670,7 +680,7 @@ def test_post_reboot_verification_checks_autostart_dependencies_and_manual_guest
     machine.apply(new_release(tmp_path, topology))
     monkeypatch.setattr(deploy, "boot_id", lambda: "next-boot")
     machine.live.remove("sys-agent")
-    with pytest.raises(deploy.DeploymentError, match="sys-agent: failed to start"):
+    with pytest.raises(deploy.DeploymentError, match="sys-agent: readiness timed out"):
         machine.verify_selected()
     machine.live.add("sys-agent")
     command = machine.command
@@ -1793,6 +1803,71 @@ def test_boot_readiness_waits_for_running_and_qrexec(
 def test_boot_readiness_rejects_wrong_generation(machine):
     with pytest.raises(deploy.DeploymentError, match="differs from release"):
         machine.wait_boot_guest("sys-agent", "/nix/store/wrong-system")
+
+
+@pytest.mark.parametrize("becomes_ready", [True, False])
+@pytest.mark.parametrize("failure", ["connection", "process-timeout"])
+def test_apply_waits_for_guest_readiness_before_selecting_release(
+    machine, tmp_path, topology, monkeypatch, readiness_clock, becomes_ready, failure
+):
+    wanted = deepcopy(topology)
+    wanted["domains"]["sys-agent"]["prefs"]["virt_mode"] = "pvh"
+    release = write_release(tmp_path / "pvh", wanted)
+    command = machine.command
+    probes = []
+
+    def delayed(*args, **kwargs):
+        result = command(*args, **kwargs)
+        if args[0] == "qvm-ls" and readiness_clock[0] < 2:
+            return result.replace("sys-agent|Running", "sys-agent|Transient")
+        if args[:3] == ("qrexec-client", "-d", "sys-agent"):
+            probes.append(readiness_clock[0])
+            assert 0 < kwargs["timeout"] <= 10
+            if readiness_clock[0] < 3 or not becomes_ready:
+                if failure == "connection":
+                    raise subprocess.CalledProcessError(125, args)
+                raise subprocess.TimeoutExpired(args, kwargs["timeout"])
+        return result
+
+    monkeypatch.setattr(machine, "command", delayed)
+    if becomes_ready:
+        result = machine.apply(release)
+        assert probes == [2, 3]
+        assert result["observed"]["sys-agent"]["running"] == machine.selected["sys-agent"]
+        assert machine.pointer()["release"] == str(release)
+    else:
+        with pytest.raises(deploy.DeploymentError, match="sys-agent: readiness timed out"):
+            machine.apply(release)
+        assert readiness_clock[0] == 180
+        assert machine.status()["phase"] == "failed"
+        assert not any(
+            call[:2] in (("airlock-host-store", "bind-machine"), ("airlock-host-store", "select"))
+            for call in machine.calls
+        )
+
+
+def test_apply_rejects_wrong_running_generation_without_readiness_retry(
+    machine, tmp_path, topology, monkeypatch, readiness_clock
+):
+    command = machine.command
+    probes = []
+
+    def wrong_generation(*args, **kwargs):
+        if args[:3] == ("qrexec-client", "-d", "sys-agent"):
+            probes.append(args)
+            return "/nix/store/wrong-running-system"
+        return command(*args, **kwargs)
+
+    monkeypatch.setattr(machine, "command", wrong_generation)
+    with pytest.raises(deploy.DeploymentError, match="sys-agent: running system differs"):
+        machine.apply(new_release(tmp_path, topology))
+    assert len(probes) == 1
+    assert readiness_clock[0] == 0
+    assert machine.status()["phase"] == "failed"
+    assert not any(
+        call[:2] in (("airlock-host-store", "bind-machine"), ("airlock-host-store", "select"))
+        for call in machine.calls
+    )
 
 
 def direct_candidate_fixture(machine, tmp_path, topology):

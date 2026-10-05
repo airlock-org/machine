@@ -34,6 +34,14 @@ The existing CLI, journal fields, schema identifiers, and recovery behavior are
 preserved. Tests in `tests/test_machine_deploy.py` exercise those contracts,
 including interruption, rollback, shared locking, and installed-package imports.
 
+Boot and deployment verification both wait up to 180 seconds per required guest
+for Qubes' Running state and a successful qrexec generation query. Each qrexec
+probe has a bounded process timeout, with transient command failures retried
+within the overall deadline. An answering guest with the wrong generation fails
+immediately; readiness failure leaves the transaction failed and prevents host
+boot binding and selection. The interrupted transaction remains journalled for
+explicit recovery.
+
 Host and controller preparation can extend an authenticated EROFS index when
 its registered objects are an additive subset of the next store. Existing
 logical offsets stay fixed; new fragments append before the terminal tar EOF.

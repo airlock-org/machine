@@ -648,7 +648,6 @@ class Coordinator:
 
     def verify(self, topology, expected_running):
         observed = {}
-        running = self.running()
         for name, domain in topology["domains"].items():
             expected = domain["backend"]["system"]["source"]
             selected = self.command("qvm-features", name, "airlock-system-source")
@@ -659,19 +658,7 @@ class Coordinator:
             self.verify_storage(name, domain["backend"])
             actual = None
             if name in expected_running:
-                if name not in running:
-                    raise DeploymentError(f"{name}: failed to start")
-                actual = self.command(
-                    "qrexec-client",
-                    "-d",
-                    name,
-                    "user:readlink -f /run/current-system",
-                    timeout=180,
-                )
-                if actual != expected:
-                    raise DeploymentError(
-                        f"{name}: running system differs from release: {actual}"
-                    )
+                actual = self.wait_boot_guest(name, expected)
             observed[name] = {"selected": selected, "running": actual}
         return observed
 
@@ -966,7 +953,7 @@ class Coordinator:
             return record
 
     def wait_boot_guest(self, name, expected, timeout=180):
-        """Wait through Qubes' transient startup state and verify qrexec readiness."""
+        """Bound readiness checks for both boot and deployment verification."""
         deadline = time.monotonic() + timeout
         last_error = "not running yet"
         while time.monotonic() < deadline:
@@ -983,7 +970,7 @@ class Coordinator:
                         raise DeploymentError(
                             f"{name}: running system differs from release: {actual}"
                         )
-                    return
+                    return actual
             except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
                 last_error = str(exc)
             time.sleep(min(1, max(0, deadline - time.monotonic())))
