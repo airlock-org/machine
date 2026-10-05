@@ -118,17 +118,19 @@ normal GNOME presentation.
 
 The GNOME top panel shows contiguous application-VM workspace groups with readable
 VM names and small dots in their Qubes label colours. A wider dot marks the active
-workspace. Clicking a dot switches to that workspace; clicking a VM name returns
-to its last used workspace. The `⋮` menu adds an adjacent workspace to a chosen
-VM. Groups come from the same trusted inventory as application search. Sys-gui
+workspace. The display replaces the contents of GNOME's existing Activities
+button, with a single hover highlight. Clicking it opens or closes the normal
+zoomed-out overview. GNOME retains its keyboard, scroll, drag and hot-corner
+behaviour; the VM labels and dots are passive, with no individual buttons or
+add-workspace menu. Groups come from the same trusted inventory as application search. Sys-gui
 has no dedicated group: its local windows share ordinary application workspaces.
-A bounded horizontal scroll area keeps larger layouts accessible.
+The display fits within the normal Activities panel allocation.
 
 New normal application windows receive a one-time placement suggestion based on
 the trusted Qubes window identity reader. They open in their VM's active or last
 used slot. Existing windows are left in place when the extension starts. Window
 movement remains unrestricted: overview dragging, keyboard shortcuts and sticky
-windows work as usual. Workspace button accessibility descriptions include the
+windows work as usual. The Activities accessibility description includes the
 VMs actually present; native sys-gui windows are excluded from that list.
 The focused-VM indicator
 continues to show the actual focused window's origin. These groups are a visual
@@ -137,13 +139,14 @@ experiment and provide no isolation or enforcement beyond existing Qubes policy.
 The extension temporarily uses static workspaces so requested empty slots survive.
 Initial slots reuse existing workspaces; redundant empty workspaces are removed.
 Occupied leftovers retain their workspace objects under the personal VM's group.
-The controller remains active while the desktop is locked, with its panel and
-menu hidden, so locking does not restore the old workspace count. Its
+The controller remains active while the desktop is locked, with its display
+hidden, so locking does not restore the old workspace count. Its
 layout is stored in the desktop user's `airlock-vm-workspaces/layout.json` beneath
 the XDG state directory. UUIDs preserve groups across VM renames; stopped or absent
 VMs retain their slots, with absent VMs labelled `Unavailable VM`. The prototype
-supports adding and switching slots, with at most 36 total, and has no removal or
-group-reordering controls yet. Disabling the extension restores the original
+retains the saved layout, with at most 36 slots, and has no separate workspace
+creation, removal or group-reordering controls. Disabling the extension restores
+the native Activities indicators and the original
 workspace preferences. GNOME 50 workspace and panel APIs need validation on
 Shell upgrades. All code and packaging are confined to `sys-gui`; no guest GUI
 agent, qrexec policy or host control authority changes are required.

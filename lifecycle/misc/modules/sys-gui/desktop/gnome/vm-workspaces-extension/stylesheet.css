@@ -1,12 +1,6 @@
-.airlock-workspace-panel { spacing: 6px; }
+/* The native Activities actor supplies the single hover/checked surface. */
 .airlock-workspaces { spacing: 14px; }
-.airlock-workspace-group { spacing: 1px; }
-.airlock-workspace-name { margin-right: 4px; padding: 0 2px; border-radius: 5px; }
-.airlock-workspace-name:hover { background-color: rgba(255,255,255,0.12); }
+.airlock-workspace-group { spacing: 5px; }
+.airlock-workspace-name { margin-right: 3px; }
 .airlock-workspace-dot { width: 6px; height: 6px; border-radius: 3px; }
 .airlock-workspace-dot.active { width: 18px; }
-.airlock-workspace-slot { border-radius: 5px; padding: 0 5px; }
-.airlock-workspace-slot:hover { background-color: rgba(255,255,255,0.12); }
-.airlock-workspace-slot.active { background-color: rgba(255,255,255,0.08); }
-.airlock-workspace-menu { padding: 0 5px; border-radius: 5px; color: #bbb; }
-.airlock-workspace-menu:hover { background-color: rgba(255,255,255,0.12); color: white; }

@@ -4,12 +4,10 @@ import GLib from 'gi://GLib';
 import Meta from 'gi://Meta';
 import St from 'gi://St';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
-import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
-import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import {WindowIdentityCache, LOCAL, UNKNOWN, validateIdentity} from './identity.js';
 import {parseInventory} from './inventory.js';
-import {MAX_SLOTS, readLayout, reconcileGroups, reuseWorkspaces, serializeLayout, workspaceContents, initialDestination} from './model.js';
+import {readLayout, reconcileGroups, reuseWorkspaces, serializeLayout, workspaceContents, initialDestination} from './model.js';
 
 const READER = '@identityReader@';
 const TYPES = [Meta.WindowType.NORMAL, Meta.WindowType.DIALOG, Meta.WindowType.MODAL_DIALOG];
@@ -52,24 +50,14 @@ export default class VMWorkspacesExtension extends Extension {
             for (let i = 0; i < group.slots.length && index < this._wm.n_workspaces; i++)
                 group.slots[i] = this._wm.get_workspace_by_index(index++);
         }
-        this._indicator = new PanelMenu.Button(0, 'VM workspaces', true);
-        this._box = new St.BoxLayout({style_class: 'airlock-workspaces'});
-        // Limit panel width while retaining access to groups through horizontal scrolling.
-        this._scroll = new St.ScrollView({style: 'max-width: 620px;',
-            hscrollbar_policy: St.PolicyType.EXTERNAL, vscrollbar_policy: St.PolicyType.NEVER});
-        this._scroll.set_child(this._box);
-        const panel = new St.BoxLayout({style_class: 'airlock-workspace-panel'});
-        panel.add_child(this._scroll);
-        this._menuButton = new St.Button({label: '⋮', style_class: 'airlock-workspace-menu',
-            can_focus: true, accessible_name: 'Workspace actions'});
-        panel.add_child(this._menuButton);
-        this._indicator.add_child(panel);
-        this._menu = new PopupMenu.PopupMenu(this._menuButton, 0, St.Side.TOP);
-        Main.uiGroup.add_child(this._menu.actor);
-        this._menu.actor.hide();
-        Main.panel.menuManager.addMenu(this._menu);
-        this._menuButton.connect('clicked', () => this._menu.toggle());
-        Main.panel.addToStatusArea('airlock-vm-workspaces', this._indicator, 2, 'left');
+        // Keep GNOME's actual Activities actor, its gestures, accessibility role,
+        // overview animation and panel ownership. Only replace its passive child.
+        this._activities = Main.panel.statusArea.activities;
+        this._nativeIndicators = this._activities.get_first_child();
+        this._originalAccessibleName = this._activities.accessible_name;
+        this._box = new St.BoxLayout({style_class: 'airlock-workspaces',
+            reactive: false, can_focus: false, clip_to_allocation: true,
+            style: 'max-width: 620px;'});
         this._connect(this._wm, 'workspace-switched', () => this._refresh());
         this._connect(this._wm, 'workspace-added', () => this._queue());
         this._connect(this._wm, 'workspace-removed', () => this._queue());
@@ -159,10 +147,20 @@ export default class VMWorkspacesExtension extends Extension {
     }
 
     _sessionChanged() {
-        this._indicator.visible = this._groups.length > 0 &&
-            !Main.sessionMode.isLocked && !Main.sessionMode.isGreeter;
-        if (!this._indicator.visible)
-            this._menu.close();
+        // GNOME still decides whether Activities belongs in the current panel.
+        // Keep our replacement child hidden during locking without changing the
+        // actor's visibility, handlers or session-mode management.
+        this._box.visible = !Main.sessionMode.isLocked && !Main.sessionMode.isGreeter;
+    }
+
+    _useVMDisplay(enabled) {
+        const child = enabled ? this._box : this._nativeIndicators;
+        const previous = this._activities.get_first_child();
+        if (previous === child)
+            return;
+        if (previous)
+            this._activities.remove_child(previous);
+        this._activities.add_child(child);
     }
 
     _loadInventory() {
@@ -198,61 +196,46 @@ export default class VMWorkspacesExtension extends Extension {
 
     _render() {
         this._box.destroy_all_children();
-        this._menu.removeAll();
-        this._buttons = [];
+        this._dots = [];
         for (const group of this._groups) {
-            const box = new St.BoxLayout({style_class: 'airlock-workspace-group'});
-            const name = new St.Button({label: group.name, style_class: 'airlock-workspace-name',
-                can_focus: true, accessible_name: `Switch to ${group.name}`});
-            name.connect('clicked', () => (group.lastUsed ?? group.slots[0]).activate(global.get_current_time()));
-            box.add_child(name);
+            const box = new St.BoxLayout({style_class: 'airlock-workspace-group',
+                reactive: false, can_focus: false});
+            box.add_child(new St.Label({text: group.name, style_class: 'airlock-workspace-name',
+                reactive: false, can_focus: false, y_align: Clutter.ActorAlign.CENTER}));
             group.slots.forEach((workspace, i) => {
-                const button = new St.Button({style_class: 'airlock-workspace-slot', can_focus: true});
                 const dot = new St.Widget({style_class: 'airlock-workspace-dot',
-                    y_align: Clutter.ActorAlign.CENTER,
+                    reactive: false, can_focus: false, y_align: Clutter.ActorAlign.CENTER,
                     style: `background-color: ${group.color ?? '#bbb'};`});
-                button.set_child(dot);
-                button.connect('clicked', () => workspace.activate(global.get_current_time()));
-                this._buttons.push({group, workspace, button, dot, number: i + 1});
-                box.add_child(button);
+                this._dots.push({group, workspace, dot, number: i + 1});
+                box.add_child(dot);
             });
-            const add = new PopupMenu.PopupMenuItem(`Add workspace to ${group.name}`);
-            add.setSensitive(this._wm.n_workspaces < MAX_SLOTS);
-            add.connect('activate', () => {
-                if (this._wm.n_workspaces >= MAX_SLOTS)
-                    return;
-                this._menu.close();
-                group.slots.push(null);
-                this._sync();
-                group.slots.at(-1).activate(global.get_current_time());
-            });
-            this._menu.addMenuItem(add);
             this._box.add_child(box);
         }
+        this._useVMDisplay(this._groups.length > 0);
         this._sessionChanged();
         this._refresh();
     }
 
     _refresh() {
-        if (!this._active || !this._buttons)
+        if (!this._active || !this._dots)
             return;
         const active = this._wm.get_active_workspace();
-        for (const {group, workspace, button, dot, number} of this._buttons) {
+        const descriptions = [];
+        for (const {group, workspace, dot, number} of this._dots) {
             const identities = [...this._windows.keys()].filter(w => w.located_on_workspace(workspace))
                 .map(w => this._identities.get(w) ?? UNKNOWN);
             const contents = workspaceContents(group.name, identities);
-            button.accessible_name = `${group.name}, workspace ${number}${contents.names.length ? `; windows from ${contents.names.join(', ')}` : '; empty'}`;
-            button.mixed = contents.mixed;
+            descriptions.push(`${group.name}, workspace ${number}${workspace === active ? ', current' : ''}${contents.names.length ? `; windows from ${contents.names.join(', ')}` : '; empty'}`);
             if (workspace === active) {
                 dot.add_style_class_name('active');
-                button.add_style_class_name('active');
+                group.lastUsed = workspace;
             } else {
                 dot.remove_style_class_name('active');
-                button.remove_style_class_name('active');
             }
-            if (workspace === active)
-                group.lastUsed = workspace;
         }
+        this._activities.accessible_name = descriptions.length
+            ? `${this._originalAccessibleName}: ${descriptions.join('. ')}`
+            : this._originalAccessibleName;
     }
 
     _queue() {
@@ -376,8 +359,9 @@ export default class VMWorkspacesExtension extends Extension {
         }
         this._windows.clear();
         this._cache.clear();
-        this._menu.destroy();
-        this._indicator.destroy();
+        this._useVMDisplay(false);
+        this._activities.accessible_name = this._originalAccessibleName;
+        this._box.destroy();
         // Restore preferences only when they still match our last settings.
         // Keep occupied workspace objects until GNOME handles its normal cleanup.
         if (this._preferences.get_int('num-workspaces') === this._ownedCount)
