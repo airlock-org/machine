@@ -136,6 +136,7 @@ def test_sys_agent_console_tools_and_guidance_use_existing_management_interfaces
     report = json.loads(result.stdout)
     assert report["assertionsPass"]
     assert report["prefs"]["guivm"] == "sys-gui"
+    assert report["prefs"]["virt_mode"] == "pvh"
     assert report["features"]["menu-items"] == "*"
     assert report["netvm"] == "sys-firewall"
     assert report["guiEnabled"]

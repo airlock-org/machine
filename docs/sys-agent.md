@@ -15,6 +15,9 @@ Nix. The checkout, login credentials, session history, and Python dependency
 cache live on sys-agent's private volume and survive root-generation updates.
 The existing upstream remote is not needed to commit and deploy locally.
 
+Sys-agent uses PVH with no assigned PCI devices. Sys-net owns the physical
+network hardware; sys-agent reaches the internet through sys-firewall.
+
 ## First use
 
 Codex needs your own login. For a ChatGPT account with device login enabled,

@@ -12,7 +12,8 @@
     maxmem = 8192;
     provides_network = false;
     vcpus = 2;
-    virt_mode = "hvm";
+    # Physical networking belongs to sys-net; this guest has no PCI devices.
+    virt_mode = "pvh";
   };
   features = {
     "airlock-managed" = "1";
