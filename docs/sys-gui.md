@@ -172,14 +172,23 @@ early placement; only launches through the common launcher prepare focus in adva
 Dialogs follow their same-VM parent workspace. Application names are never used
 to decide origin.
 
-Manual window moves remain unrestricted. Mixed workspaces keep their owner's
-group position but use neutral tab backgrounds and overview borders and name their
-actual VMs in the tooltip; unidentified windows also use a neutral
-colour. Native sys-gui windows receive no VM label. The focused-VM indicator still
-shows the focused window's actual origin. This prototype adds no isolation or
-enforcement beyond existing Qubes policy. Cross-VM drag restrictions and a hardened
-compositor rule are future work; workspace ownership is GUI context policy, while
-Xen and Qubes remain the isolation boundary.
+Window moves now use the same VM ownership rule. Panel tabs, overview previews
+and thumbnails reject foreign-VM drops, including the hover drop indication.
+GNOME keyboard move actions and the window's workspace-move methods reject
+foreign destinations before moving or changing focus. An empty unowned slot can
+join the moving window's VM; moves within a VM remain allowed. Shift-click still
+creates another workspace in that VM's group. Application windows cannot be
+made visible on all workspaces through the sticky-window option.
+
+A synchronous workspace-change/property guard repairs native Mutter moves or
+sticky changes that bypass the Shell method hooks, returning the window to its
+last valid slot or another workspace belonging to its VM. Existing mixed layouts
+are separated once their window identities resolve. Unidentified windows cannot
+be moved into VM-owned slots. Native sys-gui prompts remain local and receive no
+VM label; the focused-VM indicator always reports the actual window origin.
+This is a GNOME extension POC, not a hardened compositor boundary: native changes
+are corrected after their state changes, and disabling the extension removes
+the move policy. Xen and Qubes remain the isolation boundary.
 
 The extension temporarily disables GNOME's dynamic workspace management to handle
 occupied workspace groups itself, restoring the previous preferences on disable.

@@ -120,7 +120,7 @@ ext.disable();assert.equal(settings.get('org.gnome.mutter')['dynamic-workspaces'
 """, shell=True)
 
 
-def test_multiple_slots_stay_contiguous_and_manual_moves_are_unrestricted(javascript):
+def test_multiple_slots_stay_contiguous_and_foreign_moves_are_blocked(javascript):
     javascript("""
 const homeWindow=new Window(wm.workspaces[0]),agentWindow=new Window(wm.workspaces[1]);
 actors.push({meta_window:homeWindow},{meta_window:agentWindow});
@@ -132,10 +132,11 @@ ext._identities.set(second,{kind:'vm',name:'usr-home'});ext._splitWindow(second)
 assert.deepEqual(ext._groups.map(g=>g.slots.length),[2,1]);
 assert.equal(agentWindow.workspace.index(),2);
 agentWindow.change_workspace(second.workspace);ext._sync();
-assert.equal(agentWindow.workspace,second.workspace);assert.equal(agentWindow.moves,1);
-assert.equal(ext._groups.length,1);assert.equal(ext._groups[0].key,HOME);
+assert.equal(agentWindow.workspace.index(),2);assert.equal(agentWindow.moves,0);
+assert.equal(ext._groups.length,2);assert.equal(ext._groups[0].key,HOME);
 assert.equal(ext._groups[0].slots.length,2);
-assert.match(ext._tabs[1].button.accessible_name,/Mixed: sys-agent, usr-home/);
+assert.equal(ext._tabs[1].button._delegate.acceptDrop({metaWindow:agentWindow}),false);
+second.change_workspace(homeWindow.workspace);assert.equal(second.workspace,homeWindow.workspace);
 ext.disable();
 """, shell=True)
 
@@ -221,6 +222,9 @@ class Window extends Signals {
  get_workspace(){return this.workspace;}
  located_on_workspace(workspace){return this.workspace===workspace;}
  change_workspace(workspace){this.moves++;this.workspace=workspace;this.emit('workspace-changed');}
+ change_workspace_by_index(index){this.change_workspace(wm.get_workspace_by_index(index));}
+ stick(){this.sticky=true;this.emit('notify::on-all-workspaces');}
+ unstick(){this.sticky=false;this.emit('notify::on-all-workspaces');}
 }
 const files=new Map(), sources=new Map(), settings=new Map([
  ['org.gnome.mutter',{'dynamic-workspaces':true}],
@@ -272,12 +276,12 @@ globalThis.shellMocks={
  file_set_contents:(path,text)=>files.set(path,text),PRIORITY_DEFAULT:0,SOURCE_REMOVE:false,
  timeout_add:(_priority,_delay,callback)=>{const id=sources.size+1;sources.set(id,callback);return id;},
  Source:{remove:id=>sources.delete(id)},get_monotonic_time:()=>0,uuid_string_random:()=>String(sources.size)},
- Meta:{WindowType:{NORMAL:0,DIALOG:1,MODAL_DIALOG:2},WindowClientType:{WAYLAND:1}},
+ Meta:{Window,WindowType:{NORMAL:0,DIALOG:1,MODAL_DIALOG:2},WindowClientType:{WAYLAND:1}},
  St:{BoxLayout:Actor,Widget:Actor,Label:Actor,Button:Actor},
- PanelMenu:{Button:Actor},DND:{DragMotionResult:{MOVE_DROP:2,CONTINUE:3}},
+ PanelMenu:{Button:Actor},DND:{DragMotionResult:{MOVE_DROP:2,CONTINUE:3,NO_DROP:0}},
  Main:{panel:{statusArea:{activities},addToStatusArea(name,indicator,index,side){this.placement={name,indicator,index,side};}},
  layoutManager:{addChrome(){},removeChrome(){},primaryMonitor:{x:0,y:0,width:1920,height:1080},findMonitorForActor(){return this.primaryMonitor;}},
- overview,sessionMode:new Signals(),wm:{_shouldAnimateActor:()=>true}},
+ overview,sessionMode:new Signals(),wm:{_shouldAnimateActor:()=>true,actionMoveWindow(window,workspace){window.change_workspace(workspace);workspace.activate();}}},
  Workspace:{Workspace:WorkspacePreview},WorkspaceThumbnail:{WorkspaceThumbnail:ThumbnailPreview,ThumbnailsBox:class {_init(){} _updateIndicator(){} addThumbnails(){}}},InjectionManager,
  Extension:class {}
 };

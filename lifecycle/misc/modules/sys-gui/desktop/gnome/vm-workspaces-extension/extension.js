@@ -36,6 +36,8 @@ export default class VMWorkspacesExtension extends Extension {
         this._owners = new Map();
         this._launches = new Map();
         this._heldActors = new Map();
+        this._lastWorkspace = new Map();
+        this._internalMoves = new Set();
         this._cache = new WindowIdentityCache();
         this._inventory = new Map();
         this._inventoryFingerprint = null;
@@ -65,6 +67,7 @@ export default class VMWorkspacesExtension extends Extension {
         this._tooltip = new St.Label({style_class: 'dash-label', visible: false, reactive: false});
         Main.layoutManager.addChrome(this._tooltip);
         this._installOverview();
+        this._installMovePolicy();
         this._installLaunchService();
         const extension = this;
         this._injections.overrideMethod(Main.wm, '_shouldAnimateActor', original => function (actor, ...args) {
@@ -123,17 +126,22 @@ export default class VMWorkspacesExtension extends Extension {
             return;
         this._cache.watch(window);
         const changed = window.connect('workspace-changed', () => {
+            this._enforceWorkspace(window);
             this._queue();
         });
+        const sticky = window.connect('notify::on-all-workspaces', () => this._enforceWorkspace(window));
         const unmanaged = window.connect('unmanaged', () => {
             window.disconnect(changed);
             window.disconnect(unmanaged);
+            window.disconnect(sticky);
             this._windows.delete(window);
             this._identities.delete(window);
             this._pendingPlacement.delete(window);
+            this._lastWorkspace.delete(window);
             this._queue();
         });
-        this._windows.set(window, [changed, unmanaged]);
+        this._windows.set(window, [changed, unmanaged, sticky]);
+        this._lastWorkspace.set(window, window.get_workspace());
     }
 
     _workspaceWindows(workspace) {
@@ -283,9 +291,11 @@ export default class VMWorkspacesExtension extends Extension {
                         this._hideTooltip();
                     });
                     button._delegate = {
-                        handleDragOver: source => source.metaWindow ? DND.DragMotionResult.MOVE_DROP : DND.DragMotionResult.CONTINUE,
+                        handleDragOver: source => !source.metaWindow ? DND.DragMotionResult.CONTINUE
+                            : this._canMove(source.metaWindow, workspace) ? DND.DragMotionResult.MOVE_DROP
+                                : DND.DragMotionResult.NO_DROP,
                         acceptDrop: source => {
-                            if (!source.metaWindow)
+                            if (!source.metaWindow || !this._canMove(source.metaWindow, workspace, true))
                                 return false;
                             source.metaWindow.change_workspace(workspace);
                             this._queue();
@@ -481,6 +491,122 @@ export default class VMWorkspacesExtension extends Extension {
         this._queue();
     }
 
+    _moveIdentity(window) {
+        let identity = this._identities.get(window) ?? this._cache.get(window);
+        if (!identity || identity.kind === 'unknown') {
+            identity = this._resolveSync(window, new Set());
+            this._identities.set(window, validateIdentity(identity));
+        }
+        return identity;
+    }
+
+    _canMove(window, workspace, claim = false) {
+        if (!this._active || this._internalMoves.has(window) || !TYPES.includes(window.get_window_type()))
+            return true;
+        if (!workspace || workspace.index() < 0)
+            return false;
+        const identity = this._moveIdentity(window);
+        if (identity.kind === 'local')
+            return true;
+        const owner = this._owner(identity);
+        const destinationOwner = this._owners.get(workspace);
+        if (!owner)
+            return !destinationOwner && workspace === window.get_workspace();
+        if (destinationOwner)
+            return destinationOwner.key === owner.key;
+        // A new, unowned slot can join this VM, but cannot contain foreign or unknown windows.
+        const compatible = this._workspaceWindows(workspace).filter(other => other !== window)
+            .every(other => {
+                const otherIdentity = this._identities.get(other) ?? this._cache.get(other);
+                return otherIdentity?.kind === 'local' || this._owner(otherIdentity)?.key === owner.key;
+            });
+        if (compatible && claim)
+            this._owners.set(workspace, owner);
+        return compatible;
+    }
+
+    _moveInternally(window, workspace) {
+        this._internalMoves.add(window);
+        try {
+            if (window.is_on_all_workspaces())
+                window.unstick();
+            if (workspace !== window.get_workspace())
+                window.change_workspace(workspace);
+            this._lastWorkspace.set(window, workspace);
+        } finally {
+            this._internalMoves.delete(window);
+        }
+    }
+
+    _enforceWorkspace(window) {
+        if (!this._active || this._internalMoves.has(window) || this._pendingPlacement.has(window))
+            return;
+        const identity = this._identities.get(window) ?? this._cache.get(window);
+        if (!identity || identity.kind === 'local')
+            return;
+        const current = window.get_workspace();
+        if (!window.is_on_all_workspaces() && this._canMove(window, current, true)) {
+            this._lastWorkspace.set(window, current);
+            return;
+        }
+        const previous = this._lastWorkspace.get(window);
+        const owner = this._owner(identity);
+        const destination = previous && this._canMove(window, previous, true) ? previous
+            : owner ? this._destination(owner, null, window)
+                : this._wm.append_new_workspace(false, global.get_current_time());
+        this._moveInternally(window, destination);
+        this._queue();
+    }
+
+    _installMovePolicy() {
+        const extension = this;
+        this._injections.overrideMethod(Meta.Window.prototype, 'change_workspace', original => function (workspace) {
+            if (extension._canMove(this, workspace, true))
+                return original.call(this, workspace);
+            return undefined;
+        });
+        this._injections.overrideMethod(Meta.Window.prototype, 'change_workspace_by_index', original => function (index, append) {
+            if (extension._internalMoves.has(this) || !TYPES.includes(this.get_window_type()))
+                return original.call(this, index, append);
+            if (index === -1)
+                return this.stick();
+            let workspace = extension._wm.get_workspace_by_index(index);
+            if (!workspace && append && index >= 0)
+                workspace = extension._wm.append_new_workspace(false, global.get_current_time());
+            if (workspace && extension._canMove(this, workspace, true))
+                return this.change_workspace(workspace);
+            return undefined;
+        });
+        this._injections.overrideMethod(Meta.Window.prototype, 'stick', original => function (...args) {
+            if (extension._internalMoves.has(this) || !TYPES.includes(this.get_window_type()) ||
+                extension._moveIdentity(this).kind === 'local')
+                return original.apply(this, args);
+            return undefined;
+        });
+        this._injections.overrideMethod(Main.wm, 'actionMoveWindow', original => function (window, workspace) {
+            if (extension._canMove(window, workspace, true))
+                return original.call(this, window, workspace);
+            return undefined;
+        });
+        for (const [prototype, over, drop] of [
+            [Workspace.Workspace.prototype, 'handleDragOver', 'acceptDrop'],
+            [WorkspaceThumbnail.WorkspaceThumbnail.prototype, 'handleDragOverInternal', 'acceptDropInternal'],
+        ]) {
+            this._injections.overrideMethod(prototype, over, original => function (source, ...args) {
+                const workspace = this.metaWorkspace ?? extension._wm.get_active_workspace();
+                if (source.metaWindow && !extension._canMove(source.metaWindow, workspace))
+                    return DND.DragMotionResult.NO_DROP;
+                return original.call(this, source, ...args);
+            });
+            this._injections.overrideMethod(prototype, drop, original => function (source, ...args) {
+                const workspace = this.metaWorkspace ?? extension._wm.get_active_workspace();
+                if (source.metaWindow && !extension._canMove(source.metaWindow, workspace, true))
+                    return false;
+                return original.call(this, source, ...args);
+            });
+        }
+    }
+
     _owner(identity) {
         const description = describeWorkspace([identity], this._inventory);
         return description?.kind === 'vm' ? description : null;
@@ -526,10 +652,12 @@ export default class VMWorkspacesExtension extends Extension {
         this._pendingPlacement.delete(window);
         if (destination && destination !== window.get_workspace()) {
             const focused = global.display.focus_window === window;
-            window.change_workspace(destination);
+            this._moveInternally(window, destination);
             if (focused && !Main.sessionMode.isLocked && !Main.sessionMode.isGreeter)
                 destination.activate(global.get_current_time());
         }
+        if (destination)
+            this._lastWorkspace.set(window, destination);
         if (destination) {
             for (const [token, launch] of this._launches) {
                 if (launch.workspace === destination && launch.owner.key === owner.key)
@@ -537,6 +665,7 @@ export default class VMWorkspacesExtension extends Extension {
             }
         }
         this._releaseActor(window);
+        this._enforceWorkspace(window);
     }
 
     _prepareWindow(window) {
@@ -670,13 +799,15 @@ export default class VMWorkspacesExtension extends Extension {
                     this._placeNewWindow(window, identity);
             }
             if (this._active) {
+                for (const window of this._windows.keys())
+                    this._enforceWorkspace(window);
                 for (const [window, held] of this._heldActors) {
                     if (!this._windows.has(window)) {
                         this._heldActors.delete(window);
                     } else if (GLib.get_monotonic_time() - held.since > 5000000) {
                         // Failed identity is never guessed into another VM's workspace.
                         const workspace = this._wm.append_new_workspace(false, global.get_current_time());
-                        window.change_workspace(workspace);
+                        this._moveInternally(window, workspace);
                         this._pendingPlacement.delete(window);
                         this._releaseActor(window);
                         Main.notify('Airlock', 'A window with unverified VM origin was placed in an isolated, neutral workspace.');
@@ -766,6 +897,8 @@ export default class VMWorkspacesExtension extends Extension {
                 window.disconnect(id);
         }
         this._windows.clear();
+        this._lastWorkspace.clear();
+        this._internalMoves.clear();
         this._cache.clear();
         this._injections?.clear();
         for (const [box, record] of this._thumbnailBoxes) {
