@@ -51,11 +51,23 @@ print("airlock.AppSessionReady" if vm.features.get("supported-rpc.airlock.AppSes
     fi
 
     [ -n "$service" ] || exit 0
+    workspace_token=""
+    ${lib.optionalString (config.airlock.sysGuiDesktop.session == "gnome") ''
+      if ! workspace_token="$(${workspaceClient} prepare "$target" 2>"$log")"; then
+        ${pkgs.systemd}/bin/systemd-cat -t airlock-app-launch <"$log" || true
+        ${pkgs.libnotify}/bin/notify-send --app-name=Airlock \
+          "Could not start $label" "$target could not prepare its workspace." || true
+        exit 1
+      fi
+    ''}
     ${pkgs.python3.pkgs.qubes-core-admin-client}/bin/qvm-run \
       --auto --gui --service "$target" "$service" >"$log" 2>&1
     app_status=$?
     if [ "$app_status" -ne 0 ]; then
       ${pkgs.systemd}/bin/systemd-cat -t airlock-app-launch <"$log" || true
+      if [ -n "$workspace_token" ]; then
+        ${workspaceClient} cancel "$workspace_token" >>"$log" 2>&1 || true
+      fi
       ${pkgs.libnotify}/bin/notify-send --app-name=Airlock \
         "Could not start $label" \
         "$target rejected the application request." || true
@@ -75,6 +87,11 @@ print("airlock.AppSessionReady" if vm.features.get("supported-rpc.airlock.AppSes
       ${applicationMenus}/bin/airlock-application-menus --sync "$1" --force
   '';
   appmenusPython = pkgs.python3.withPackages (ps: [ desktopCommon ps.qubes-core-admin-client ]);
+  workspaceClient = pkgs.writeScript "airlock-prepare-workspace" (
+    "#!${appmenusPython}/bin/python3\n"
+    + builtins.replaceStrings [ "@gdbus@" ] [ "${pkgs.glib}/bin/gdbus" ]
+      (builtins.readFile ./workspace-launch.py)
+  );
   applicationMenus = pkgs.writeShellScriptBin "airlock-application-menus" ''
     export PATH="${lib.makeBinPath [ pkgs.xdg-utils pkgs.desktop-file-utils pkgs.graphicsmagick ]}:$PATH"
     exec ${appmenusPython}/bin/python3 ${./application-menus.py} "$@"

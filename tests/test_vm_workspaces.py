@@ -29,7 +29,7 @@ def javascript(tmp_path):
         target.write_text(source.read_text())
         modules[name] = json.dumps(target.as_uri())
     imports = (
-        f"import {{MAX_SLOTS,describeWorkspace,groupOccupiedWorkspaces}} from {modules['model']};\n"
+        f"import {{MAX_SLOTS,describeWorkspace,groupOccupiedWorkspaces,groupOwnedWorkspaces}} from {modules['model']};\n"
         f"import {{WindowIdentityCache,LOCAL,UNKNOWN,validateIdentity}} from {modules['identity']};\n"
         f"import {{parseInventory}} from {modules['inventory']};\n"
     )
@@ -133,7 +133,8 @@ assert.deepEqual(ext._groups.map(g=>g.slots.length),[2,1]);
 assert.equal(agentWindow.workspace.index(),2);
 agentWindow.change_workspace(second.workspace);ext._sync();
 assert.equal(agentWindow.workspace,second.workspace);assert.equal(agentWindow.moves,1);
-assert.equal(ext._groups[1].kind,'mixed');assert.equal(ext._groups[1].color,'#888888');
+assert.equal(ext._groups.length,1);assert.equal(ext._groups[0].key,HOME);
+assert.equal(ext._groups[0].slots.length,2);
 assert.match(ext._tabs[1].button.accessible_name,/Mixed: sys-agent, usr-home/);
 ext.disable();
 """, shell=True)
@@ -263,18 +264,20 @@ activities.handleDragOver=source=>source;
 globalThis.shellMocks={
  Clutter:{ActorAlign:{CENTER:0},ModifierType:{SHIFT_MASK:1},BindConstraint:class {constructor(properties){Object.assign(this,properties);}},BindCoordinate:{SIZE:1,ALL:2}},Gio:{Settings,Cancellable,
  File:{new_for_path:path=>path.endsWith('inventory.json')?inventoryFile:{monitor_directory:()=>monitor}},
- FileMonitorFlags:{WATCH_MOVES:1}},
+ FileMonitorFlags:{WATCH_MOVES:1},DBus:{session:{}},BusNameOwnerFlags:{NONE:0},
+ DBusExportedObject:{wrapJSObject:()=>({export(){},unexport(){}})},
+ bus_own_name_on_connection:()=>1,bus_unown_name(){}},
  GLib:{get_user_state_dir:()=>'/state',build_filenamev:parts=>parts.join('/'),mkdir_with_parents(){},
  file_get_contents:path=>{if(!files.has(path))throw Error('missing');return [true,new TextEncoder().encode(files.get(path))];},
  file_set_contents:(path,text)=>files.set(path,text),PRIORITY_DEFAULT:0,SOURCE_REMOVE:false,
  timeout_add:(_priority,_delay,callback)=>{const id=sources.size+1;sources.set(id,callback);return id;},
- Source:{remove:id=>sources.delete(id)}},
+ Source:{remove:id=>sources.delete(id)},get_monotonic_time:()=>0,uuid_string_random:()=>String(sources.size)},
  Meta:{WindowType:{NORMAL:0,DIALOG:1,MODAL_DIALOG:2},WindowClientType:{WAYLAND:1}},
  St:{BoxLayout:Actor,Widget:Actor,Label:Actor,Button:Actor},
  PanelMenu:{Button:Actor},DND:{DragMotionResult:{MOVE_DROP:2,CONTINUE:3}},
  Main:{panel:{statusArea:{activities},addToStatusArea(name,indicator,index,side){this.placement={name,indicator,index,side};}},
  layoutManager:{addChrome(){},removeChrome(){},primaryMonitor:{x:0,y:0,width:1920,height:1080},findMonitorForActor(){return this.primaryMonitor;}},
- overview,sessionMode:new Signals()},
+ overview,sessionMode:new Signals(),wm:{_shouldAnimateActor:()=>true}},
  Workspace:{Workspace:WorkspacePreview},WorkspaceThumbnail:{WorkspaceThumbnail:ThumbnailPreview,ThumbnailsBox:class {_init(){} _updateIndicator(){} addThumbnails(){}}},InjectionManager,
  Extension:class {}
 };

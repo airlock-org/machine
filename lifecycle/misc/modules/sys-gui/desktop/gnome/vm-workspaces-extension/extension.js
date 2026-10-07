@@ -11,9 +11,17 @@ import * as WorkspaceThumbnail from 'resource:///org/gnome/shell/ui/workspaceThu
 import {Extension, InjectionManager} from 'resource:///org/gnome/shell/extensions/extension.js';
 import {WindowIdentityCache, LOCAL, UNKNOWN, validateIdentity} from './identity.js';
 import {parseInventory} from './inventory.js';
-import {MAX_SLOTS, describeWorkspace, groupOccupiedWorkspaces} from './model.js';
+import {MAX_SLOTS, describeWorkspace, groupOwnedWorkspaces} from './model.js';
 
 const READER = '@identityReader@';
+const WORKSPACE_BUS = 'org.airlock.Workspaces';
+const WORKSPACE_PATH = '/org/airlock/Workspaces';
+const WORKSPACE_XML = `<node><interface name="org.airlock.Workspaces">
+<method name="Prepare"><arg type="s" direction="in"/><arg type="s" direction="out"/></method>
+<method name="Cancel"><arg type="s" direction="in"/></method>
+<method name="State"><arg type="s" direction="out"/></method>
+</interface></node>`;
+
 const TYPES = [Meta.WindowType.NORMAL, Meta.WindowType.DIALOG, Meta.WindowType.MODAL_DIALOG];
 
 export default class VMWorkspacesExtension extends Extension {
@@ -25,6 +33,9 @@ export default class VMWorkspacesExtension extends Extension {
         this._windows = new Map();
         this._identities = new Map();
         this._pendingPlacement = new Set();
+        this._owners = new Map();
+        this._launches = new Map();
+        this._heldActors = new Map();
         this._cache = new WindowIdentityCache();
         this._inventory = new Map();
         this._inventoryFingerprint = null;
@@ -54,6 +65,18 @@ export default class VMWorkspacesExtension extends Extension {
         this._tooltip = new St.Label({style_class: 'dash-label', visible: false, reactive: false});
         Main.layoutManager.addChrome(this._tooltip);
         this._installOverview();
+        this._installLaunchService();
+        const extension = this;
+        this._injections.overrideMethod(Main.wm, '_shouldAnimateActor', original => function (actor, ...args) {
+            if (extension._pendingPlacement.has(actor.meta_window)) {
+                extension._prepareWindow(actor.meta_window);
+                if (extension._pendingPlacement.has(actor.meta_window)) {
+                    extension._holdActor(actor);
+                    return false;
+                }
+            }
+            return original.call(this, actor, ...args);
+        });
         this._connect(Main.overview, 'hidden', () => this._hideTooltip());
         for (const kind of ['window', 'item']) {
             this._connect(Main.overview, `${kind}-drag-begin`, () => {
@@ -71,8 +94,10 @@ export default class VMWorkspacesExtension extends Extension {
         this._sessionChanged();
         this._connect(global.display, 'window-created', (_display, window) => {
             this._watch(window);
-            if (window.get_window_type() === Meta.WindowType.NORMAL)
+            if (TYPES.includes(window.get_window_type())) {
                 this._pendingPlacement.add(window);
+                this._prepareWindow(window);
+            }
             this._queue();
         });
         for (const actor of global.get_window_actors())
@@ -98,8 +123,6 @@ export default class VMWorkspacesExtension extends Extension {
             return;
         this._cache.watch(window);
         const changed = window.connect('workspace-changed', () => {
-            // An explicit move during a slow identity lookup takes precedence.
-            this._pendingPlacement.delete(window);
             this._queue();
         });
         const unmanaged = window.connect('unmanaged', () => {
@@ -123,9 +146,17 @@ export default class VMWorkspacesExtension extends Extension {
             (_, index) => this._wm.get_workspace_by_index(index));
         const identities = new Map(workspaces.map(workspace => [workspace,
             this._workspaceWindows(workspace).map(window => this._identities.get(window) ?? UNKNOWN)]));
-        this._groups = groupOccupiedWorkspaces(this._groups, workspaces, identities, this._inventory);
+        // Adopt existing homogeneous workspaces only once. Later moves never change ownership.
+        for (const workspace of workspaces) {
+            if (!this._owners.has(workspace)) {
+                const description = describeWorkspace(identities.get(workspace), this._inventory);
+                if (description?.kind === 'vm')
+                    this._owners.set(workspace, description);
+            }
+        }
+        const reserved = new Set([...this._launches.values()].map(launch => launch.workspace));
         // A local system prompt may occupy a workspace, but gets no sys-gui tab.
-        const occupied = workspaces.filter(workspace => this._workspaceWindows(workspace).length);
+        const occupied = workspaces.filter(workspace => this._workspaceWindows(workspace).length || reserved.has(workspace));
         const active = this._wm.get_active_workspace();
         if (occupied.length && !occupied.includes(active)) {
             const nearest = occupied.reduce((best, workspace) =>
@@ -137,6 +168,12 @@ export default class VMWorkspacesExtension extends Extension {
             if (!occupied.includes(workspace) && (occupied.length || workspace !== active) && this._wm.n_workspaces > 1)
                 this._wm.remove_workspace(workspace, global.get_current_time());
         }
+        for (const workspace of this._owners.keys()) {
+            if (workspace.index() < 0 || (!occupied.includes(workspace) && !reserved.has(workspace)))
+                this._owners.delete(workspace);
+        }
+        this._groups = groupOwnedWorkspaces(this._groups, workspaces.filter(workspace => workspace.index() >= 0),
+            this._owners, identities, this._inventory);
         // Reorder workspace objects; existing windows stay attached to them.
         this._groups.flatMap(group => group.slots).forEach((workspace, index) => {
             if (workspace.index() !== index)
@@ -173,6 +210,19 @@ export default class VMWorkspacesExtension extends Extension {
             }
             this._inventory = inventory;
             this._inventoryFingerprint = fingerprint;
+            for (const owner of this._owners.values()) {
+                const entry = owner.key.startsWith('vm:')
+                    ? [...inventory].find(([, vm]) => vm.name === owner.name)
+                    : inventory.has(owner.key) ? [owner.key, inventory.get(owner.key)] : null;
+                if (entry) {
+                    const [key, vm] = entry;
+                    for (const group of this._groups) {
+                        if (group.key === owner.key)
+                            group.key = key;
+                    }
+                    Object.assign(owner, {key, name: vm.name, names: [vm.name], color: vm.color ?? '#888888'});
+                }
+            }
             this._queue();
         });
     }
@@ -278,7 +328,10 @@ export default class VMWorkspacesExtension extends Extension {
     _styleTab(tab) {
         const alpha = tab.workspace === this._wm.get_active_workspace() ? 0.55
             : tab.button.hover || tab.focused ? 0.45 : 0.35;
-        const color = /^#[0-9a-f]{6}$/i.test(tab.group.color) ? tab.group.color : '#888888';
+        const actual = describeWorkspace(this._workspaceWindows(tab.workspace)
+            .map(window => this._identities.get(window) ?? UNKNOWN), this._inventory);
+        const candidate = actual && actual.kind !== 'vm' ? '#888888' : tab.group.color;
+        const color = /^#[0-9a-f]{6}$/i.test(candidate) ? candidate : '#888888';
         const rgb = [1, 3, 5].map(index => parseInt(color.slice(index, index + 2), 16));
         tab.button.style = `background-color: rgba(${rgb.join(',')},${alpha});`;
     }
@@ -333,7 +386,7 @@ export default class VMWorkspacesExtension extends Extension {
         const index = Math.round(box._scrollAdjustment.value);
         const workspace = this._wm.get_workspace_by_index(index) ?? this._wm.get_active_workspace();
         const description = describeWorkspace(this._workspaceWindows(workspace)
-            .map(window => this._identities.get(window) ?? UNKNOWN), this._inventory);
+            .map(window => this._identities.get(window) ?? UNKNOWN), this._inventory) ?? this._owners.get(workspace);
         const previous = this._thumbnailBoxes.get(box).style;
         const style = previous ? `${previous}; ` : '';
         box._indicator.style = `${style}border-color: ${description?.color ?? '#888888'}; border-radius: 0;`;
@@ -371,7 +424,7 @@ export default class VMWorkspacesExtension extends Extension {
     _paintOverview(record) {
         const {workspace, border} = record;
         record.group = describeWorkspace(this._workspaceWindows(workspace)
-            .map(window => this._identities.get(window) ?? UNKNOWN), this._inventory);
+            .map(window => this._identities.get(window) ?? UNKNOWN), this._inventory) ?? this._owners.get(workspace);
         const active = workspace === this._wm.get_active_workspace();
         // GNOME's selector alone outlines the active small thumbnail.
         const color = record.small && active ? 'transparent' : record.group?.color ?? 'transparent';
@@ -420,26 +473,55 @@ export default class VMWorkspacesExtension extends Extension {
         if (this._wm.n_workspaces >= MAX_SLOTS || window.is_on_all_workspaces())
             return;
         const workspace = this._wm.append_new_workspace(false, global.get_current_time());
+        const owner = this._owners.get(window.get_workspace());
+        if (owner)
+            this._owners.set(workspace, owner);
         window.change_workspace(workspace);
         workspace.activate(global.get_current_time());
         this._queue();
     }
 
+    _owner(identity) {
+        const description = describeWorkspace([identity], this._inventory);
+        return description?.kind === 'vm' ? description : null;
+    }
+
+    _destination(owner, current = null, window = null) {
+        const belongs = workspace => this._owners.get(workspace)?.key === owner.key;
+        const usable = workspace => belongs(workspace) && this._workspaceWindows(workspace)
+            .filter(other => other !== window).every(other => {
+                const identity = this._identities.get(other);
+                return identity?.kind === 'local' || this._owner(identity)?.key === owner.key;
+            });
+        const pending = [...this._launches.values()].reverse().find(launch => launch.owner.key === owner.key);
+        if (pending && usable(pending.workspace))
+            return pending.workspace;
+        if (current && usable(current))
+            return current;
+        const group = this._groups.find(group => group.key === owner.key);
+        if (group?.lastUsed && usable(group.lastUsed))
+            return group.lastUsed;
+        for (const workspace of this._owners.keys()) {
+            if (usable(workspace))
+                return workspace;
+        }
+        const blank = Array.from({length: this._wm.n_workspaces}, (_, index) => this._wm.get_workspace_by_index(index))
+            .find(workspace => !this._owners.has(workspace) && !this._workspaceWindows(workspace).some(other => other !== window));
+        const workspace = blank ?? this._wm.append_new_workspace(false, global.get_current_time());
+        this._owners.set(workspace, owner);
+        return workspace;
+    }
+
     _placeNewWindow(window, identity) {
+        if (identity.kind === 'unknown')
+            return;
+        const owner = this._owner(identity);
         const parent = window.get_transient_for();
-        let destination = parent?.get_workspace();
-        if (!destination && identity.kind === 'vm') {
-            const current = window.get_workspace();
-            const suitable = workspace => this._workspaceWindows(workspace).filter(other => other !== window)
-                .every(other => this._identities.get(other)?.kind === 'local' ||
-                    this._identities.get(other)?.name === identity.name);
-            const group = this._groups.find(candidate => candidate.kind === 'vm' && candidate.name === identity.name);
-            const candidates = group?.slots.filter(suitable) ?? [];
-            destination = candidates.includes(current) ? current
-                : candidates.includes(group?.lastUsed) ? group.lastUsed : candidates[0];
-            if (!destination)
-                destination = suitable(current) ? current
-                    : this._wm.append_new_workspace(false, global.get_current_time());
+        let destination;
+        if (owner) {
+            const parentWorkspace = parent?.get_workspace();
+            destination = parentWorkspace && this._owners.get(parentWorkspace)?.key === owner.key
+                ? parentWorkspace : this._destination(owner, window.get_workspace(), window);
         }
         this._pendingPlacement.delete(window);
         if (destination && destination !== window.get_workspace()) {
@@ -448,6 +530,112 @@ export default class VMWorkspacesExtension extends Extension {
             if (focused && !Main.sessionMode.isLocked && !Main.sessionMode.isGreeter)
                 destination.activate(global.get_current_time());
         }
+        if (destination) {
+            for (const [token, launch] of this._launches) {
+                if (launch.workspace === destination && launch.owner.key === owner.key)
+                    this._releaseLaunch(token);
+            }
+        }
+        this._releaseActor(window);
+    }
+
+    _prepareWindow(window) {
+        if (!this._active || !this._windows.has(window))
+            return;
+        // The existing trusted reader has its own two-second process deadline.
+        // For this POC, a synchronous first lookup runs before Shell can paint.
+        const identity = this._resolveSync(window, new Set());
+        this._identities.set(window, validateIdentity(identity));
+        if (identity.kind !== 'unknown')
+            this._placeNewWindow(window, identity);
+    }
+
+    _resolveSync(window, seen) {
+        if (!window || seen.has(window))
+            return UNKNOWN;
+        seen.add(window);
+        const cached = this._cache.get(window);
+        if (cached)
+            return cached;
+        if (window.get_client_type() === Meta.WindowClientType.WAYLAND)
+            return LOCAL;
+        const xid = /^(0x[0-9a-fA-F]+)\s/.exec(window.get_description())?.[1];
+        if (!xid)
+            return UNKNOWN;
+        try {
+            const process = Gio.Subprocess.new([READER, xid],
+                Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_SILENCE);
+            const [, stdout] = process.communicate_utf8(null, null);
+            const identity = process.get_successful() ? JSON.parse(stdout) : UNKNOWN;
+            if (identity.kind === 'absent')
+                return this._resolveSync(window.get_transient_for(), seen);
+            this._cache.remember(window, identity);
+            return validateIdentity(identity);
+        } catch (_error) {
+            return UNKNOWN;
+        }
+    }
+
+    _holdActor(actor) {
+        if (!this._heldActors.has(actor.meta_window))
+            this._heldActors.set(actor.meta_window, {actor, opacity: actor.opacity, since: GLib.get_monotonic_time()});
+        actor.opacity = 0;
+        this._queue();
+    }
+
+    _releaseActor(window) {
+        const held = this._heldActors.get(window);
+        if (held) {
+            held.actor.opacity = held.opacity;
+            this._heldActors.delete(window);
+        }
+    }
+
+    _installLaunchService() {
+        this._dbus = Gio.DBusExportedObject.wrapJSObject(WORKSPACE_XML, {
+            Prepare: uuid => this._prepareLaunch(uuid),
+            Cancel: token => { this._releaseLaunch(token); this._queue(); },
+            State: () => JSON.stringify([...this._owners].map(([workspace, owner]) => ({
+                workspace: workspace.index() + 1, uuid: owner.key, name: owner.name,
+                pending: [...this._launches.values()].filter(launch => launch.workspace === workspace).length,
+            }))),
+        });
+        this._dbus.export(Gio.DBus.session, WORKSPACE_PATH);
+        this._busName = Gio.bus_own_name_on_connection(Gio.DBus.session, WORKSPACE_BUS,
+            Gio.BusNameOwnerFlags.NONE, null, null);
+    }
+
+    _prepareLaunch(uuid) {
+        if (!this._active || Main.sessionMode.isLocked || Main.sessionMode.isGreeter)
+            throw new Error('The desktop is not ready to launch an application');
+        const vm = this._inventory.get(uuid);
+        if (!vm || vm.name === 'sys-gui')
+            throw new Error('The VM is missing from the desktop inventory');
+        const owner = {key: uuid, name: vm.name, color: vm.color ?? '#888888', kind: 'vm', names: [vm.name]};
+        const workspace = this._destination(owner, this._wm.get_active_workspace());
+        const token = GLib.uuid_string_random();
+        const timeout = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 90000, () => {
+            const launch = this._launches.get(token);
+            if (launch)
+                launch.timeout = 0;
+            this._releaseLaunch(token);
+            this._queue();
+            return GLib.SOURCE_REMOVE;
+        });
+        this._launches.set(token, {owner, workspace, timeout});
+        this._sync();
+        workspace.activate(global.get_current_time());
+        Main.overview.hide();
+        return token;
+    }
+
+    _releaseLaunch(token) {
+        const launch = this._launches.get(token);
+        if (!launch)
+            return;
+        if (launch.timeout)
+            GLib.Source.remove(launch.timeout);
+        this._launches.delete(token);
     }
 
     _queue() {
@@ -481,8 +669,23 @@ export default class VMWorkspacesExtension extends Extension {
                 if (this._pendingPlacement.has(window) && identity.kind !== 'unknown')
                     this._placeNewWindow(window, identity);
             }
-            if (this._active)
+            if (this._active) {
+                for (const [window, held] of this._heldActors) {
+                    if (!this._windows.has(window)) {
+                        this._heldActors.delete(window);
+                    } else if (GLib.get_monotonic_time() - held.since > 5000000) {
+                        // Failed identity is never guessed into another VM's workspace.
+                        const workspace = this._wm.append_new_workspace(false, global.get_current_time());
+                        window.change_workspace(workspace);
+                        this._pendingPlacement.delete(window);
+                        this._releaseActor(window);
+                        Main.notify('Airlock', 'A window with unverified VM origin was placed in an isolated, neutral workspace.');
+                    }
+                }
                 this._sync();
+                if (this._heldActors.size)
+                    this._queue();
+            }
         } catch (error) {
             if (this._active)
                 console.error(`Airlock workspace identity: ${error.message}`);
@@ -541,6 +744,14 @@ export default class VMWorkspacesExtension extends Extension {
 
     disable() {
         this._active = false;
+        this._dbus?.unexport();
+        if (this._busName)
+            Gio.bus_unown_name(this._busName);
+        for (const token of this._launches.keys())
+            this._releaseLaunch(token);
+        for (const window of this._heldActors.keys())
+            this._releaseActor(window);
+        this._owners.clear();
         ++this._inventoryRevision;
         if (this._source)
             GLib.Source.remove(this._source);

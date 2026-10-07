@@ -136,7 +136,7 @@ identify mixed workspaces. Native overview clicks, dragging and animations remai
 in place. This POC decorates GNOME 50's existing preview actors using small hooks;
 disabling the extension removes decorations and restores actor input properties.
 
-Only workspaces containing application windows appear. No VM has a reserved
+Normally only workspaces containing application windows appear. No VM has a reserved
 workspace: sys-gui has no group, and sys-agent appears only when its apps open.
 Minimized windows count; background services do not. Closing the last window in
 a workspace removes it. Closing a VM's last window removes its group. GNOME keeps
@@ -144,18 +144,42 @@ one underlying blank workspace when all apps close, with no VM bar entries.
 Group order stays stable while groups exist, and workspace objects are reordered
 so each VM's occupied workspaces remain together. No layout is persisted.
 
-New normal application windows receive a one-time placement suggestion based on
-the existing trusted Qubes window identity reader. Existing windows stay attached
+Workspace ownership is assigned once from trusted Qubes identity and joined to
+the VM UUID in the inventory. Ownership stays fixed while that workspace exists,
+even after a manual window move. Existing windows stay attached
 to their workspace objects when the extension starts. Shift-clicking a tab moves
 that VM's focused window into a new workspace, allowing multiple occupied slots
 without an add-workspace menu or empty placeholders. The POC caps this shortcut
 at 36 workspaces. Overview windows can also be dragged onto tabs.
 
-Manual window moves remain unrestricted. Mixed workspaces use a neutral underline
-and name their actual VMs in the tooltip; unidentified windows also use a neutral
+The common application launcher waits for the guest graphical session, then calls
+the extension's session-bus `org.airlock.Workspaces.Prepare` method with the VM's
+UUID before sending the application RPC. The extension selects the VM's active or
+last-used workspace, or creates a new slot, reserves it and focuses it. The
+reservation lasts until a matching window arrives, launch fails, or 90 seconds
+elapse. This temporary empty slot is the only launch-related exception to removing
+empty workspaces. Menu synchronization without an application RPC reserves no slot.
+`Cancel` releases a failed request; `State` reports ownership and pending counts
+for observation. These methods add no Qubes control authority.
+
+New windows are placed using the existing trusted Qubes reader during window
+creation, before Shell paints them. The GNOME 50 mapping-animation hook also holds
+an unresolved window invisible until its origin is known. After five seconds it
+falls back to a separate neutral workspace and notifies the user. This POC uses a
+synchronous first lookup with a two-second deadline per reader invocation; a slow
+lookup can briefly stall Shell. Windows opened inside a running guest also use
+early placement; only launches through the common launcher prepare focus in advance.
+Dialogs follow their same-VM parent workspace. Application names are never used
+to decide origin.
+
+Manual window moves remain unrestricted. Mixed workspaces keep their owner's
+group position but use neutral tab backgrounds and overview borders and name their
+actual VMs in the tooltip; unidentified windows also use a neutral
 colour. Native sys-gui windows receive no VM label. The focused-VM indicator still
 shows the focused window's actual origin. This prototype adds no isolation or
-enforcement beyond existing Qubes policy.
+enforcement beyond existing Qubes policy. Cross-VM drag restrictions and a hardened
+compositor rule are future work; workspace ownership is GUI context policy, while
+Xen and Qubes remain the isolation boundary.
 
 The extension temporarily disables GNOME's dynamic workspace management to handle
 occupied workspace groups itself, restoring the previous preferences on disable.

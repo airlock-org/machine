@@ -40,3 +40,27 @@ export function groupOccupiedWorkspaces(previous, workspaces, identities, invent
     }
     return result.concat([...groups.values()]);
 }
+
+// Ownership is assigned once, rather than inferred again after a manual move.
+export function groupOwnedWorkspaces(previous, workspaces, owners, identities, inventory) {
+    const groups = new Map();
+    for (const workspace of workspaces) {
+        const owner = owners.get(workspace);
+        const description = owner ?? describeWorkspace(identities.get(workspace) ?? [], inventory);
+        if (!description)
+            continue;
+        if (!groups.has(description.key))
+            groups.set(description.key, {...description, slots: []});
+        groups.get(description.key).slots.push(workspace);
+    }
+    const result = [];
+    for (const old of previous) {
+        const group = groups.get(old.key);
+        if (group) {
+            group.lastUsed = group.slots.includes(old.lastUsed) ? old.lastUsed : null;
+            result.push(group);
+            groups.delete(old.key);
+        }
+    }
+    return result.concat([...groups.values()]);
+}
