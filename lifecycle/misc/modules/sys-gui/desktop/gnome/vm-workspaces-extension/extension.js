@@ -4,10 +4,12 @@ import GLib from 'gi://GLib';
 import Meta from 'gi://Meta';
 import St from 'gi://St';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
+import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
+import * as DND from 'resource:///org/gnome/shell/ui/dnd.js';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import {WindowIdentityCache, LOCAL, UNKNOWN, validateIdentity} from './identity.js';
 import {parseInventory} from './inventory.js';
-import {readLayout, reconcileGroups, reuseWorkspaces, serializeLayout, workspaceContents, initialDestination} from './model.js';
+import {MAX_SLOTS, describeWorkspace, groupOccupiedWorkspaces} from './model.js';
 
 const READER = '@identityReader@';
 const TYPES = [Meta.WindowType.NORMAL, Meta.WindowType.DIALOG, Meta.WindowType.MODAL_DIALOG];
@@ -33,34 +35,23 @@ export default class VMWorkspacesExtension extends Extension {
         this._originalCount = this._preferences.get_int('num-workspaces');
         this._preferences.set_int('num-workspaces', this._wm.n_workspaces);
         this._mutter.set_boolean('dynamic-workspaces', false);
-        const directory = GLib.build_filenamev([GLib.get_user_state_dir(), 'airlock-vm-workspaces']);
-        GLib.mkdir_with_parents(directory, 0o700);
-        this._layoutFile = GLib.build_filenamev([directory, 'layout.json']);
-        let saved = [];
-        try {
-            const [, bytes] = GLib.file_get_contents(this._layoutFile);
-            if (bytes.length < 65536)
-                saved = readLayout(new TextDecoder().decode(bytes));
-        } catch (_error) { /* A new session starts with one slot per VM. */ }
-        this._groups = saved.map(g => ({key: g.key, slots: Array(g.count).fill(null)}));
-        reconcileGroups(this._groups, this._inventory);
-        // Bind the existing desktop in place. Enabling never relocates open windows.
-        let index = 0;
-        for (const group of this._groups) {
-            for (let i = 0; i < group.slots.length && index < this._wm.n_workspaces; i++)
-                group.slots[i] = this._wm.get_workspace_by_index(index++);
-        }
-        // Keep GNOME's actual Activities actor, its gestures, accessibility role,
-        // overview animation and panel ownership. Only replace its passive child.
-        this._activities = Main.panel.statusArea.activities;
-        this._nativeIndicators = this._activities.get_first_child();
-        this._originalAccessibleName = this._activities.accessible_name;
+        this._groups = [];
+        this._indicator = new PanelMenu.Button(0.0, 'VM workspaces', true);
+        this._indicator.reactive = false;
+        this._indicator.can_focus = false;
+        this._indicator.track_hover = false;
+        this._indicator.add_style_class_name('airlock-workspace-bar');
         this._box = new St.BoxLayout({style_class: 'airlock-workspaces',
-            reactive: false, can_focus: false, clip_to_allocation: true,
-            style: 'max-width: 620px;'});
+            reactive: false, clip_to_allocation: true, style: 'max-width: 480px;'});
+        this._indicator.add_child(this._box);
+        // GNOME owns the original left-hand Activities/workspace dots unchanged.
+        Main.panel.addToStatusArea('airlock-vm-workspaces', this._indicator, 0, 'right');
+        this._tooltip = new St.Label({style_class: 'dash-label', visible: false, reactive: false});
+        Main.layoutManager.addChrome(this._tooltip);
         this._connect(this._wm, 'workspace-switched', () => this._refresh());
         this._connect(this._wm, 'workspace-added', () => this._queue());
         this._connect(this._wm, 'workspace-removed', () => this._queue());
+        this._connect(this._wm, 'workspaces-reordered', () => this._queue());
         this._connect(Main.sessionMode, 'updated', () => this._sessionChanged());
         this._sessionChanged();
         this._connect(global.display, 'window-created', (_display, window) => {
@@ -79,7 +70,6 @@ export default class VMWorkspacesExtension extends Extension {
             if ([file, other].some(f => f?.get_basename() === 'inventory.json'))
                 this._loadInventory();
         });
-        this._sync();
         this._loadInventory();
         this._queue();
     }
@@ -95,7 +85,7 @@ export default class VMWorkspacesExtension extends Extension {
         const changed = window.connect('workspace-changed', () => {
             // An explicit move during a slow identity lookup takes precedence.
             this._pendingPlacement.delete(window);
-            this._refresh();
+            this._queue();
         });
         const unmanaged = window.connect('unmanaged', () => {
             window.disconnect(changed);
@@ -103,64 +93,49 @@ export default class VMWorkspacesExtension extends Extension {
             this._windows.delete(window);
             this._identities.delete(window);
             this._pendingPlacement.delete(window);
-            this._refresh();
+            this._queue();
         });
         this._windows.set(window, [changed, unmanaged]);
     }
 
+    _workspaceWindows(workspace) {
+        // Count sticky windows once, rather than creating an entry on every slot.
+        return [...this._windows.keys()].filter(window => window.get_workspace() === workspace);
+    }
+
     _sync() {
-        // Never reuse indexes as slot identity: insertion must keep neighbouring
-        // workspaces and all their windows attached to the same VM label.
-        if (!this._groups.length) {
-            this._ownedCount = this._wm.n_workspaces;
-            this._render();
-            return;
-        }
         const workspaces = Array.from({length: this._wm.n_workspaces},
             (_, index) => this._wm.get_workspace_by_index(index));
-        const occupied = new Set(workspaces.filter(workspace => workspace.list_windows()
-            .some(window => TYPES.includes(window.get_window_type()))));
-        const unused = reuseWorkspaces(this._groups, workspaces, occupied);
-        for (const group of this._groups) {
-            for (let i = 0; i < group.slots.length; i++) {
-                if (!group.slots[i])
-                    group.slots[i] = this._wm.append_new_workspace(false, global.get_current_time());
-            }
-            if (!group.slots.includes(group.lastUsed))
-                group.lastUsed = null;
+        const identities = new Map(workspaces.map(workspace => [workspace,
+            this._workspaceWindows(workspace).map(window => this._identities.get(window) ?? UNKNOWN)]));
+        this._groups = groupOccupiedWorkspaces(this._groups, workspaces, identities, this._inventory);
+        // A local system prompt may occupy a workspace, but gets no sys-gui tab.
+        const occupied = workspaces.filter(workspace => this._workspaceWindows(workspace).length);
+        const active = this._wm.get_active_workspace();
+        if (occupied.length && !occupied.includes(active)) {
+            const nearest = occupied.reduce((best, workspace) =>
+                Math.abs(workspace.index() - active.index()) < Math.abs(best.index() - active.index())
+                    ? workspace : best);
+            nearest.activate(global.get_current_time());
         }
-        if (unused.includes(this._wm.get_active_workspace()))
-            this._groups[0].slots[0].activate(global.get_current_time());
-        for (const workspace of unused) {
-            // Only redundant empty slots are removed. Occupied objects retain
-            // their windows and are assigned a normal application-group label.
-            this._wm.remove_workspace(workspace, global.get_current_time());
+        for (const workspace of workspaces) {
+            if (!occupied.includes(workspace) && (occupied.length || workspace !== active) && this._wm.n_workspaces > 1)
+                this._wm.remove_workspace(workspace, global.get_current_time());
         }
-        this._groups.flatMap(g => g.slots).forEach((workspace, index) => {
+        // Reorder workspace objects; existing windows stay attached to them.
+        this._groups.flatMap(group => group.slots).forEach((workspace, index) => {
             if (workspace.index() !== index)
                 this._wm.reorder_workspace(workspace, index);
         });
         this._ownedCount = this._wm.n_workspaces;
         this._preferences.set_int('num-workspaces', this._ownedCount);
-        GLib.file_set_contents(this._layoutFile, serializeLayout(this._groups));
         this._render();
     }
 
     _sessionChanged() {
-        // GNOME still decides whether Activities belongs in the current panel.
-        // Keep our replacement child hidden during locking without changing the
-        // actor's visibility, handlers or session-mode management.
-        this._box.visible = !Main.sessionMode.isLocked && !Main.sessionMode.isGreeter;
-    }
-
-    _useVMDisplay(enabled) {
-        const child = enabled ? this._box : this._nativeIndicators;
-        const previous = this._activities.get_first_child();
-        if (previous === child)
-            return;
-        if (previous)
-            this._activities.remove_child(previous);
-        this._activities.add_child(child);
+        this._indicator.visible = this._groups.length > 0 &&
+            !Main.sessionMode.isLocked && !Main.sessionMode.isGreeter;
+        this._hideTooltip();
     }
 
     _loadInventory() {
@@ -182,60 +157,147 @@ export default class VMWorkspacesExtension extends Extension {
                 return;
             }
             this._inventory = inventory;
-            reconcileGroups(this._groups, this._inventory);
-            try {
-                this._sync();
-                this._inventoryFingerprint = fingerprint;
-                this._queue();
-            } catch (error) {
-                this._inventoryFingerprint = null;
-                console.error(`Airlock workspace layout: ${error.message}`);
-            }
+            this._inventoryFingerprint = fingerprint;
+            this._queue();
         });
     }
 
     _render() {
-        this._box.destroy_all_children();
-        this._dots = [];
-        for (const group of this._groups) {
-            const box = new St.BoxLayout({style_class: 'airlock-workspace-group',
-                reactive: false, can_focus: false});
-            box.add_child(new St.Label({text: group.name, style_class: 'airlock-workspace-name',
-                reactive: false, can_focus: false, y_align: Clutter.ActorAlign.CENTER}));
-            group.slots.forEach((workspace, i) => {
-                const dot = new St.Widget({style_class: 'airlock-workspace-dot',
-                    reactive: false, can_focus: false, y_align: Clutter.ActorAlign.CENTER,
-                    style: `background-color: ${group.color ?? '#bbb'};`});
-                this._dots.push({group, workspace, dot, number: i + 1});
-                box.add_child(dot);
-            });
-            this._box.add_child(box);
+        const entries = this._groups.flatMap(group => group.slots.map(workspace => ({group, workspace})));
+        // Preserve hovered/focused actors when only the active workspace changes.
+        const unchanged = this._tabs?.length === entries.length && entries.every(({group, workspace}, index) => {
+            const old = this._tabs[index];
+            return old.workspace === workspace && old.group.key === group.key &&
+                old.group.color === group.color && old.group.name === group.name;
+        });
+        if (unchanged) {
+            this._tabs.forEach((tab, index) => { tab.group = entries[index].group; });
+        } else {
+            this._hideTooltip();
+            this._box.destroy_all_children();
+            this._tabs = [];
+            for (const group of this._groups) {
+                const box = new St.BoxLayout({style_class: 'airlock-workspace-group',
+                    reactive: false, style: `border-bottom-color: ${group.color};`});
+                for (const workspace of group.slots) {
+                    const button = new St.Button({style_class: 'airlock-workspace-tab',
+                        reactive: true, can_focus: true, track_hover: true});
+                    const label = new St.Label({reactive: false, can_focus: false,
+                        y_align: Clutter.ActorAlign.CENTER});
+                    button.set_child(label);
+                    const tab = {group, workspace, button, label};
+                    this._tabs.push(tab);
+                    button.connect('clicked', () => {
+                        this._hideTooltip();
+                        const focused = global.display.focus_window;
+                        if ((global.get_pointer()[2] & Clutter.ModifierType.SHIFT_MASK) &&
+                            focused && this._identities.get(focused)?.name === tab.group.name)
+                            this._splitWindow(focused);
+                        else
+                            workspace.activate(global.get_current_time());
+                    });
+                    button.connect('notify::hover', () => button.hover
+                        ? this._showTooltip(tab) : this._hideTooltip());
+                    button.connect('key-focus-in', () => this._showTooltip(tab));
+                    button.connect('key-focus-out', () => this._hideTooltip());
+                    button._delegate = {
+                        handleDragOver: source => source.metaWindow ? DND.DragMotionResult.MOVE_DROP : DND.DragMotionResult.CONTINUE,
+                        acceptDrop: source => {
+                            if (!source.metaWindow)
+                                return false;
+                            source.metaWindow.change_workspace(workspace);
+                            this._queue();
+                            return true;
+                        },
+                    };
+                    box.add_child(button);
+                }
+                this._box.add_child(box);
+            }
         }
-        this._useVMDisplay(this._groups.length > 0);
-        this._sessionChanged();
         this._refresh();
+        this._sessionChanged();
+    }
+
+    _description(tab) {
+        const description = describeWorkspace(this._workspaceWindows(tab.workspace)
+            .map(window => this._identities.get(window) ?? UNKNOWN), this._inventory);
+        const owner = description?.kind === 'mixed' ? `Mixed: ${description.names.join(', ')}`
+            : description?.name ?? tab.group.name;
+        return `${owner} · workspace ${tab.workspace.index() + 1}`;
     }
 
     _refresh() {
-        if (!this._active || !this._dots)
-            return;
         const active = this._wm.get_active_workspace();
-        const descriptions = [];
-        for (const {group, workspace, dot, number} of this._dots) {
-            const identities = [...this._windows.keys()].filter(w => w.located_on_workspace(workspace))
-                .map(w => this._identities.get(w) ?? UNKNOWN);
-            const contents = workspaceContents(group.name, identities);
-            descriptions.push(`${group.name}, workspace ${number}${workspace === active ? ', current' : ''}${contents.names.length ? `; windows from ${contents.names.join(', ')}` : '; empty'}`);
-            if (workspace === active) {
-                dot.add_style_class_name('active');
-                group.lastUsed = workspace;
+        for (const tab of this._tabs ?? []) {
+            tab.label.text = String(tab.workspace.index() + 1);
+            tab.button.accessible_name = this._description(tab);
+            if (tab.workspace === active) {
+                tab.button.add_style_class_name('active');
+                tab.group.lastUsed = tab.workspace;
             } else {
-                dot.remove_style_class_name('active');
+                tab.button.remove_style_class_name('active');
             }
         }
-        this._activities.accessible_name = descriptions.length
-            ? `${this._originalAccessibleName}: ${descriptions.join('. ')}`
-            : this._originalAccessibleName;
+    }
+
+    _showTooltip(tab) {
+        this._hideTooltip();
+        this._tooltipSource = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 200, () => {
+            this._tooltipSource = 0;
+            if (!this._active || !this._indicator.visible)
+                return GLib.SOURCE_REMOVE;
+            this._tooltip.text = this._description(tab);
+            const [x, y] = tab.button.get_transformed_position();
+            const [width, height] = tab.button.get_transformed_size();
+            const [, naturalWidth] = this._tooltip.get_preferred_width(-1);
+            const monitor = Main.layoutManager.findMonitorForActor(tab.button) ?? Main.layoutManager.primaryMonitor;
+            this._tooltip.set_position(Math.max(monitor.x, Math.min(x + width / 2 - naturalWidth / 2,
+                monitor.x + monitor.width - naturalWidth)), y + height + 8);
+            this._tooltip.show();
+            return GLib.SOURCE_REMOVE;
+        });
+    }
+
+    _hideTooltip() {
+        if (this._tooltipSource)
+            GLib.Source.remove(this._tooltipSource);
+        this._tooltipSource = 0;
+        this._tooltip?.hide();
+    }
+
+    _splitWindow(window) {
+        if (this._wm.n_workspaces >= MAX_SLOTS || window.is_on_all_workspaces())
+            return;
+        const workspace = this._wm.append_new_workspace(false, global.get_current_time());
+        window.change_workspace(workspace);
+        workspace.activate(global.get_current_time());
+        this._queue();
+    }
+
+    _placeNewWindow(window, identity) {
+        const parent = window.get_transient_for();
+        let destination = parent?.get_workspace();
+        if (!destination && identity.kind === 'vm') {
+            const current = window.get_workspace();
+            const suitable = workspace => this._workspaceWindows(workspace).filter(other => other !== window)
+                .every(other => this._identities.get(other)?.kind === 'local' ||
+                    this._identities.get(other)?.name === identity.name);
+            const group = this._groups.find(candidate => candidate.kind === 'vm' && candidate.name === identity.name);
+            const candidates = group?.slots.filter(suitable) ?? [];
+            destination = candidates.includes(current) ? current
+                : candidates.includes(group?.lastUsed) ? group.lastUsed : candidates[0];
+            if (!destination)
+                destination = suitable(current) ? current
+                    : this._wm.append_new_workspace(false, global.get_current_time());
+        }
+        this._pendingPlacement.delete(window);
+        if (destination && destination !== window.get_workspace()) {
+            const focused = global.display.focus_window === window;
+            window.change_workspace(destination);
+            if (focused && !Main.sessionMode.isLocked && !Main.sessionMode.isGreeter)
+                destination.activate(global.get_current_time());
+        }
     }
 
     _queue() {
@@ -266,26 +328,11 @@ export default class VMWorkspacesExtension extends Extension {
                 if (!this._active || cancellable.is_cancelled() || !this._windows.has(window))
                     continue;
                 this._identities.set(window, validateIdentity(identity));
-                if (identity.kind === 'local')
-                    this._pendingPlacement.delete(window);
-                if (this._pendingPlacement.has(window) && identity.kind !== 'unknown') {
-                    const destination = initialDestination(this._groups, identity, window.get_workspace(),
-                        window.get_transient_for()?.get_workspace());
-                    if (destination) {
-                        this._pendingPlacement.delete(window);
-                        const focused = global.display.focus_window === window;
-                        window.change_workspace(destination);
-                        if (focused && !Main.sessionMode.isLocked && !Main.sessionMode.isGreeter)
-                            destination.activate(global.get_current_time());
-                    }
-                }
+                if (this._pendingPlacement.has(window) && identity.kind !== 'unknown')
+                    this._placeNewWindow(window, identity);
             }
-            if (this._active) {
-                // Also absorb an extra workspace created by GNOME itself.
-                if (this._wm.n_workspaces !== this._ownedCount)
-                    this._sync();
-                this._refresh();
-            }
+            if (this._active)
+                this._sync();
         } catch (error) {
             if (this._active)
                 console.error(`Airlock workspace identity: ${error.message}`);
@@ -359,9 +406,10 @@ export default class VMWorkspacesExtension extends Extension {
         }
         this._windows.clear();
         this._cache.clear();
-        this._useVMDisplay(false);
-        this._activities.accessible_name = this._originalAccessibleName;
-        this._box.destroy();
+        this._hideTooltip();
+        Main.layoutManager.removeChrome(this._tooltip);
+        this._tooltip.destroy();
+        this._indicator.destroy();
         // Restore preferences only when they still match our last settings.
         // Keep occupied workspace objects until GNOME handles its normal cleanup.
         if (this._preferences.get_int('num-workspaces') === this._ownedCount)

@@ -116,40 +116,41 @@ normal GNOME presentation.
 
 ## VM workspace visual prototype
 
-The GNOME top panel shows contiguous application-VM workspace groups with readable
-VM names and small dots in their Qubes label colours. A wider dot marks the active
-workspace. The display replaces the contents of GNOME's existing Activities
-button, with a single hover highlight. Clicking it opens or closes the normal
-zoomed-out overview. GNOME retains its keyboard, scroll, drag and hot-corner
-behaviour; the VM labels and dots are passive, with no individual buttons or
-add-workspace menu. Groups come from the same trusted inventory as application search. Sys-gui
-has no dedicated group: its local windows share ordinary application workspaces.
-The display fits within the normal Activities panel allocation.
+GNOME keeps its original Activities/workspace dots at the top left; clicking
+opens the normal overview. A separate compact workspace bar sits at the beginning
+of the right-hand panel section, before the system controls. Numbered tabs are
+grouped by VM with a continuous Qubes-colour underline and a gap between groups.
+Hovering or focusing a tab shows its full VM name and workspace number. A separate
+highlight marks the active workspace. Clicking a tab switches directly to it.
+
+Only workspaces containing application windows appear. No VM has a reserved
+workspace: sys-gui has no group, and sys-agent appears only when its apps open.
+Minimized windows count; background services do not. Closing the last window in
+a workspace removes it. Closing a VM's last window removes its group. GNOME keeps
+one underlying blank workspace when all apps close, with no VM bar entries.
+Group order stays stable while groups exist, and workspace objects are reordered
+so each VM's occupied workspaces remain together. No layout is persisted.
 
 New normal application windows receive a one-time placement suggestion based on
-the trusted Qubes window identity reader. They open in their VM's active or last
-used slot. Existing windows are left in place when the extension starts. Window
-movement remains unrestricted: overview dragging, keyboard shortcuts and sticky
-windows work as usual. The Activities accessibility description includes the
-VMs actually present; native sys-gui windows are excluded from that list.
-The focused-VM indicator
-continues to show the actual focused window's origin. These groups are a visual
-experiment and provide no isolation or enforcement beyond existing Qubes policy.
+the existing trusted Qubes window identity reader. Existing windows stay attached
+to their workspace objects when the extension starts. Shift-clicking a tab moves
+that VM's focused window into a new workspace, allowing multiple occupied slots
+without an add-workspace menu or empty placeholders. The POC caps this shortcut
+at 36 workspaces. Overview windows can also be dragged onto tabs.
 
-The extension temporarily uses static workspaces so requested empty slots survive.
-Initial slots reuse existing workspaces; redundant empty workspaces are removed.
-Occupied leftovers retain their workspace objects under the personal VM's group.
-The controller remains active while the desktop is locked, with its display
-hidden, so locking does not restore the old workspace count. Its
-layout is stored in the desktop user's `airlock-vm-workspaces/layout.json` beneath
-the XDG state directory. UUIDs preserve groups across VM renames; stopped or absent
-VMs retain their slots, with absent VMs labelled `Unavailable VM`. The prototype
-retains the saved layout, with at most 36 slots, and has no separate workspace
-creation, removal or group-reordering controls. Disabling the extension restores
-the native Activities indicators and the original
-workspace preferences. GNOME 50 workspace and panel APIs need validation on
-Shell upgrades. All code and packaging are confined to `sys-gui`; no guest GUI
-agent, qrexec policy or host control authority changes are required.
+Manual window moves remain unrestricted. Mixed workspaces use a neutral underline
+and name their actual VMs in the tooltip; unidentified windows also use a neutral
+colour. Native sys-gui windows receive no VM label. The focused-VM indicator still
+shows the focused window's actual origin. This prototype adds no isolation or
+enforcement beyond existing Qubes policy.
+
+The extension temporarily disables GNOME's dynamic workspace management to handle
+occupied workspace groups itself, restoring the previous preferences on disable.
+The bar and hover labels hide on the lock screen. GNOME 50 workspace and panel APIs
+need validation on Shell upgrades. All changes are confined to sys-gui; guest GUI
+agents, qrexec policy and host control authority are unchanged. Visual behaviour,
+window transitions and interaction with the overview are intended for manual POC
+acceptance on the live desktop.
 
 Catalogs persist in sys-gui's normal Qubes app-menu cache. Stopped VMs retain
 their last successfully synchronized entries. Failed inventory or catalog

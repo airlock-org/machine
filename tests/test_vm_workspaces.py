@@ -29,13 +29,13 @@ def javascript(tmp_path):
         target.write_text(source.read_text())
         modules[name] = json.dumps(target.as_uri())
     imports = (
-        f"import {{MAX_SLOTS,readLayout,reconcileGroups,reuseWorkspaces,serializeLayout,workspaceContents,initialDestination}} from {modules['model']};\n"
+        f"import {{MAX_SLOTS,describeWorkspace,groupOccupiedWorkspaces}} from {modules['model']};\n"
         f"import {{WindowIdentityCache,LOCAL,UNKNOWN,validateIdentity}} from {modules['identity']};\n"
         f"import {{parseInventory}} from {modules['inventory']};\n"
     )
     controller = tmp_path / "extension.mjs"
     controller.write_text(
-        imports + "const {Clutter,Gio,GLib,Meta,St,Main,Extension}=globalThis.shellMocks;\n"
+        imports + "const {Clutter,Gio,GLib,Meta,St,Main,PanelMenu,DND,Extension}=globalThis.shellMocks;\n"
         + re.sub(r"^import .*;\n", "", (EXTENSION / "extension.js").read_text(), flags=re.MULTILINE)
     )
 
@@ -54,78 +54,89 @@ def javascript(tmp_path):
     return run
 
 
-def test_groups_preserve_uuid_slots_on_rename_and_inventory_failure(javascript):
+def test_only_occupied_application_workspaces_form_groups(javascript):
     javascript("""
-const groups=reconcileGroups([],inventory);
-assert.deepEqual(groups.map(g=>g.key),[HOME,AGENT]);
-const workspace={}; groups[0].slots=[workspace,{}];
-inventory.set(HOME,{name:'usr-renamed',color:'#0000ff',running:false});
-reconcileGroups(groups,inventory);
-assert.equal(groups[0].name,'usr-renamed');
-assert.equal(groups[0].slots[0],workspace);
-reconcileGroups(groups,new Map());
-assert.equal(groups[0].name,'Unavailable VM');
-assert.equal(groups[0].slots[0],workspace);
-assert.deepEqual(readLayout(serializeLayout(groups)),[
- {key:HOME,count:2},{key:AGENT,count:1}]);
+const a={},b={},identities=new Map([[a,[]],[b,[LOCAL,{kind:'vm',name:'sys-gui'}]]]);
+assert.deepEqual(groupOccupiedWorkspaces([], [a,b], identities, inventory), []);
+identities.set(a,[{kind:'vm',name:'usr-home',color:'#ffffff'}]);
+const groups=groupOccupiedWorkspaces([], [a,b], identities, inventory);
+assert.equal(groups.length,1);assert.equal(groups[0].key,HOME);
+assert.equal(groups[0].color,'#3465a4');assert.deepEqual(groups[0].slots,[a]);
+assert.equal(groups.some(g=>g.name==='sys-agent'),false);
 """)
 
 
-def test_layout_validation_and_limit(javascript):
+def test_groups_keep_order_and_drop_closed_workspaces(javascript):
     javascript("""
-for(const text of ['{','null','[]','{"version":2,"groups":[]}']) assert.deepEqual(readLayout(text),[]);
-const groups=[{key:HOME,count:2},{key:HOME,count:3},{key:'fake',count:1},
- {key:AGENT,count:1.5},{key:'local',count:4},{key:AGENT,count:34}];
-assert.deepEqual(readLayout(JSON.stringify({version:1,groups})),[{key:HOME,count:2},{key:AGENT,count:34}]);
-assert.deepEqual(readLayout(JSON.stringify({version:1,groups:[{key:HOME,count:36}]})),[{key:HOME,count:36}]);
-const many=new Map(Array.from({length:100},(_,i)=>[
- `00000000-0000-0000-0000-${String(i).padStart(12,'0')}`,{name:`usr-${i}`,color:null}]));
-assert.equal(reconcileGroups([],many).length,MAX_SLOTS);
+const a={},b={},c={},d={};
+const home={kind:'vm',name:'usr-home'},agent={kind:'vm',name:'sys-agent'};
+const identities=new Map([[a,[home]],[b,[agent]],[c,[home]],[d,[agent]]]);
+let groups=groupOccupiedWorkspaces([], [a,b,c,d], identities, inventory);
+assert.deepEqual(groups.map(g=>g.slots),[[a,c],[b,d]]);
+groups[0].lastUsed=c;
+groups=groupOccupiedWorkspaces(groups,[b,a,d,c],identities,inventory);
+assert.deepEqual(groups.map(g=>g.key),[HOME,AGENT]);assert.equal(groups[0].lastUsed,c);
+identities.set(a,[]);identities.set(c,[]);
+groups=groupOccupiedWorkspaces(groups,[b,a,d,c],identities,inventory);
+assert.deepEqual(groups.map(g=>g.key),[AGENT]);
 """)
 
 
-def test_mixed_marker_is_based_on_verified_window_identity(javascript):
+def test_mixed_and_unknown_windows_use_neutral_identity(javascript):
     javascript("""
-assert.deepEqual(workspaceContents('usr-home',[]),{mixed:false,names:[]});
-assert.deepEqual(workspaceContents('usr-home',[LOCAL]),{mixed:false,names:[]});
-assert.equal(workspaceContents('usr-home',[{kind:'vm',name:'usr-home'}]).mixed,false);
-assert.deepEqual(workspaceContents('usr-home',[
- {kind:'vm',name:'sys-agent'},{kind:'vm',name:'sys-agent'},UNKNOWN]),
- {mixed:true,names:['sys-agent','Unidentified']});
-const groups=reconcileGroups([],inventory);
-const first={},second={},other={}; groups[0].slots=[first,second]; groups[0].lastUsed=second;
-assert.equal(initialDestination(groups,{kind:'vm',name:'usr-home'},other,null),second);
-assert.equal(initialDestination(groups,{kind:'vm',name:'usr-home'},first,null),first);
-assert.equal(initialDestination(groups,UNKNOWN,other,null),null);
-assert.equal(initialDestination(groups,LOCAL,other,null),null);
-assert.equal(initialDestination(groups,{kind:'vm',name:'usr-home'},other,other),other);
+const description=describeWorkspace([
+ {kind:'vm',name:'usr-home'}, {kind:'vm',name:'sys-agent'},LOCAL],inventory);
+assert.equal(description.kind,'mixed');assert.equal(description.color,'#888888');
+assert.deepEqual(description.names,['sys-agent','usr-home']);
+assert.equal(describeWorkspace([UNKNOWN],inventory).kind,'unknown');
+assert.equal(describeWorkspace([LOCAL],inventory),null);
 """)
 
 
-def test_existing_empty_slots_are_reused_without_a_gui_group(javascript):
+def test_controller_keeps_native_activities_and_removes_empty_slots(javascript):
     javascript("""
-const workspaces=[{},{},{},{}];
-const groups=reconcileGroups([],inventory);
-const unused=reuseWorkspaces(groups,workspaces,new Set());
-assert.deepEqual(groups.map(g=>g.slots),[[workspaces[0]],[workspaces[1]]]);
-assert.deepEqual(unused,[workspaces[2],workspaces[3]]);
-assert.equal(groups.some(g=>g.key==='local'),false);
-assert.deepEqual(reuseWorkspaces([],workspaces,new Set()),[]);
-const saved={version:1,groups:[{key:HOME,count:1},{key:AGENT,count:1},{key:'local',count:4}]};
-assert.deepEqual(readLayout(JSON.stringify(saved)),[{key:HOME,count:1},{key:AGENT,count:1}]);
-""")
+const homeWindow=new Window(wm.workspaces[0]),agentWindow=new Window(wm.workspaces[1]);
+actors.push({meta_window:homeWindow},{meta_window:agentWindow});
+const ext=new Controller();ext.enable();finishInventory();
+ext._identities.set(homeWindow,{kind:'vm',name:'usr-home'});
+ext._identities.set(agentWindow,{kind:'vm',name:'sys-agent'});ext._sync();
+assert.equal(activities.get_first_child(),nativeIndicators);
+assert.equal(activities.reactive,true);assert.equal(activities.accessible_name,'Activities');
+assert.equal(shellMocks.Main.panel.placement.side,'right');
+assert.equal(shellMocks.Main.panel.placement.index,0);
+assert.equal(homeWindow.moves,0);assert.equal(agentWindow.moves,0);
+assert.equal(ext._groups.length,2);assert.equal(ext._tabs.length,2);
+ext._tabs[1].button.emit('clicked');assert.equal(wm.current,agentWindow.workspace);
+activities._clickGesture.emit('recognize');assert.equal(overview.toggles,1);
+const homeTab=ext._tabs[0];homeTab.button.hover=true;homeTab.button.emit('notify::hover');
+sources.get(ext._tooltipSource)();assert.match(ext._tooltip.text,/usr-home/);
+assert.equal(ext._tooltip.visible,true);
+agentWindow.emit('unmanaged');allWindows.delete(agentWindow);ext._sync();
+assert.equal(ext._groups.length,1);assert.equal(wm.n_workspaces,1);
+homeWindow.emit('unmanaged');allWindows.delete(homeWindow);ext._sync();
+assert.equal(ext._groups.length,0);assert.equal(wm.n_workspaces,1);
+assert.equal(ext._indicator.visible,false);
+ext.disable();assert.equal(settings.get('org.gnome.mutter')['dynamic-workspaces'],true);
+""", shell=True)
 
 
-def test_occupied_leftovers_keep_their_workspace_objects(javascript):
+def test_multiple_slots_stay_contiguous_and_manual_moves_are_unrestricted(javascript):
     javascript("""
-const workspaces=[{},{},{},{}];
-const groups=reconcileGroups([],inventory);
-groups[0].slots=[workspaces[0]];groups[1].slots=[workspaces[1]];
-const unused=reuseWorkspaces(groups,workspaces,new Set([workspaces[3]]));
-assert.deepEqual(unused,[workspaces[2]]);
-assert.deepEqual(groups[0].slots,[workspaces[0],workspaces[3]]);
-assert.deepEqual(groups[1].slots,[workspaces[1]]);
-""")
+const homeWindow=new Window(wm.workspaces[0]),agentWindow=new Window(wm.workspaces[1]);
+actors.push({meta_window:homeWindow},{meta_window:agentWindow});
+const ext=new Controller();ext.enable();finishInventory();
+ext._identities.set(homeWindow,{kind:'vm',name:'usr-home'});
+ext._identities.set(agentWindow,{kind:'vm',name:'sys-agent'});ext._sync();
+const second=new Window(homeWindow.workspace);ext._watch(second);
+ext._identities.set(second,{kind:'vm',name:'usr-home'});ext._splitWindow(second);ext._sync();
+assert.deepEqual(ext._groups.map(g=>g.slots.length),[2,1]);
+assert.equal(agentWindow.workspace.index(),2);
+agentWindow.change_workspace(second.workspace);ext._sync();
+assert.equal(agentWindow.workspace,second.workspace);assert.equal(agentWindow.moves,1);
+assert.equal(ext._groups[1].kind,'mixed');assert.equal(ext._groups[1].color,'#888888');
+assert.match(ext._tabs[1].button.accessible_name,/Mixed: sys-agent, usr-home/);
+ext.disable();
+""", shell=True)
 
 
 MOCKS = """
@@ -144,6 +155,11 @@ class Actor extends Signals {
  destroy_all_children(){for(const child of [...this.children]){this.remove_child(child);child.destroy();}}
  destroy(){this.destroyed=true;}
  hide(){this.visible=false;}
+ show(){this.visible=true;}
+ get_transformed_position(){return [400,0];}
+ get_transformed_size(){return [30,24];}
+ get_preferred_width(){return [80,180];}
+ set_position(x,y){this.position=[x,y];}
  set_label(label){this.label=label;}
  add_style_class_name(name){this.classes.add(name);}
  remove_style_class_name(name){this.classes.delete(name);}
@@ -168,6 +184,7 @@ class Window extends Signals {
  constructor(workspace,kind=0){super();this.workspace=workspace;this.kind=kind;this.moves=0;allWindows.add(this);}
  get_window_type(){return this.kind;}
  get_client_type(){return 1;}
+ is_on_all_workspaces(){return false;}
  get_transient_for(){return null;}
  get_workspace(){return this.workspace;}
  located_on_workspace(workspace){return this.workspace===workspace;}
@@ -189,7 +206,7 @@ const inventoryFile={
 };
 const monitor=new Signals();monitor.cancel=()=>{monitor.cancelled=true;};
 const wm=new Manager(), display=new Signals(), actors=[];
-globalThis.global={workspace_manager:wm,display,get_current_time:()=>42,get_window_actors:()=>actors};
+globalThis.global={workspace_manager:wm,display,get_current_time:()=>42,get_pointer:()=>[0,0,0],get_window_actors:()=>actors};
 const overview={visible:false,toggles:0,allowed:true,shouldToggleByCornerOrButton(){return this.allowed;},
  toggle(){this.visible=!this.visible;this.toggles++;}};
 const nativeIndicators=new Actor(),activities=new Actor({reactive:true,can_focus:true,accessible_name:'Activities'});
@@ -199,7 +216,7 @@ activities._clickGesture=new Signals();activities._clickGesture.connect('recogni
 activities.vfunc_scroll_event=event=>event;
 activities.handleDragOver=source=>source;
 globalThis.shellMocks={
- Clutter:{ActorAlign:{CENTER:0}},Gio:{Settings,Cancellable,
+ Clutter:{ActorAlign:{CENTER:0},ModifierType:{SHIFT_MASK:1}},Gio:{Settings,Cancellable,
  File:{new_for_path:path=>path.endsWith('inventory.json')?inventoryFile:{monitor_directory:()=>monitor}},
  FileMonitorFlags:{WATCH_MOVES:1}},
  GLib:{get_user_state_dir:()=>'/state',build_filenamev:parts=>parts.join('/'),mkdir_with_parents(){},
@@ -208,142 +225,13 @@ globalThis.shellMocks={
  timeout_add:(_priority,_delay,callback)=>{const id=sources.size+1;sources.set(id,callback);return id;},
  Source:{remove:id=>sources.delete(id)}},
  Meta:{WindowType:{NORMAL:0,DIALOG:1,MODAL_DIALOG:2},WindowClientType:{WAYLAND:1}},
- St:{BoxLayout:Actor,Widget:Actor,Label:Actor,Button:class {constructor(){throw Error('No individual input targets');}}},
- Main:{panel:{statusArea:{activities},addToStatusArea(){throw Error('No duplicate workspace control');}},overview,sessionMode:new Signals()},
+ St:{BoxLayout:Actor,Widget:Actor,Label:Actor,Button:Actor},
+ PanelMenu:{Button:Actor},DND:{DragMotionResult:{MOVE_DROP:2,CONTINUE:3}},
+ Main:{panel:{statusArea:{activities},addToStatusArea(name,indicator,index,side){this.placement={name,indicator,index,side};}},
+ layoutManager:{addChrome(){},removeChrome(){},primaryMonitor:{x:0,width:1920},findMonitorForActor(){return this.primaryMonitor;}},
+ overview,sessionMode:new Signals()},
  Extension:class {}
 };
 const inventoryText=JSON.stringify(Object.fromEntries([...inventory].map(([uuid,vm])=>[uuid,{uuid,...vm,label:vm.color}])));
 const finishInventory=()=>reads.at(-1).callback(inventoryFile,{text:inventoryText});
 """
-
-
-def test_inserting_slot_keeps_workspace_objects_and_unrestricted_window_moves(javascript):
-    javascript("""
-const existing=new Window(wm.current);actors.push({meta_window:existing});
-const ext=new Controller();ext.enable();finishInventory();
-assert.equal(existing.moves,0);
-const home=ext._groups.find(g=>g.key===HOME),agent=ext._groups.find(g=>g.key===AGENT);
-const agentWorkspace=agent.slots[0],localWorkspace=existing.workspace;
-home.slots.push(null);ext._sync();
-assert.equal(agent.slots[0],agentWorkspace);
-assert.equal(existing.workspace,localWorkspace);
-assert.equal(agentWorkspace.index(),2);
-const foreign=new Window(home.slots[0]);ext._watch(foreign);
-ext._identities.set(existing,LOCAL);
-ext._identities.set(foreign,{kind:'vm',name:'sys-agent',color:'#cc0000'});ext._refresh();
-assert.match(activities.accessible_name,/windows from sys-agent/);
-foreign.change_workspace(agentWorkspace);
-assert.equal(foreign.workspace,agentWorkspace);assert.equal(foreign.moves,1);
-assert.equal(ext._dots.find(d=>d.workspace===agentWorkspace).dot.classes.has('active'),false);
-assert.equal(home.slots.length,2);
-ext.disable();assert.equal(existing.handlers.size,0);assert.equal(foreign.handlers.size,0);
-assert.equal(settings.get('org.gnome.mutter')['dynamic-workspaces'],true);
-assert.equal(settings.get('org.gnome.desktop.wm.preferences')['num-workspaces'],4);
-assert.equal(monitor.cancelled,true);
-""", shell=True)
-
-
-def test_inventory_out_of_order_and_failed_refresh_preserve_layout(javascript):
-    javascript("""
-const ext=new Controller();ext.enable();const stale=reads[0];ext._loadInventory();finishInventory();
-const groups=ext._groups.slice();
-stale.callback(inventoryFile,{text:'{}'});assert.deepEqual(ext._groups,groups);
-ext._loadInventory();reads.at(-1).callback(inventoryFile,{error:true});
-assert.deepEqual(ext._groups,groups);
-const late=reads.at(-1);ext.disable();late.callback(inventoryFile,{text:inventoryText});
-assert.equal(ext._box.destroyed,true);assert.equal(activities.get_first_child(),nativeIndicators);
-""", shell=True)
-
-
-def test_unchanged_inventory_preserves_display_and_native_gestures(javascript):
-    javascript("""
-const ext=new Controller();ext.enable();finishInventory();
-const dot=ext._dots[0].dot,gesture=activities._clickGesture;
-ext._loadInventory();finishInventory();
-assert.equal(ext._dots[0].dot,dot);assert.equal(activities._clickGesture,gesture);
-ext.disable();
-""", shell=True)
-
-
-def test_new_window_suggestion_runs_once_and_user_move_wins_during_lookup(javascript):
-    javascript("""
-const ext=new Controller();ext.enable();finishInventory();
-const home=ext._groups.find(g=>g.key===HOME),agent=ext._groups.find(g=>g.key===AGENT);
-const window=new Window(agent.slots[0]);display.emit('window-created',window);
-ext._resolve=async()=>({kind:'vm',name:'usr-home',color:'#3465a4'});
-await ext._scan();assert.equal(window.workspace,home.slots[0]);assert.equal(window.moves,1);
-window.change_workspace(agent.slots[0]);await ext._scan();
-assert.equal(window.workspace,agent.slots[0]);assert.equal(window.moves,2);
-const slow=new Window(agent.slots[0]);display.emit('window-created',slow);
-let complete;ext._resolve=()=>new Promise(resolve=>{complete=resolve;});
-// Ignore the already resolved window to test the pending lookup on the new one.
-ext._windows.delete(window);
-const scanning=ext._scan();slow.change_workspace(home.slots[0]);
-complete({kind:'vm',name:'sys-agent',color:'#cc0000'});await scanning;
-assert.equal(slow.workspace,home.slots[0]);assert.equal(slow.moves,1);
-ext._windows.set(window,[]);ext.disable();
-""", shell=True)
-
-
-def test_disable_during_identity_lookup_prevents_late_window_move(javascript):
-    javascript("""
-const ext=new Controller();ext.enable();finishInventory();
-const workspace=wm.current,window=new Window(workspace);display.emit('window-created',window);
-let complete;ext._resolve=()=>new Promise(resolve=>{complete=resolve;});
-const scanning=ext._scan();ext.disable();
-complete({kind:'vm',name:'usr-home',color:'#3465a4'});await scanning;
-assert.equal(window.moves,0);assert.equal(window.workspace,workspace);
-assert.equal(window.handlers.size,0);
-""", shell=True)
-
-
-def test_lock_hides_vm_labels_and_disable_preserves_external_preferences(javascript):
-    javascript("""
-const ext=new Controller();ext.enable();finishInventory();
-const mode=globalThis.shellMocks.Main.sessionMode;
-mode.isLocked=true;mode.emit('updated');assert.equal(ext._box.visible,false);
-mode.isLocked=false;mode.emit('updated');assert.equal(ext._box.visible,true);
-settings.get('org.gnome.desktop.wm.preferences')['num-workspaces']=7;
-ext.disable();assert.equal(settings.get('org.gnome.desktop.wm.preferences')['num-workspaces'],7);
-""", shell=True)
-
-
-def test_controller_removes_only_redundant_empty_slots_and_hides_display_on_lock(javascript):
-    javascript("""
-wm.workspaces.push(new Workspace(wm),new Workspace(wm));
-const existing=new Window(wm.workspaces[3]);actors.push({meta_window:existing});
-const ext=new Controller();ext.enable();
-assert.equal(activities.get_first_child(),nativeIndicators);
-finishInventory();
-assert.equal(wm.n_workspaces,3);
-assert.equal(existing.moves,0);assert.equal(wm.workspaces.includes(existing.workspace),true);
-assert.equal(ext._groups.some(g=>g.key==='local'),false);
-assert.equal(ext._groups.find(g=>g.key===HOME).slots.includes(existing.workspace),true);
-const mode=globalThis.shellMocks.Main.sessionMode;mode.isLocked=true;mode.emit('updated');
-assert.equal(ext._box.visible,false);
-assert.equal(wm.n_workspaces,3);assert.equal(ext._active,true);
-ext.disable();
-""", shell=True)
-
-
-def test_one_passive_display_reuses_native_overview_control_and_restores_on_disable(javascript):
-    javascript("""
-const gesture=activities._clickGesture,scroll=activities.vfunc_scroll_event,drag=activities.handleDragOver;
-const ext=new Controller();ext.enable();
-assert.equal(activities.get_first_child(),nativeIndicators);
-finishInventory();
-assert.equal(globalThis.shellMocks.Main.panel.statusArea.activities,activities);
-assert.equal(activities.children.length,1);assert.equal(activities.get_first_child(),ext._box);
-assert.equal(nativeIndicators.parent,null);assert.equal(nativeIndicators.destroyed,undefined);
-const passive=actor=>{assert.equal(actor.reactive,false);assert.equal(actor.can_focus,false);actor.children.forEach(passive);};
-passive(ext._box);
-const current=wm.current;
-gesture.emit('recognize');assert.equal(overview.visible,true);assert.equal(wm.current,current);
-gesture.emit('recognize');assert.equal(overview.visible,false);assert.equal(overview.toggles,2);
-overview.allowed=false;gesture.emit('recognize');assert.equal(overview.toggles,2);
-assert.equal(activities.vfunc_scroll_event,scroll);assert.equal(activities.handleDragOver,drag);
-ext.disable();
-assert.equal(activities.get_first_child(),nativeIndicators);assert.equal(activities.children.length,1);
-assert.equal(activities.accessible_name,'Activities');assert.equal(activities._clickGesture,gesture);
-assert.equal(nativeIndicators.destroyed,undefined);
-""", shell=True)
