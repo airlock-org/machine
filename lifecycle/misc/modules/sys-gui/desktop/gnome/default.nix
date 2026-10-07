@@ -93,7 +93,7 @@ in
   imports = [ ./setup.nix ];
   config = lib.mkIf (cfg.session == "gnome") {
     # Applications own their title bars. The trusted GUI daemon adds a thin
-    # VM-coloured outline only for forwarded sys-* windows; the focused VM
+    # VM-coloured outline for every forwarded VM window; the focused VM
     # panel identifies every VM. Decoration policy never uses application class.
     nixpkgs.overlays = lib.mkAfter [
       (_final: prev: {

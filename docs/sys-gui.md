@@ -52,12 +52,13 @@ diagnostics are in `journalctl -b -u display-manager` inside `sys-gui`.
 
 In GNOME, forwarded applications supply their own title bars. The trusted Qubes
 GUI daemon requests no additional window-manager decorations. Forwarded windows
-from VMs named `sys-*` have a two-pixel outline in their Qubes label colour
+from every application VM have a two-pixel outline in their Qubes label colour
 (for example, red for `sys-agent`). The daemon draws this on the outer pixels
 of the forwarded window using the VM identity supplied by Qubes, independently
 of application names or classes. Docked tray icons have no added outline.
-Personal VM windows such as `usr-home` have no added outline; their native
-application edges and GNOME shadows remain. The focused VM panel identifies
+This includes personal VMs such as `usr-home`, using the same thickness for
+focused and unfocused windows. Native application chrome and GNOME shadows
+remain. The focused VM panel identifies
 windows from every VM. Applications running directly in sys-gui are unaffected.
 
 The desktop user's `airlock-application-menus.timer` starts two seconds after
@@ -129,8 +130,11 @@ GNOME's Super overview uses the same VM colours around its workspace previews
 and small thumbnails. GNOME's moving thumbnail selection frame follows the VM
 colour, with square corners matching the previews in both overview modes.
 The large window-picker outline sits between the wallpaper and window previews.
-Its radius and visibility follow GNOME's animated background rounding, so it
-matches the single-Super view without drawing over applications. Small thumbnails
+Its radius follows the wallpaper's rendered scale and GNOME's animated rounding.
+The background's native rounded frame uses that same radius. Selected and
+unselected large outlines have the same two-pixel thickness; selection changes
+opacity, preserving both contours throughout the zoom. Native background styling
+is restored when the extension is disabled. Small thumbnails
 keep square corners.
 The active thumbnail uses that native frame rather than a second coloured outline.
 Hover shows the VM name and workspace number after a short

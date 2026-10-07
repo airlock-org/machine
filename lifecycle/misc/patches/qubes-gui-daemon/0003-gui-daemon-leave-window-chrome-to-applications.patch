@@ -4,12 +4,12 @@ Date: Thu, 1 Oct 2026 15:12:21 +0100
 Subject: [PATCH] gui-daemon: leave window chrome to applications in GNOME
 
 Suppress window-manager decorations for every application. Retain a thin
-forced outline in the trusted VM label colour only for forwarded sys-* windows;
-personal VM windows and docked tray icons have no added outline.
+forced outline in the trusted VM label colour for every forwarded VM window.
+Docked tray icons have no added outline.
 
 ---
- gui-daemon/xside.c | 26 ++++++++++++--------------
- 1 file changed, 12 insertions(+), 14 deletions(-)
+ gui-daemon/xside.c | 24 ++++++++++--------------
+ 1 file changed, 10 insertions(+), 14 deletions(-)
 
 diff --git a/gui-daemon/xside.c b/gui-daemon/xside.c
 index a39d41d..784bab5 100644
@@ -29,20 +29,18 @@ index a39d41d..784bab5 100644
      if (g->time_win != None)
          XChangeProperty(g->display, child_win, g->wm_user_time_window,
                 XA_WINDOW, 32, PropModeReplace,
-@@ -2252,7 +2259,11 @@ static void do_shm_update(Ghandles * g, struct windowdata *vm_window,
+@@ -2252,7 +2259,9 @@ static void do_shm_update(Ghandles * g, struct windowdata *vm_window,
             int untrusted_x, int untrusted_y, int untrusted_w,
             int untrusted_h)
  {
 -    int border_width = BORDER_WIDTH;
-+    /* The daemon's VM name and frame colour come from trusted Qubes state,
-+     * never from an application. System VMs keep a thin identity outline;
-+     * personal VM windows and tray icons retain application-owned edges. */
-+    int border_width = !vm_window->is_docked &&
-+        strncmp(g->vmname, "sys-", 4) == 0 ? BORDER_WIDTH : 0;
++    /* The frame colour comes from trusted Qubes state, never an application.
++     * All forwarded VM windows keep the same thin outline; tray icons do not. */
++    int border_width = vm_window->is_docked ? 0 : BORDER_WIDTH;
      int border_padding = 0; /* start forced border x pixels from the edge */
      int x = 0, y = 0, w = 0, h = 0;
      ASSERT_WIDTH_UNSIGNED(vm_window->width);
-@@ -2369,19 +2380,6 @@ static void do_shm_update(Ghandles * g, struct windowdata *vm_window,
+@@ -2369,19 +2378,6 @@ static void do_shm_update(Ghandles * g, struct windowdata *vm_window,
  
      /* sanitize end */
  
