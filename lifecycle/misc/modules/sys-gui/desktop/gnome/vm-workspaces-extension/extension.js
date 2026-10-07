@@ -493,7 +493,8 @@ export default class VMWorkspacesExtension extends Extension {
 
     _moveIdentity(window) {
         let identity = this._identities.get(window) ?? this._cache.get(window);
-        if (!identity || identity.kind === 'unknown') {
+        // Failed reads are retried by the asynchronous scanner, not every move guard.
+        if (!identity) {
             identity = this._resolveSync(window, new Set());
             this._identities.set(window, validateIdentity(identity));
         }
