@@ -6,7 +6,9 @@ import St from 'gi://St';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import * as DND from 'resource:///org/gnome/shell/ui/dnd.js';
-import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
+import * as Workspace from 'resource:///org/gnome/shell/ui/workspace.js';
+import * as WorkspaceThumbnail from 'resource:///org/gnome/shell/ui/workspaceThumbnail.js';
+import {Extension, InjectionManager} from 'resource:///org/gnome/shell/extensions/extension.js';
 import {WindowIdentityCache, LOCAL, UNKNOWN, validateIdentity} from './identity.js';
 import {parseInventory} from './inventory.js';
 import {MAX_SLOTS, describeWorkspace, groupOccupiedWorkspaces} from './model.js';
@@ -36,6 +38,8 @@ export default class VMWorkspacesExtension extends Extension {
         this._preferences.set_int('num-workspaces', this._wm.n_workspaces);
         this._mutter.set_boolean('dynamic-workspaces', false);
         this._groups = [];
+        this._overviewActors = new Map();
+        this._dragging = false;
         this._indicator = new PanelMenu.Button(0.0, 'VM workspaces', true);
         this._indicator.reactive = false;
         this._indicator.can_focus = false;
@@ -48,6 +52,16 @@ export default class VMWorkspacesExtension extends Extension {
         Main.panel.addToStatusArea('airlock-vm-workspaces', this._indicator, 0, 'right');
         this._tooltip = new St.Label({style_class: 'dash-label', visible: false, reactive: false});
         Main.layoutManager.addChrome(this._tooltip);
+        this._installOverview();
+        this._connect(Main.overview, 'hidden', () => this._hideTooltip());
+        for (const kind of ['window', 'item']) {
+            this._connect(Main.overview, `${kind}-drag-begin`, () => {
+                this._dragging = true;
+                this._hideTooltip();
+            });
+            for (const end of ['end', 'cancelled'])
+                this._connect(Main.overview, `${kind}-drag-${end}`, () => { this._dragging = false; });
+        }
         this._connect(this._wm, 'workspace-switched', () => this._refresh());
         this._connect(this._wm, 'workspace-added', () => this._queue());
         this._connect(this._wm, 'workspace-removed', () => this._queue());
@@ -185,7 +199,7 @@ export default class VMWorkspacesExtension extends Extension {
                     const label = new St.Label({reactive: false, can_focus: false,
                         y_align: Clutter.ActorAlign.CENTER});
                     button.set_child(label);
-                    const tab = {group, workspace, button, label};
+                    const tab = {group, workspace, button, label, focused: false};
                     this._tabs.push(tab);
                     button.connect('clicked', () => {
                         this._hideTooltip();
@@ -196,10 +210,23 @@ export default class VMWorkspacesExtension extends Extension {
                         else
                             workspace.activate(global.get_current_time());
                     });
-                    button.connect('notify::hover', () => button.hover
-                        ? this._showTooltip(tab) : this._hideTooltip());
-                    button.connect('key-focus-in', () => this._showTooltip(tab));
-                    button.connect('key-focus-out', () => this._hideTooltip());
+                    button.connect('notify::hover', () => {
+                        this._styleTab(tab);
+                        if (button.hover)
+                            this._showTooltip(tab);
+                        else
+                            this._hideTooltip();
+                    });
+                    button.connect('key-focus-in', () => {
+                        tab.focused = true;
+                        this._styleTab(tab);
+                        this._showTooltip(tab);
+                    });
+                    button.connect('key-focus-out', () => {
+                        tab.focused = false;
+                        this._styleTab(tab);
+                        this._hideTooltip();
+                    });
                     button._delegate = {
                         handleDragOver: source => source.metaWindow ? DND.DragMotionResult.MOVE_DROP : DND.DragMotionResult.CONTINUE,
                         acceptDrop: source => {
@@ -223,7 +250,7 @@ export default class VMWorkspacesExtension extends Extension {
         const description = describeWorkspace(this._workspaceWindows(tab.workspace)
             .map(window => this._identities.get(window) ?? UNKNOWN), this._inventory);
         const owner = description?.kind === 'mixed' ? `Mixed: ${description.names.join(', ')}`
-            : description?.name ?? tab.group.name;
+            : description?.name ?? tab.group?.name;
         return `${owner} · workspace ${tab.workspace.index() + 1}`;
     }
 
@@ -232,6 +259,7 @@ export default class VMWorkspacesExtension extends Extension {
         for (const tab of this._tabs ?? []) {
             tab.label.text = String(tab.workspace.index() + 1);
             tab.button.accessible_name = this._description(tab);
+            this._styleTab(tab);
             if (tab.workspace === active) {
                 tab.button.add_style_class_name('active');
                 tab.group.lastUsed = tab.workspace;
@@ -239,21 +267,100 @@ export default class VMWorkspacesExtension extends Extension {
                 tab.button.remove_style_class_name('active');
             }
         }
+        this._refreshOverview();
+    }
+
+    _styleTab(tab) {
+        const alpha = tab.workspace === this._wm.get_active_workspace() ? 0.4
+            : tab.button.hover || tab.focused ? 0.3 : 0.2;
+        const color = /^#[0-9a-f]{6}$/i.test(tab.group.color) ? tab.group.color : '#888888';
+        const rgb = [1, 3, 5].map(index => parseInt(color.slice(index, index + 2), 16));
+        tab.button.style = `background-color: rgba(${rgb.join(',')},${alpha});`;
+    }
+
+    _installOverview() {
+        this._injections = new InjectionManager();
+        const extension = this;
+        for (const [prototype, small] of [[Workspace.Workspace.prototype, false],
+            [WorkspaceThumbnail.WorkspaceThumbnail.prototype, true]]) {
+            this._injections.overrideMethod(prototype, '_init', original => function (...args) {
+                original.apply(this, args);
+                extension._decorateOverview(this, small);
+            });
+        }
+        // Also cover previews created before this extension was enabled.
+        const controls = Main.overview._overview.controls;
+        for (const actor of controls._thumbnailsBox?._thumbnails ?? [])
+            this._decorateOverview(actor, true);
+        for (const view of controls._workspacesDisplay?._workspacesViews ?? []) {
+            for (const actor of view._workspaces ?? view._workspacesView?._workspaces ?? [])
+                this._decorateOverview(actor, false);
+            for (const actor of view._thumbnails?._thumbnails ?? [])
+                this._decorateOverview(actor, true);
+        }
+    }
+
+    _decorateOverview(actor, small) {
+        if (!this._active || !actor.metaWorkspace || this._overviewActors.has(actor))
+            return;
+        // A nonreactive overlay leaves GNOME's native click and drag handlers intact.
+        const border = new St.Widget({reactive: false, can_focus: false,
+            style_class: small ? 'airlock-overview-thumbnail-border' : 'airlock-overview-workspace-border'});
+        border.add_constraint(new Clutter.BindConstraint({
+            source: small ? actor : actor._background,
+            coordinate: small ? Clutter.BindCoordinate.SIZE : Clutter.BindCoordinate.ALL,
+        }));
+        actor.add_child(border);
+        const record = {actor, border, workspace: actor.metaWorkspace, button: actor,
+            tooltipAbove: !small, reactive: actor.reactive, trackHover: actor.track_hover};
+        actor.reactive = true;
+        actor.track_hover = true;
+        record.hoverSignal = actor.connect('notify::hover', () => {
+            if (actor.hover && record.group && Main.overview.visible)
+                this._showTooltip(record);
+            else
+                this._hideTooltip();
+        });
+        record.destroySignal = actor.connect('destroy', () => {
+            this._hideTooltip();
+            this._overviewActors.delete(actor);
+        });
+        this._overviewActors.set(actor, record);
+        this._paintOverview(record);
+    }
+
+    _paintOverview(record) {
+        const {workspace, border} = record;
+        record.group = describeWorkspace(this._workspaceWindows(workspace)
+            .map(window => this._identities.get(window) ?? UNKNOWN), this._inventory);
+        const active = workspace === this._wm.get_active_workspace();
+        border.style = `border-color: ${record.group?.color ?? 'transparent'}; border-width: ${active ? 3 : 2}px;`;
+    }
+
+    _refreshOverview() {
+        for (const record of this._overviewActors.values())
+            this._paintOverview(record);
     }
 
     _showTooltip(tab) {
         this._hideTooltip();
+        if (this._dragging)
+            return;
         this._tooltipSource = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 200, () => {
             this._tooltipSource = 0;
-            if (!this._active || !this._indicator.visible)
+            if (!this._active || !this._indicator.visible || this._dragging ||
+                (tab.tooltipAbove !== undefined && !Main.overview.visible))
                 return GLib.SOURCE_REMOVE;
             this._tooltip.text = this._description(tab);
             const [x, y] = tab.button.get_transformed_position();
             const [width, height] = tab.button.get_transformed_size();
             const [, naturalWidth] = this._tooltip.get_preferred_width(-1);
             const monitor = Main.layoutManager.findMonitorForActor(tab.button) ?? Main.layoutManager.primaryMonitor;
+            const [, naturalHeight] = this._tooltip.get_preferred_height(-1);
+            const tooltipY = tab.tooltipAbove ? y - naturalHeight - 8 : y + height + 8;
             this._tooltip.set_position(Math.max(monitor.x, Math.min(x + width / 2 - naturalWidth / 2,
-                monitor.x + monitor.width - naturalWidth)), y + height + 8);
+                monitor.x + monitor.width - naturalWidth)), Math.max(monitor.y + 8,
+                Math.min(tooltipY, monitor.y + monitor.height - naturalHeight - 8)));
             this._tooltip.show();
             return GLib.SOURCE_REMOVE;
         });
@@ -406,6 +513,15 @@ export default class VMWorkspacesExtension extends Extension {
         }
         this._windows.clear();
         this._cache.clear();
+        this._injections?.clear();
+        for (const record of this._overviewActors.values()) {
+            record.actor.disconnect(record.hoverSignal);
+            record.actor.disconnect(record.destroySignal);
+            record.actor.reactive = record.reactive;
+            record.actor.track_hover = record.trackHover;
+            record.border.destroy();
+        }
+        this._overviewActors.clear();
         this._hideTooltip();
         Main.layoutManager.removeChrome(this._tooltip);
         this._tooltip.destroy();

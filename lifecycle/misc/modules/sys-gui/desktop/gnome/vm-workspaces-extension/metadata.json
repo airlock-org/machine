@@ -1,6 +1,6 @@
 {
   "name": "Airlock VM Workspaces",
-  "description": "Compact colour-grouped workspaces for open VM applications, with hover labels.",
+  "description": "Colour-grouped workspace tabs and overview borders with VM hover labels.",
   "uuid": "airlock-vm-workspaces@airlock.local",
   "shell-version": [
     "50"
@@ -9,5 +9,5 @@
     "user",
     "unlock-dialog"
   ],
-  "version": 2
+  "version": 3
 }

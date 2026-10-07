@@ -35,7 +35,7 @@ def javascript(tmp_path):
     )
     controller = tmp_path / "extension.mjs"
     controller.write_text(
-        imports + "const {Clutter,Gio,GLib,Meta,St,Main,PanelMenu,DND,Extension}=globalThis.shellMocks;\n"
+        imports + "const {Clutter,Gio,GLib,Meta,St,Main,PanelMenu,DND,Workspace,WorkspaceThumbnail,Extension,InjectionManager}=globalThis.shellMocks;\n"
         + re.sub(r"^import .*;\n", "", (EXTENSION / "extension.js").read_text(), flags=re.MULTILINE)
     )
 
@@ -139,6 +139,35 @@ ext.disable();
 """, shell=True)
 
 
+def test_overview_decoration_tints_hover_labels_and_cleanup(javascript):
+    javascript(r"""
+const homeWindow=new Window(wm.workspaces[0]),agentWindow=new Window(wm.workspaces[1]);
+actors.push({meta_window:homeWindow},{meta_window:agentWindow});
+const existing=new WorkspacePreview(homeWindow.workspace);
+overview._overview.controls._workspacesDisplay._workspacesViews=[{_workspaces:[existing]}];
+const originalInit=WorkspacePreview.prototype._init;
+const ext=new Controller();ext.enable();finishInventory();
+ext._identities.set(homeWindow,{kind:'vm',name:'usr-home'});
+ext._identities.set(agentWindow,{kind:'vm',name:'sys-agent'});ext._sync();
+const thumbnail=new ThumbnailPreview(agentWindow.workspace);
+assert.equal(ext._overviewActors.size,2);
+assert.match(ext._overviewActors.get(existing).border.style,/#3465a4/);
+assert.match(ext._overviewActors.get(thumbnail).border.style,/#cc0000/);
+assert.equal(ext._overviewActors.get(thumbnail).border.reactive,false);
+const agent=ext._tabs[1];assert.match(agent.button.style,/rgba\(204,0,0,0.2\)/);
+agent.button.hover=true;agent.button.emit('notify::hover');assert.match(agent.button.style,/,0.3\)/);
+agent.button.emit('clicked');assert.match(agent.button.style,/,0.4\)/);
+overview.visible=true;thumbnail.hover=true;thumbnail.emit('notify::hover');
+sources.get(ext._tooltipSource)();assert.match(ext._tooltip.text,/sys-agent/);
+overview.emit('window-drag-begin');assert.equal(ext._tooltip.visible,false);
+thumbnail.emit('notify::hover');assert.equal(ext._tooltipSource,0);
+overview.emit('window-drag-end');
+const record=ext._overviewActors.get(existing);ext.disable();
+assert.equal(record.border.destroyed,true);assert.equal(existing.reactive,false);
+assert.equal(WorkspacePreview.prototype._init,originalInit);
+""", shell=True)
+
+
 MOCKS = """
 class Signals {
  constructor(){this.handlers=new Map();this.next=1;}
@@ -153,12 +182,14 @@ class Actor extends Signals {
  get_first_child(){return this.children[0]??null;}
  set_child(child){this.add_child(child);}
  destroy_all_children(){for(const child of [...this.children]){this.remove_child(child);child.destroy();}}
- destroy(){this.destroyed=true;}
+ destroy(){this.emit("destroy");this.destroyed=true;}
+ add_constraint(constraint){this.constraint=constraint;}
  hide(){this.visible=false;}
  show(){this.visible=true;}
  get_transformed_position(){return [400,0];}
  get_transformed_size(){return [30,24];}
  get_preferred_width(){return [80,180];}
+ get_preferred_height(){return [20,30];}
  set_position(x,y){this.position=[x,y];}
  set_label(label){this.label=label;}
  add_style_class_name(name){this.classes.add(name);}
@@ -207,8 +238,22 @@ const inventoryFile={
 const monitor=new Signals();monitor.cancel=()=>{monitor.cancelled=true;};
 const wm=new Manager(), display=new Signals(), actors=[];
 globalThis.global={workspace_manager:wm,display,get_current_time:()=>42,get_pointer:()=>[0,0,0],get_window_actors:()=>actors};
-const overview={visible:false,toggles:0,allowed:true,shouldToggleByCornerOrButton(){return this.allowed;},
- toggle(){this.visible=!this.visible;this.toggles++;}};
+class WorkspacePreview extends Actor {
+ constructor(workspace){super();this._init(workspace);}
+ _init(workspace){this.metaWorkspace=workspace;this._background=new Actor();this.add_child(this._background);}
+}
+class ThumbnailPreview extends Actor {
+ constructor(workspace){super();this._init(workspace);}
+ _init(workspace){this.metaWorkspace=workspace;}
+}
+class InjectionManager {
+ constructor(){this.restore=[];}
+ overrideMethod(prototype,name,factory){const original=prototype[name];this.restore.push(()=>prototype[name]=original);prototype[name]=factory(original);}
+ clear(){for(const restore of this.restore.reverse())restore();}
+}
+const overview=Object.assign(new Signals(),{visible:false,toggles:0,allowed:true,shouldToggleByCornerOrButton(){return this.allowed;},
+ toggle(){this.visible=!this.visible;this.toggles++;},
+ _overview:{controls:{_thumbnailsBox:{_thumbnails:[]},_workspacesDisplay:{_workspacesViews:[]}}}});
 const nativeIndicators=new Actor(),activities=new Actor({reactive:true,can_focus:true,accessible_name:'Activities'});
 activities.add_child(nativeIndicators);
 activities._clickGesture=new Signals();activities._clickGesture.connect('recognize',()=>{
@@ -216,7 +261,7 @@ activities._clickGesture=new Signals();activities._clickGesture.connect('recogni
 activities.vfunc_scroll_event=event=>event;
 activities.handleDragOver=source=>source;
 globalThis.shellMocks={
- Clutter:{ActorAlign:{CENTER:0},ModifierType:{SHIFT_MASK:1}},Gio:{Settings,Cancellable,
+ Clutter:{ActorAlign:{CENTER:0},ModifierType:{SHIFT_MASK:1},BindConstraint:class {constructor(properties){Object.assign(this,properties);}},BindCoordinate:{SIZE:1,ALL:2}},Gio:{Settings,Cancellable,
  File:{new_for_path:path=>path.endsWith('inventory.json')?inventoryFile:{monitor_directory:()=>monitor}},
  FileMonitorFlags:{WATCH_MOVES:1}},
  GLib:{get_user_state_dir:()=>'/state',build_filenamev:parts=>parts.join('/'),mkdir_with_parents(){},
@@ -228,8 +273,9 @@ globalThis.shellMocks={
  St:{BoxLayout:Actor,Widget:Actor,Label:Actor,Button:Actor},
  PanelMenu:{Button:Actor},DND:{DragMotionResult:{MOVE_DROP:2,CONTINUE:3}},
  Main:{panel:{statusArea:{activities},addToStatusArea(name,indicator,index,side){this.placement={name,indicator,index,side};}},
- layoutManager:{addChrome(){},removeChrome(){},primaryMonitor:{x:0,width:1920},findMonitorForActor(){return this.primaryMonitor;}},
+ layoutManager:{addChrome(){},removeChrome(){},primaryMonitor:{x:0,y:0,width:1920,height:1080},findMonitorForActor(){return this.primaryMonitor;}},
  overview,sessionMode:new Signals()},
+ Workspace:{Workspace:WorkspacePreview},WorkspaceThumbnail:{WorkspaceThumbnail:ThumbnailPreview},InjectionManager,
  Extension:class {}
 };
 const inventoryText=JSON.stringify(Object.fromEntries([...inventory].map(([uuid,vm])=>[uuid,{uuid,...vm,label:vm.color}])));
