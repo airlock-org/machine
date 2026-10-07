@@ -128,7 +128,10 @@ opaque text and a light selection outline. Clicking a tab switches directly to i
 GNOME's Super overview uses the same VM colours around its workspace previews
 and small thumbnails. GNOME's moving thumbnail selection frame follows the VM
 colour, with square corners matching the previews in both overview modes.
-The larger workspace-preview outlines also use square corners.
+The large window-picker outline sits between the wallpaper and window previews.
+Its radius and visibility follow GNOME's animated background rounding, so it
+matches the single-Super view without drawing over applications. Small thumbnails
+keep square corners.
 The active thumbnail uses that native frame rather than a second coloured outline.
 Hover shows the VM name and workspace number after a short
 delay; labels hide during window/app dragging. Neutral borders and actual VM names
@@ -151,6 +154,16 @@ to their workspace objects when the extension starts. Shift-clicking a tab moves
 that VM's focused window into a new workspace, allowing multiple occupied slots
 without an add-workspace menu or empty placeholders. The POC caps this shortcut
 at 36 workspaces. Overview windows can also be dragged onto tabs.
+
+Dragging a window to the leading edge of its VM's first overview thumbnail or a
+gap adjoining its VM's thumbnails opens GNOME's native insertion placeholder.
+Dropping creates a workspace owned by that VM and moves the window into it;
+existing workspace objects and foreign windows stay in place. A single occupied
+workspace shows its thumbnail during a drag so its leading insertion edge remains
+accessible. The placeholder creates no persistent empty workspace, disappears on
+cancellation, and respects the 36-slot limit. Insertion inside another VM's group
+is rejected. Dynamic workspace management stays disabled; only the native drop
+interaction is adapted for ownership.
 
 The common application launcher waits for the guest graphical session, then calls
 the extension's session-bus `org.airlock.Workspaces.Prepare` method with the VM's

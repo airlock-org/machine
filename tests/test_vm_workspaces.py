@@ -180,6 +180,7 @@ class Signals {
 class Actor extends Signals {
  constructor(properties={}){super();Object.assign(this,{reactive:false,can_focus:false},properties);this.children=[];this.classes=new Set();}
  add_child(child){assert.equal(child.parent??null,null);this.children.push(child);child.parent=this;}
+ insert_child_above(child,sibling){this.children.splice(this.children.indexOf(sibling)+1,0,child);child.parent=this;}
  remove_child(child){this.children=this.children.filter(c=>c!==child);child.parent=null;}
  get_first_child(){return this.children[0]??null;}
  set_child(child){this.add_child(child);}
@@ -277,12 +278,12 @@ globalThis.shellMocks={
  timeout_add:(_priority,_delay,callback)=>{const id=sources.size+1;sources.set(id,callback);return id;},
  Source:{remove:id=>sources.delete(id)},get_monotonic_time:()=>0,uuid_string_random:()=>String(sources.size)},
  Meta:{Window,WindowType:{NORMAL:0,DIALOG:1,MODAL_DIALOG:2},WindowClientType:{WAYLAND:1}},
- St:{BoxLayout:Actor,Widget:Actor,Label:Actor,Button:Actor},
+ St:{BoxLayout:Actor,Widget:Actor,Label:Actor,Button:Actor,ThemeContext:{get_for_stage:()=>({scaleFactor:1})}},
  PanelMenu:{Button:Actor},DND:{DragMotionResult:{MOVE_DROP:2,CONTINUE:3,NO_DROP:0}},
  Main:{panel:{statusArea:{activities},addToStatusArea(name,indicator,index,side){this.placement={name,indicator,index,side};}},
  layoutManager:{addChrome(){},removeChrome(){},primaryMonitor:{x:0,y:0,width:1920,height:1080},findMonitorForActor(){return this.primaryMonitor;}},
  overview,sessionMode:new Signals(),wm:{_shouldAnimateActor:()=>true,actionMoveWindow(window,workspace){window.change_workspace(workspace);workspace.activate();}}},
- Workspace:{Workspace:WorkspacePreview},WorkspaceThumbnail:{WorkspaceThumbnail:ThumbnailPreview,ThumbnailsBox:class {_init(){} _updateIndicator(){} addThumbnails(){}}},InjectionManager,
+ Workspace:{Workspace:WorkspacePreview,WorkspaceBackground:class {_updateBorderRadius(){}}},WorkspaceThumbnail:{WorkspaceThumbnail:ThumbnailPreview,ThumbnailsBox:class {_init(){} _updateIndicator(){} addThumbnails(){}}},InjectionManager,
  Extension:class {}
 };
 const inventoryText=JSON.stringify(Object.fromEntries([...inventory].map(([uuid,vm])=>[uuid,{uuid,...vm,label:vm.color}])));

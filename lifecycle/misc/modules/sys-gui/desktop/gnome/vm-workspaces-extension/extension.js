@@ -85,9 +85,13 @@ export default class VMWorkspacesExtension extends Extension {
             this._connect(Main.overview, `${kind}-drag-begin`, () => {
                 this._dragging = true;
                 this._hideTooltip();
+                this._refreshDragTargets();
             });
             for (const end of ['end', 'cancelled'])
-                this._connect(Main.overview, `${kind}-drag-${end}`, () => { this._dragging = false; });
+                this._connect(Main.overview, `${kind}-drag-${end}`, () => {
+                    this._dragging = false;
+                    this._refreshDragTargets();
+                });
         }
         this._connect(this._wm, 'workspace-switched', () => this._refresh());
         this._connect(this._wm, 'workspace-added', () => this._queue());
@@ -356,6 +360,14 @@ export default class VMWorkspacesExtension extends Extension {
                 extension._decorateOverview(this, small);
             });
         }
+        this._injections.overrideMethod(Workspace.WorkspaceBackground.prototype,
+            '_updateBorderRadius', original => function (...args) {
+                original.apply(this, args);
+                const record = extension._overviewActors.get(this.get_parent());
+                if (record)
+                    extension._paintOverview(record);
+            });
+        this._installWorkspaceInsertion();
         // Keep GNOME's moving selector, but give it the selected VM's colour.
         for (const method of ['_init', '_updateIndicator', 'addThumbnails']) {
             this._injections.overrideMethod(WorkspaceThumbnail.ThumbnailsBox.prototype,
@@ -405,14 +417,17 @@ export default class VMWorkspacesExtension extends Extension {
     _decorateOverview(actor, small) {
         if (!this._active || !actor.metaWorkspace || this._overviewActors.has(actor))
             return;
-        // A nonreactive overlay leaves GNOME's native click and drag handlers intact.
+        // Large outlines sit above the wallpaper and below every window preview.
         const border = new St.Widget({reactive: false, can_focus: false,
             style_class: small ? 'airlock-overview-thumbnail-border' : 'airlock-overview-workspace-border'});
         border.add_constraint(new Clutter.BindConstraint({
             source: small ? actor : actor._background,
             coordinate: small ? Clutter.BindCoordinate.SIZE : Clutter.BindCoordinate.ALL,
         }));
-        actor.add_child(border);
+        if (small)
+            actor.add_child(border);
+        else
+            actor.insert_child_above(border, actor._background);
         const record = {actor, border, small, workspace: actor.metaWorkspace, button: actor,
             tooltipAbove: !small, reactive: actor.reactive, trackHover: actor.track_hover};
         actor.reactive = true;
@@ -438,7 +453,89 @@ export default class VMWorkspacesExtension extends Extension {
         const active = workspace === this._wm.get_active_workspace();
         // GNOME's selector alone outlines the active small thumbnail.
         const color = record.small && active ? 'transparent' : record.group?.color ?? 'transparent';
-        border.style = `border-color: ${color}; border-width: ${active ? 3 : 2}px;`;
+        let radius = 0;
+        if (!record.small) {
+            const background = record.actor._background;
+            const scale = St.ThemeContext.get_for_stage(global.stage).scaleFactor;
+            radius = (background._bgManager?.backgroundActor?.content?.rounded_clip_radius ?? 0) / scale;
+            border.opacity = Math.round(255 * (background._stateAdjustment?.value ?? 1));
+        }
+        border.style = `border-color: ${color}; border-width: ${active ? 3 : 2}px; border-radius: ${radius}px;`;
+    }
+
+    _refreshDragTargets() {
+        for (const box of this._thumbnailBoxes.keys()) {
+            box._updateShouldShow();
+            if (!this._dragging)
+                box._clearDragPlaceholder();
+        }
+    }
+
+    _canInsert(box, position, owner) {
+        if (!owner || this._wm.n_workspaces >= MAX_SLOTS ||
+            !(box._thumbnails[position]?.metaWorkspace.index() >= 0))
+            return false;
+        return [box._thumbnails[position - 1], box._thumbnails[position]]
+            .some(thumbnail => this._owners.get(thumbnail?.metaWorkspace)?.key === owner.key);
+    }
+
+    _installWorkspaceInsertion() {
+        const extension = this;
+        const prototype = WorkspaceThumbnail.ThumbnailsBox.prototype;
+        this._injections.overrideMethod(prototype, '_updateShouldShow', original => function (...args) {
+            // A single occupied workspace still needs a thumbnail during a window drag.
+            if (extension._dragging && extension._groups.length) {
+                if (!this._shouldShow) {
+                    this._shouldShow = true;
+                    this.notify('should-show');
+                }
+            } else {
+                original.apply(this, args);
+            }
+        });
+        this._injections.overrideMethod(prototype, 'handleDragOver', original => function (source, actor, x, y, time) {
+            if (!source.metaWindow)
+                return original.call(this, source, actor, x, y, time);
+            const owner = extension._owner(extension._moveIdentity(source.metaWindow));
+            const rtl = Clutter.get_default_text_direction() === Clutter.TextDirection.RTL;
+            const spacing = this.get_theme_node().get_length('spacing');
+            // Reuse GNOME's native cut regions, expanding insertion placeholder and cursor.
+            for (let index = 0; index < this._thumbnails.length; index++) {
+                const [start, end] = this._getPlaceholderTarget(index, spacing, rtl);
+                if (x <= start || x > end)
+                    continue;
+                if (!extension._canInsert(this, index, owner)) {
+                    this._dropWorkspace = -1;
+                    this._clearDragPlaceholder();
+                    return DND.DragMotionResult.NO_DROP;
+                }
+                this._dropWorkspace = -1;
+                if (this._dropPlaceholderPos !== index) {
+                    this._dropPlaceholderPos = index;
+                    this.queue_relayout();
+                }
+                return DND.DragMotionResult.MOVE_DROP;
+            }
+            return original.call(this, source, actor, x, y, time);
+        });
+        this._injections.overrideMethod(prototype, 'acceptDrop', original => function (source, ...args) {
+            if (!source.metaWindow || this._dropWorkspace !== -1 || this._dropPlaceholderPos === -1)
+                return original.call(this, source, ...args);
+            const position = this._dropPlaceholderPos;
+            const owner = extension._owner(extension._moveIdentity(source.metaWindow));
+            if (!extension._canInsert(this, position, owner))
+                return false;
+            const index = this._thumbnails[position].metaWorkspace.index();
+            this._clearDragPlaceholder();
+            // Move workspace objects, never shuffle foreign windows between owned slots.
+            const workspace = extension._wm.append_new_workspace(false, global.get_current_time());
+            extension._owners.set(workspace, owner);
+            extension._wm.reorder_workspace(workspace, index);
+            Main.moveWindowToMonitorAndWorkspace(source.metaWindow, this._monitorIndex, workspace.index());
+            workspace.activate(global.get_current_time());
+            extension._sync();
+            return true;
+        });
     }
 
     _refreshOverview() {
