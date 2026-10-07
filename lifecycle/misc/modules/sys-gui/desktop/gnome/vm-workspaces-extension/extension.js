@@ -39,6 +39,7 @@ export default class VMWorkspacesExtension extends Extension {
         this._mutter.set_boolean('dynamic-workspaces', false);
         this._groups = [];
         this._overviewActors = new Map();
+        this._thumbnailBoxes = new Map();
         this._dragging = false;
         this._indicator = new PanelMenu.Button(0.0, 'VM workspaces', true);
         this._indicator.reactive = false;
@@ -193,9 +194,13 @@ export default class VMWorkspacesExtension extends Extension {
             for (const group of this._groups) {
                 const box = new St.BoxLayout({style_class: 'airlock-workspace-group',
                     reactive: false, style: `border-bottom-color: ${group.color};`});
+                if (this._box.get_first_child())
+                    box.add_style_class_name('vm-divider');
                 for (const workspace of group.slots) {
                     const button = new St.Button({style_class: 'airlock-workspace-tab',
                         reactive: true, can_focus: true, track_hover: true});
+                    if (workspace !== group.slots[0])
+                        button.add_style_class_name('slot-divider');
                     const label = new St.Label({reactive: false, can_focus: false,
                         y_align: Clutter.ActorAlign.CENTER});
                     button.set_child(label);
@@ -271,8 +276,8 @@ export default class VMWorkspacesExtension extends Extension {
     }
 
     _styleTab(tab) {
-        const alpha = tab.workspace === this._wm.get_active_workspace() ? 0.4
-            : tab.button.hover || tab.focused ? 0.3 : 0.2;
+        const alpha = tab.workspace === this._wm.get_active_workspace() ? 0.55
+            : tab.button.hover || tab.focused ? 0.45 : 0.35;
         const color = /^#[0-9a-f]{6}$/i.test(tab.group.color) ? tab.group.color : '#888888';
         const rgb = [1, 3, 5].map(index => parseInt(color.slice(index, index + 2), 16));
         tab.button.style = `background-color: rgba(${rgb.join(',')},${alpha});`;
@@ -288,16 +293,50 @@ export default class VMWorkspacesExtension extends Extension {
                 extension._decorateOverview(this, small);
             });
         }
+        // Keep GNOME's moving selector, but give it the selected VM's colour.
+        for (const method of ['_init', '_updateIndicator', 'addThumbnails']) {
+            this._injections.overrideMethod(WorkspaceThumbnail.ThumbnailsBox.prototype,
+                method, original => function (...args) {
+                    const result = original.apply(this, args);
+                    extension._decorateThumbnailBox(this);
+                    return result;
+                });
+        }
         // Also cover previews created before this extension was enabled.
         const controls = Main.overview._overview.controls;
+        this._decorateThumbnailBox(controls._thumbnailsBox);
         for (const actor of controls._thumbnailsBox?._thumbnails ?? [])
             this._decorateOverview(actor, true);
         for (const view of controls._workspacesDisplay?._workspacesViews ?? []) {
+            this._decorateThumbnailBox(view._thumbnails);
             for (const actor of view._workspaces ?? view._workspacesView?._workspaces ?? [])
                 this._decorateOverview(actor, false);
             for (const actor of view._thumbnails?._thumbnails ?? [])
                 this._decorateOverview(actor, true);
         }
+    }
+
+    _decorateThumbnailBox(box) {
+        if (!this._active || !box?._indicator || !box._scrollAdjustment)
+            return;
+        if (!this._thumbnailBoxes.has(box)) {
+            const record = {style: box._indicator.get_style()};
+            record.destroySignal = box.connect('destroy', () => this._thumbnailBoxes.delete(box));
+            this._thumbnailBoxes.set(box, record);
+            box.add_style_class_name('airlock-workspace-thumbnails');
+        }
+        this._paintSelector(box);
+    }
+
+    _paintSelector(box) {
+        // Follow the nearest thumbnail as the native selector animates/swipes.
+        const index = Math.round(box._scrollAdjustment.value);
+        const workspace = this._wm.get_workspace_by_index(index) ?? this._wm.get_active_workspace();
+        const description = describeWorkspace(this._workspaceWindows(workspace)
+            .map(window => this._identities.get(window) ?? UNKNOWN), this._inventory);
+        const previous = this._thumbnailBoxes.get(box).style;
+        const style = previous ? `${previous}; ` : '';
+        box._indicator.style = `${style}border-color: ${description?.color ?? '#888888'}; border-radius: 0;`;
     }
 
     _decorateOverview(actor, small) {
@@ -311,7 +350,7 @@ export default class VMWorkspacesExtension extends Extension {
             coordinate: small ? Clutter.BindCoordinate.SIZE : Clutter.BindCoordinate.ALL,
         }));
         actor.add_child(border);
-        const record = {actor, border, workspace: actor.metaWorkspace, button: actor,
+        const record = {actor, border, small, workspace: actor.metaWorkspace, button: actor,
             tooltipAbove: !small, reactive: actor.reactive, trackHover: actor.track_hover};
         actor.reactive = true;
         actor.track_hover = true;
@@ -334,12 +373,16 @@ export default class VMWorkspacesExtension extends Extension {
         record.group = describeWorkspace(this._workspaceWindows(workspace)
             .map(window => this._identities.get(window) ?? UNKNOWN), this._inventory);
         const active = workspace === this._wm.get_active_workspace();
-        border.style = `border-color: ${record.group?.color ?? 'transparent'}; border-width: ${active ? 3 : 2}px;`;
+        // GNOME's selector alone outlines the active small thumbnail.
+        const color = record.small && active ? 'transparent' : record.group?.color ?? 'transparent';
+        border.style = `border-color: ${color}; border-width: ${active ? 3 : 2}px;`;
     }
 
     _refreshOverview() {
         for (const record of this._overviewActors.values())
             this._paintOverview(record);
+        for (const box of this._thumbnailBoxes.keys())
+            this._paintSelector(box);
     }
 
     _showTooltip(tab) {
@@ -514,6 +557,12 @@ export default class VMWorkspacesExtension extends Extension {
         this._windows.clear();
         this._cache.clear();
         this._injections?.clear();
+        for (const [box, record] of this._thumbnailBoxes) {
+            box.disconnect(record.destroySignal);
+            box._indicator.style = record.style;
+            box.remove_style_class_name('airlock-workspace-thumbnails');
+        }
+        this._thumbnailBoxes.clear();
         for (const record of this._overviewActors.values()) {
             record.actor.disconnect(record.hoverSignal);
             record.actor.disconnect(record.destroySignal);

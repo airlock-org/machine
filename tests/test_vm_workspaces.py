@@ -154,9 +154,9 @@ assert.equal(ext._overviewActors.size,2);
 assert.match(ext._overviewActors.get(existing).border.style,/#3465a4/);
 assert.match(ext._overviewActors.get(thumbnail).border.style,/#cc0000/);
 assert.equal(ext._overviewActors.get(thumbnail).border.reactive,false);
-const agent=ext._tabs[1];assert.match(agent.button.style,/rgba\(204,0,0,0.2\)/);
-agent.button.hover=true;agent.button.emit('notify::hover');assert.match(agent.button.style,/,0.3\)/);
-agent.button.emit('clicked');assert.match(agent.button.style,/,0.4\)/);
+const agent=ext._tabs[1];assert.match(agent.button.style,/rgba\(204,0,0,0.35\)/);
+agent.button.hover=true;agent.button.emit('notify::hover');assert.match(agent.button.style,/,0.45\)/);
+agent.button.emit('clicked');assert.match(agent.button.style,/,0.55\)/);
 overview.visible=true;thumbnail.hover=true;thumbnail.emit('notify::hover');
 sources.get(ext._tooltipSource)();assert.match(ext._tooltip.text,/sys-agent/);
 overview.emit('window-drag-begin');assert.equal(ext._tooltip.visible,false);
@@ -275,7 +275,7 @@ globalThis.shellMocks={
  Main:{panel:{statusArea:{activities},addToStatusArea(name,indicator,index,side){this.placement={name,indicator,index,side};}},
  layoutManager:{addChrome(){},removeChrome(){},primaryMonitor:{x:0,y:0,width:1920,height:1080},findMonitorForActor(){return this.primaryMonitor;}},
  overview,sessionMode:new Signals()},
- Workspace:{Workspace:WorkspacePreview},WorkspaceThumbnail:{WorkspaceThumbnail:ThumbnailPreview},InjectionManager,
+ Workspace:{Workspace:WorkspacePreview},WorkspaceThumbnail:{WorkspaceThumbnail:ThumbnailPreview,ThumbnailsBox:class {_init(){} _updateIndicator(){} addThumbnails(){}}},InjectionManager,
  Extension:class {}
 };
 const inventoryText=JSON.stringify(Object.fromEntries([...inventory].map(([uuid,vm])=>[uuid,{uuid,...vm,label:vm.color}])));

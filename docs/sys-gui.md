@@ -119,13 +119,17 @@ normal GNOME presentation.
 GNOME keeps its original Activities/workspace dots at the top left; clicking
 opens the normal overview. A separate compact workspace bar sits at the beginning
 of the right-hand panel section, before the system controls. Numbered tabs are
-grouped by VM with a continuous Qubes-colour underline and a gap between groups.
+grouped by VM with a continuous Qubes-colour underline. Tabs touch, with thin
+dividers between slots and a stronger divider between VM groups.
 Hovering or focusing a tab shows its full VM name and workspace number. Each tab
-uses its VM colour at 20% opacity, 30% on hover/focus and 40% when active, with
+uses its VM colour at 35% opacity, 45% on hover/focus and 55% when active, with
 opaque text and a light selection outline. Clicking a tab switches directly to it.
 
 GNOME's Super overview uses the same VM colours around its workspace previews
-and small thumbnails. Hover shows the VM name and workspace number after a short
+and small thumbnails. GNOME's moving thumbnail selection frame follows the VM
+colour, with square corners matching the small previews in both overview modes.
+The active thumbnail uses that native frame rather than a second coloured outline.
+Hover shows the VM name and workspace number after a short
 delay; labels hide during window/app dragging. Neutral borders and actual VM names
 identify mixed workspaces. Native overview clicks, dragging and animations remain
 in place. This POC decorates GNOME 50's existing preview actors using small hooks;
