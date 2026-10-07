@@ -92,6 +92,28 @@ in
 {
   imports = [ ./setup.nix ];
   config = lib.mkIf (cfg.session == "gnome") {
+    # Early login can precede the host's Admin API readiness. The upstream
+    # desktop autostart exits after a refused request and leaves every app VM
+    # waiting for its GUI connection. Supervise the same upstream watcher.
+    environment.etc."xdg/autostart/qvm-start-daemon.desktop".text = ''
+      [Desktop Entry]
+      Type=Application
+      Name=Qubes Guid/Pacat
+      Hidden=true
+    '';
+    systemd.user.services.airlock-gui-daemons = {
+      description = "Forward windows from VMs assigned to this GUI session";
+      wantedBy = [ "graphical-session.target" ];
+      after = [ "graphical-session-pre.target" ];
+      partOf = [ "graphical-session.target" ];
+      unitConfig.StartLimitIntervalSec = 0;
+      path = [ pkgs.coreutils pkgs.qubes-gui-daemon pkgs.python3.pkgs.qubes-core-admin-client ];
+      serviceConfig = {
+        ExecStart = "${pkgs.python3.pkgs.qubes-core-admin-client}/bin/qvm-start-daemon --all --watch";
+        Restart = "always";
+        RestartSec = "5s";
+      };
+    };
     # Applications own their title bars. The trusted GUI daemon adds a thin
     # VM-coloured outline for every forwarded VM window; the focused VM
     # panel identifies every VM. Decoration policy never uses application class.

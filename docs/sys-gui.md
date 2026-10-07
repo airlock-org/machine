@@ -23,6 +23,12 @@ current sys-gui XID, including desktop login. It reports failure without
 automatically restarting application VMs if reconnection fails. Initial
 installation of this support still restarts guests to load the new Xorg modules.
 
+GNOME runs the upstream `qvm-start-daemon --all --watch` under the user unit
+`airlock-gui-daemons.service`. It restarts after a failed or closed watcher,
+including transient Admin API refusal during early login, and stops with the
+graphical session. The duplicate XDG autostart is disabled. Inspect this unit's
+user journal when application agents are waiting for their GUI connection.
+
 The existing GNOME extension rebuilds VM workspace ownership when windows
 return. Exact prior workspace counts, positions and focus are not persisted by
 this change.
