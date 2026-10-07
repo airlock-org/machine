@@ -52,7 +52,7 @@ print("airlock.AppSessionReady" if vm.features.get("supported-rpc.airlock.AppSes
 
     [ -n "$service" ] || exit 0
     workspace_token=""
-    ${lib.optionalString (config.airlock.sysGuiDesktop.session == "gnome") ''
+    ${lib.optionalString ((config.airlock.sysGuiDesktop.session or "xfce") == "gnome") ''
       if ! workspace_token="$(${workspaceClient} prepare "$target" 2>"$log")"; then
         ${pkgs.systemd}/bin/systemd-cat -t airlock-app-launch <"$log" || true
         ${pkgs.libnotify}/bin/notify-send --app-name=Airlock \
