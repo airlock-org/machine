@@ -35,6 +35,7 @@ class DeploymentPlan(TypedDict):
     restore: list[str]
     retained_undeclared: list[str]
     pci_handoff: NotRequired[dict[str, str]]
+    gui_reconnect: NotRequired[dict[str, list[str]]]
     retirement: NotRequired[list[RetirementDetail]]
     host_reboot_required: NotRequired[bool]
     revision: NotRequired[str]
@@ -44,7 +45,7 @@ class DeploymentPlan(TypedDict):
 DeploymentPhase = Literal[
     "preflight", "staging", "host-boot-preparation", "stopping", "retiring", "configuring",
     "host-boot-selection", "copying-private", "starting", "verifying", "reboot-required",
-    "complete", "failed",
+    "complete", "failed", "gui-reconnecting",
 ]
 
 
@@ -57,6 +58,8 @@ class DeploymentRecord(TypedDict):
     plan: DeploymentPlan
     phase: DeploymentPhase
     observed: NotRequired[dict[str, dict[str, str | None]]]
+    gui_preserved: NotRequired[dict[str, dict[str, str]]]
+    gui_reconnected: NotRequired[dict[str, dict[str, str]]]
     trash: NotRequired[dict[str, list[str]]]
     host_running: NotRequired[str]
     host_selected: NotRequired[str]

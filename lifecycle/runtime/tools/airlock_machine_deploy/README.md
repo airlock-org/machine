@@ -7,6 +7,8 @@ on the checkout or a development `PYTHONPATH`.
 - `cli.py` parses commands and formats responses and errors.
 - `coordinator.py` sequences staging, deployment, recovery, and boot activation.
 - `planning.py` computes lifecycle plans from topology data without performing I/O.
+- `gui_reconnect.py` validates and verifies guest preservation across an assigned
+  sys-gui restart; it owns the scoped graceful forced shutdown for that plan.
 - `validation.py` checks release, admission, and storage ownership data without I/O.
 - `admission.py` authorizes exact guest artifacts from an imported candidate,
   including new domain names, without creating VMs or selecting a host generation.

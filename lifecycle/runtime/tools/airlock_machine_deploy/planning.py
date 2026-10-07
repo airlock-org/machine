@@ -75,6 +75,39 @@ def dependencies(topology):
     }
 
 
+def gui_reconnect_candidate(old, new, name):
+    """Only an unchanged, capable client of the same sys-gui can stay up."""
+    before = old["domains"][name]
+    after = new["domains"].get(name)
+    return (
+        before == after
+        and before.get("features", {}).get("airlock-gui-reconnect") == "1"
+        and before.get("prefs", {}).get("guivm", old.get("prefs", {}).get("default_guivm"))
+        == "sys-gui"
+        and "sys-gui" in new["domains"]
+        and name != "sys-gui"
+    )
+
+
+def restart_dependencies(old, new):
+    refs = dependencies(old)
+    # Other uses of sys-gui (networking, audio, storage or devices) remain hard
+    # dependencies even when the same VM also uses it for display.
+    without_gui = {
+        **old,
+        "prefs": {**old.get("prefs", {}), "default_guivm": None},
+        "domains": {
+            name: {**domain, "prefs": {**domain.get("prefs", {}), "guivm": None}}
+            for name, domain in old["domains"].items()
+        },
+    }
+    hard_refs = dependencies(without_gui)
+    for name in refs:
+        if gui_reconnect_candidate(old, new, name) and "sys-gui" not in hard_refs[name]:
+            refs[name].discard("sys-gui")
+    return refs
+
+
 def ordered(topology):
     pending = dependencies(topology)
     result = []
@@ -171,7 +204,7 @@ def plan(
     if old.get("kernels") != new.get("kernels") or old.get("prefs") != new.get("prefs"):
         changed.update(after)
     affected = set(changed) | removed
-    deps = dependencies(old)
+    deps = restart_dependencies(old, new)
     while True:
         expanded = affected | {name for name, refs in deps.items() if refs & affected}
         if expanded == affected:
@@ -202,6 +235,13 @@ def plan(
         "restore": sorted(set(after) & set(trashed)),
         "retained_undeclared": sorted(removed),
     }
+    reconnect = sorted(
+        name for name in running - affected
+        if name in before and gui_reconnect_candidate(old, new, name)
+        and "sys-gui" in affected
+    )
+    if reconnect:
+        result["gui_reconnect"] = {"sys-gui": reconnect}
     if old_pci_owner and new_pci_owner and old_pci_owner != new_pci_owner:
         result["pci_handoff"] = {"from": old_pci_owner, "to": new_pci_owner}
     return result

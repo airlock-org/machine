@@ -33,6 +33,7 @@ from .state import read_json, atomic_json, load_release
 from .validation import validate_staged_generation, validate_admission_receipt
 from .models import DeploymentPhase, DeploymentPlan, DeploymentRecord, Selection
 from .boot import BootConfiguration, digest
+from .gui_reconnect import GUIReconnect
 
 STATE = Path("/var/lib/airlock/machine")
 
@@ -745,6 +746,11 @@ class Coordinator:
                 trash = active_trash[name]
                 self.retirement.validate_restore(name, topology["domains"][name], trash)
                 restore_plan.append(trash)
+            gui = GUIReconnect(self)
+            gui_preserved = gui.snapshot(
+                changes.get("gui_reconnect", {}),
+                interrupted.get("gui_preserved", {}) if interrupted and not rollback else None,
+            )
             transaction = str(time.time_ns())
             directory = self.state / "transactions" / transaction
             directory.mkdir(parents=True)
@@ -756,6 +762,7 @@ class Coordinator:
                 "revision": manifest["revision"],
                 "plan": changes,
                 "phase": "preflight",
+                "gui_preserved": gui_preserved,
             }
 
             original_command = self.command
@@ -847,9 +854,13 @@ class Coordinator:
                                 name,
                             ],
                         )
-                    self.command(
-                        "qvm-shutdown", "--wait", "--timeout", "120", name, timeout=150
-                    )
+                    if name in changes.get("gui_reconnect", {}):
+                        gui.command = self.command
+                        gui.shutdown(name, changes["gui_reconnect"][name])
+                    else:
+                        self.command(
+                            "qvm-shutdown", "--wait", "--timeout", "120", name, timeout=150
+                        )
                 phase("retiring")
                 retired = [self.retirement.retire(entry) for entry in trash_plan]
                 phase("configuring")
@@ -878,6 +889,10 @@ class Coordinator:
                         self.command("qvm-start", name, timeout=240)
                 phase("verifying")
                 observed = self.verify(topology, set(changes["start"]))
+                if gui_preserved:
+                    phase("gui-reconnecting")
+                    gui.command = self.command
+                    record["gui_reconnected"] = gui.verify(gui_preserved)
                 # A verified full apply authorizes reuse on subsequent boots.
                 # Interrupted transactions still block boot independently.
                 if Path("/etc/airlock/split-startup").exists():

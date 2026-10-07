@@ -73,6 +73,11 @@ resume the saved Codex session. Zellij survives a terminal disconnection, not
 a VM restart. A selected host update may require the user to reboot the laptop;
 report guest verification separately and verify again after reboot.
 
+An unchanged sys-agent with `airlock-gui-reconnect=1` can survive a sys-gui-only
+update. Check the plan's `gui_reconnect` entry: the guest, SSH and application
+processes stay up while their existing windows reconnect after desktop login.
+Installing or updating sys-agent itself still requires a guest restart.
+
 ## Observe and recover
 
 - `airlock-sys-agent-machine-deploy status` reads the journal even when the

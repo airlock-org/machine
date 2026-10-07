@@ -95,6 +95,34 @@ def test_app_change_does_not_restart_providers(topology):
     assert result["stage"] == []
 
 
+def test_apply_gui_update_preserves_guests_and_records_reconnection(machine, tmp_path, topology):
+    for name in ("sys-agent", "usr-home"):
+        topology["domains"][name]["features"]["airlock-gui-reconnect"] = "1"
+    deploy.atomic_json(machine.initial / "topology.json", topology)
+    new = deepcopy(topology)
+    new["domains"]["sys-gui"]["backend"]["system"]["source"] += "-new"
+    original = machine.command
+
+    def command(*args, **kwargs):
+        if args[0] == "qvm-prefs" and args[2] == "guivm":
+            return topology["domains"][args[1]]["prefs"]["guivm"] or ""
+        if args[0] == "qvm-features" and args[2] == "airlock-gui-reconnect":
+            return "1"
+        if args[0] == "qrexec-client" and args[-1].startswith("user:cat "):
+            return "connected 99" if "gui-reconnect-status" in args[-1] else "boot-" + args[2]
+        if args[0] == "qvm-ls" and args[-2:] == ("NAME,XID", "sys-gui"):
+            return "sys-gui|99"
+        return original(*args, **kwargs)
+
+    machine.command = command
+    result = machine.apply(write_release(tmp_path / "gui-update", new))
+    # The fixture's old browser lacks reconnection support and still restarts.
+    assert [call[-1] for call in machine.calls if call[0] == "qvm-shutdown"] == ["usr-browser", "sys-gui"]
+    assert result["gui_reconnected"]["sys-agent"]["boot_id"] == "boot-sys-agent"
+    assert result["gui_reconnected"]["usr-home"]["gui_xid"] == "99"
+    assert result["phase"] == "reboot-required"
+
+
 def test_network_pci_handoff_stops_old_provider_and_orders_new_chain(topology):
     old_dev = topology["domains"]["sys-agent"]
     old_dev["features"] = {"airlock-auto-network-pci": "1"}
