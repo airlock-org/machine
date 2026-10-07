@@ -194,6 +194,7 @@ class Actor extends Signals {
  get_preferred_width(){return [80,180];}
  get_preferred_height(){return [20,30];}
  set_position(x,y){this.position=[x,y];}
+ get_style(){return this.style??null;}
  set_label(label){this.label=label;}
  add_style_class_name(name){this.classes.add(name);}
  remove_style_class_name(name){this.classes.delete(name);}

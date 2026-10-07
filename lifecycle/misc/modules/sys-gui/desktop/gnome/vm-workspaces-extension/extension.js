@@ -430,6 +430,13 @@ export default class VMWorkspacesExtension extends Extension {
             actor.insert_child_above(border, actor._background);
         const record = {actor, border, small, workspace: actor.metaWorkspace, button: actor,
             tooltipAbove: !small, reactive: actor.reactive, trackHover: actor.track_hover};
+        if (!small) {
+            record.backgroundStyle = actor._background.get_style();
+            record.geometrySource = actor._background._bin;
+            // Allocation completes after the radius update during the zoom animation.
+            record.geometrySource?.connectObject('notify::allocation',
+                () => this._paintOverview(record), border);
+        }
         actor.reactive = true;
         actor.track_hover = true;
         record.hoverSignal = actor.connect('notify::hover', () => {
@@ -457,10 +464,18 @@ export default class VMWorkspacesExtension extends Extension {
         if (!record.small) {
             const background = record.actor._background;
             const scale = St.ThemeContext.get_for_stage(global.stage).scaleFactor;
-            radius = (background._bgManager?.backgroundActor?.content?.rounded_clip_radius ?? 0) / scale;
-            border.opacity = Math.round(255 * (background._stateAdjustment?.value ?? 1));
+            const wallpaperScale = background._bin?.width > 0 && background._workarea?.width > 0
+                ? background._bin.width / background._workarea.width : 1;
+            radius = (background._bgManager?.backgroundActor?.content?.rounded_clip_radius ?? 0)
+                * wallpaperScale / scale;
+            const original = record.backgroundStyle ? `${record.backgroundStyle}; ` : '';
+            const backgroundStyle = `${original}border-radius: ${radius}px;`;
+            if (background.get_style() !== backgroundStyle)
+                background.style = backgroundStyle;
+            border.opacity = Math.round(255 * (background._stateAdjustment?.value ?? 1) * (active ? 1 : 0.7));
         }
-        border.style = `border-color: ${color}; border-width: ${active ? 3 : 2}px; border-radius: ${radius}px;`;
+        // Selected and unselected outlines share exactly the same outer and inner contours.
+        border.style = `border-color: ${color}; border-width: 2px; border-radius: ${radius}px;`;
     }
 
     _refreshDragTargets() {
@@ -1010,6 +1025,10 @@ export default class VMWorkspacesExtension extends Extension {
             record.actor.disconnect(record.destroySignal);
             record.actor.reactive = record.reactive;
             record.actor.track_hover = record.trackHover;
+            if (!record.small) {
+                record.geometrySource?.disconnectObject(record.border);
+                record.actor._background.style = record.backgroundStyle;
+            }
             record.border.destroy();
         }
         this._overviewActors.clear();
