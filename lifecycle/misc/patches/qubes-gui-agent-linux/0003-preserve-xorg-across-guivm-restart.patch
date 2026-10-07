@@ -1,8 +1,16 @@
 diff --git a/gui-agent/vmside.c b/gui-agent/vmside.c
-index ff9e5e0..63d99bb 100644
+index ff9e5e0..a54f25b 100644
 --- a/gui-agent/vmside.c
 +++ b/gui-agent/vmside.c
-@@ -55,6 +55,7 @@
+@@ -27,6 +27,7 @@
+ #include <stdlib.h>
+ #include <inttypes.h>
+ #include <signal.h>
++#include <setjmp.h>
+ 
+ #include <unistd.h>
+ #include <fcntl.h>
+@@ -55,6 +56,7 @@
  #include "unix-addr.h"
  #include <libvchan.h>
  #include <poll.h>
@@ -10,7 +18,16 @@ index ff9e5e0..63d99bb 100644
  #include "unistr.h"
  
  
-@@ -2555,25 +2556,80 @@ static void handshake(Ghandles *g)
+@@ -161,6 +163,8 @@ struct embeder_data {
+ static struct genlist *windows_list;
+ static struct genlist *embeder_list;
+ static Ghandles *ghandles_for_vchan_reinitialize;
++static jmp_buf gui_message_checkpoint;
++static bool gui_message_checkpoint_ready;
+ 
+ static void log_unmanaged_window(Ghandles *g, const char *context, XID window) {
+     if (g->log_level > 0) {
+@@ -2555,25 +2559,83 @@ static void handshake(Ghandles *g)
      g->protocol_version = version;
  }
  
@@ -40,7 +57,7 @@ index ff9e5e0..63d99bb 100644
 +    qdb_handle_t qdb;
  
 -    if (!ghandles_for_vchan_reinitialize) {
-+    if (!g) {
++    if (!g || !gui_message_checkpoint_ready) {
          fprintf(stderr, "gui-daemon disconnected before fully initialized, "
                  "cannot reconnect, exiting!\n");
          exit(1);
@@ -94,10 +111,23 @@ index ff9e5e0..63d99bb 100644
 +        sleep(1);
      send_all_windows_info(g);
 +    reconnect_status("connected", g->domid);
++    /* A disconnect can interrupt a partial protocol read/write. Never return
++     * to that operation with a fresh channel or to its fatal error handler. */
++    longjmp(gui_message_checkpoint, 1);
  }
  
  static _Noreturn void handle_sigterm(int UNUSED(sig),
-@@ -2757,6 +2813,7 @@ int main(int argc, char **argv)
+@@ -2662,7 +2724,8 @@ int main(int argc, char **argv)
+ {
+     int i;
+     int xfd;
+-    Ghandles g = { .x_pid = -1 };
++    /* State modified across the message checkpoint needs static storage. */
++    static Ghandles g = { .x_pid = -1 };
+ 
+     g.created_input_device = access("/run/qubes-service/gui-agent-virtual-input-device", F_OK) == 0;
+ 
+@@ -2757,6 +2820,7 @@ int main(int argc, char **argv)
      g.x_pid = get_xconf_and_run_x(&g);
  
      mkghandles(&g);
@@ -105,6 +135,21 @@ index ff9e5e0..63d99bb 100644
      /* Turn on Composite for all children of root window. This way X server
       * keeps separate buffers for each (root child) window.
       * There are two modes:
+@@ -2837,7 +2901,13 @@ int main(int argc, char **argv)
+             exit(1);
+         }
+ 
+-        fds[0].fd = libvchan_fd_for_select(g.vchan);
++        /* Reinitialize poll state after abandoning an interrupted message. */
++        fds[0] = (struct pollfd){ .fd = libvchan_fd_for_select(g.vchan), .events = POLLIN | POLLHUP };
++        fds[1] = (struct pollfd){ .fd = xfd, .events = POLLIN | POLLHUP };
++        fds[2] = (struct pollfd){ .fd = g.xserver_fd, .events = POLLIN | POLLHUP };
++        if (setjmp(gui_message_checkpoint))
++            continue;
++        gui_message_checkpoint_ready = true;
+         wait_for_vchan_or_argfd(g.vchan, fds, QUBES_ARRAY_SIZE(fds));
+         /* first process possible qubes_drv reconnection, otherwise we may be
+          * using stale g.xserver_fd */
 diff --git a/xf86-input-mfndev/src/qubes.c b/xf86-input-mfndev/src/qubes.c
 index dfa2130..60bd34b 100644
 --- a/xf86-input-mfndev/src/qubes.c
