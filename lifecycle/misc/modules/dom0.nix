@@ -348,6 +348,11 @@ in
   };
 
   config = lib.mkIf cfg.enable {
+    # Topology-managed rules activate through normal setup/apply, including
+    # on the running host. GUI-only profiles retain local capture behaviour.
+    airlock.qubes.qrexecPolicy.rules = lib.optionals (
+      config.airlock.qubes.domains ? sys-gui && config.airlock.qubes.domains ? usr-home
+    ) (import ../lib/capture-policy.nix);
     assertions = [
       {
         assertion = cfg.user != "";

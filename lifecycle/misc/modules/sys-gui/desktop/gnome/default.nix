@@ -90,8 +90,11 @@ let
   }]";
 in
 {
-  imports = [ ./setup.nix ];
+  imports = [ ./setup.nix ../../../capture-transfer.nix ];
   config = lib.mkIf (cfg.session == "gnome") {
+    airlock.captureTransfer.send.enable = lib.mkDefault (
+      config.airlock.sysGuiGuest.defaultApplicationVM != null
+    );
     # Early login can precede the host's Admin API readiness. The upstream
     # desktop autostart exits after a refused request and leaves every app VM
     # waiting for its GUI connection. Supervise the same upstream watcher.

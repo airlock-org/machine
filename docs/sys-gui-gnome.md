@@ -61,6 +61,41 @@ indicator identifies only the focused window. Applications that depend on
 external title-bar controls must supply those inside their VM. Manual
 acceptance of move/resize/maximize, dialogs and login/lock remains pending.
 
+## Capture delivery to usr-home
+
+The connected GNOME desktop keeps capture in sys-gui, where Mutter composes
+the visible application windows and GNOME Shell. A small GNOME Shell package
+patch invokes `airlock-capture-transfer` after the common screenshot save path
+closes its file, and after a screencast reaches EOS and its pipeline is torn
+down. Screenshot UI controls and the direct screenshot shortcuts share that
+save path. The early recording-state change does not trigger delivery.
+
+The helper queues completed files and streams them through the dedicated
+`airlock.CaptureImport+image` / `+video` qrexec services. Topology-managed policy
+permits only sys-gui to usr-home. The unprivileged receiver accepts a bounded
+versioned metadata header and capture bytes, verifies their size and SHA-256,
+and publishes the finished file without overwriting an existing file. Durable
+receipts deduplicate retries, including a lost acknowledgement. It saves into
+usr-home's XDG Pictures/Screenshots or Videos/Screencasts directories.
+
+The native notifications' open and Show in Files actions use
+`airlock.CaptureOpen` to open an already delivered capture in usr-home; they
+do not accept an arbitrary remote path or command. Opening waits for the
+application VM's existing graphical-session readiness barrier.
+
+Delivery is event-triggered: there is no polling timer or directory watcher.
+Login runs one retry pass and a one-time import of existing captures (existing
+videos must pass ffprobe). A missing usr-home or failed delivery retains the
+queue and local file; the next login or completed capture retries. Usr-home is
+started by normal qrexec policy when needed. Original local files are retained
+as recovery copies after delivery; automatic deletion is not implemented.
+GUI-only profiles keep GNOME's local capture behaviour.
+
+Implementation: `lifecycle/misc/modules/capture-transfer.nix`,
+`lifecycle/misc/modules/sys-gui/capture-transfer.py`, and
+`lifecycle/misc/patches/gnome-shell/0001-completed-capture-handoff.patch`.
+Behavioural pytest coverage is in `tests/test_capture_transfer.py`.
+
 ## Deferred: appearance synchronization
 
 Changing light/dark appearance in sys-gui does not currently update applications
