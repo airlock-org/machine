@@ -107,7 +107,13 @@ in
       after = [ "graphical-session-pre.target" ];
       partOf = [ "graphical-session.target" ];
       unitConfig.StartLimitIntervalSec = 0;
-      path = [ pkgs.coreutils pkgs.qubes-gui-daemon pkgs.python3.pkgs.qubes-core-admin-client ];
+      # The upstream event reader executes qrexec-client-vm by name.
+      path = [
+        pkgs.coreutils
+        pkgs.qubes-gui-daemon
+        pkgs.python3.pkgs.qubes-core-admin-client
+        pkgs.python3.pkgs.qubes-core-qrexec.domU
+      ];
       serviceConfig = {
         ExecStart = "${pkgs.python3.pkgs.qubes-core-admin-client}/bin/qvm-start-daemon --all --watch";
         Restart = "always";
