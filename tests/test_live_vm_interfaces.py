@@ -92,6 +92,7 @@ def interfaces():
         desktop = builtins.readFile "${{desktop}}/${{gui.nixpkgs.pkgs.python3.sitePackages}}/qubesappmenus/receive.py";
         menus = builtins.readFile "${{desktop}}/${{gui.nixpkgs.pkgs.python3.sitePackages}}/qubesappmenus/__init__.py";
         policy = builtins.readFile "${{policy}}/etc/qubes/policy.d/50-airlock-sys-gui.policy";
+        qrexecPythonPath = "${{gui.nixpkgs.pkgs.python3.pkgs.qubes-core-qrexec}}/${{gui.nixpkgs.pkgs.python3.sitePackages}}";
         controlPolicy = builtins.readFile "${{controlPolicy}}/etc/qubes/policy.d/43-airlock-ctrl-guest.policy";
         prepare = builtins.readFile host.environment.etc."qubes-rpc/airlock.Ctrl.MachinePrepare".source;
         candidate = builtins.readFile host.environment.etc."qubes-rpc/airlock.Pool.AdmitCandidate".source;
@@ -151,6 +152,27 @@ def test_generated_menu_entries_use_session_barrier_and_fixed_rpc(interfaces):
                             env={**os.environ, "QREXEC_SERVICE_ARGUMENT": "unexpected"},
                             capture_output=True)
     assert result.returncode == 2
+
+
+def test_capture_policy_precedes_gui_default_deny_and_is_narrow(interfaces, monkeypatch):
+    package_path = Path(os.environ["AIRLOCK_NIX_ROOT"]) / interfaces["qrexecPythonPath"].lstrip("/")
+    monkeypatch.syspath_prepend(str(package_path))
+    from qrexec.exc import AccessDenied
+    from qrexec.policy.parser import AllowResolution, Request, StringPolicy
+
+    policy = StringPolicy(policy=interfaces["policy"])
+    system_info = {"domains": {name: {"name": name, "type": "StandaloneVM",
+        "tags": [], "uuid": str(index), "power_state": "Running"}
+        for index, name in enumerate(("dom0", "sys-gui", "usr-home", "usr-other"))}}
+    for service in ("airlock.CaptureImport", "airlock.CaptureOpen"):
+        for argument in ("+image", "+video"):
+            request = Request(service, argument, "sys-gui", "usr-home", system_info=system_info)
+            assert isinstance(policy.evaluate(request), AllowResolution)
+        for argument, source, target in (("+other", "sys-gui", "usr-home"),
+                ("+image", "sys-gui", "usr-other"), ("+image", "usr-other", "usr-home"),
+                ("+image", "sys-gui", "dom0")):
+            with pytest.raises(AccessDenied):
+                policy.evaluate(Request(service, argument, source, target, system_info=system_info))
 
 
 def test_preparation_and_admission_are_controller_only(interfaces):

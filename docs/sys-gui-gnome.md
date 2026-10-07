@@ -71,7 +71,7 @@ down. Screenshot UI controls and the direct screenshot shortcuts share that
 save path. The early recording-state change does not trigger delivery.
 
 The helper queues completed files and streams them through the dedicated
-`airlock.CaptureImport+image` / `+video` qrexec services. Topology-managed policy
+`airlock.CaptureImport+image` / `+video` qrexec services. The host GUI policy
 permits only sys-gui to usr-home. The unprivileged receiver accepts a bounded
 versioned metadata header and capture bytes, verifies their size and SHA-256,
 and publishes the finished file without overwriting an existing file. Durable
@@ -90,6 +90,10 @@ queue and local file; the next login or completed capture retries. Usr-home is
 started by normal qrexec policy when needed. Original local files are retained
 as recovery copies after delivery; automatic deletion is not implemented.
 GUI-only profiles keep GNOME's local capture behaviour.
+
+Capture permissions precede the GUI policy's default deny in
+`50-airlock-sys-gui.policy`. Installing them requires activating the new host
+generation; updating only the guests cannot grant these RPCs.
 
 Implementation: `lifecycle/misc/modules/capture-transfer.nix`,
 `lifecycle/misc/modules/sys-gui/capture-transfer.py`, and

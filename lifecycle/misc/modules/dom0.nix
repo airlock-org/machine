@@ -27,6 +27,9 @@ let
   sysGuiVisibleSystemDomains = lib.filter (
     name: lib.hasPrefix "sys-" name
   ) (builtins.attrNames config.airlock.qubes.domains);
+  captureRules = lib.optionals (
+    config.airlock.qubes.domains ? sys-gui && config.airlock.qubes.domains ? usr-home
+  ) (import ../lib/capture-policy.nix);
   devNetworkProxyEnv = {
     http_proxy = devNetworkProxyUrl;
     https_proxy = devNetworkProxyUrl;
@@ -91,6 +94,11 @@ let
     # guest handler proves its graphical user session can open X and D-Bus.
     airlock.AppSessionReady + sys-gui @tag:guivm-sys-gui allow
     airlock.AppSessionReady * @anyvm @anyvm deny
+    # These must precede the GUI domain's default deny below. The later
+    # topology-managed policy cannot grant exceptions to that deny.
+    ${lib.concatMapStringsSep "\n" (rule:
+      "${rule.service} ${rule.argument} ${rule.source} ${rule.target} ${rule.action}"
+    ) captureRules}
     admin.vm.List * sys-gui dom0 allow
     admin.vm.List * sys-gui @tag:guivm-sys-gui allow target=dom0
     admin.Events * sys-gui dom0 allow
@@ -348,11 +356,6 @@ in
   };
 
   config = lib.mkIf cfg.enable {
-    # Topology-managed rules activate through normal setup/apply, including
-    # on the running host. GUI-only profiles retain local capture behaviour.
-    airlock.qubes.qrexecPolicy.rules = lib.optionals (
-      config.airlock.qubes.domains ? sys-gui && config.airlock.qubes.domains ? usr-home
-    ) (import ../lib/capture-policy.nix);
     assertions = [
       {
         assertion = cfg.user != "";
