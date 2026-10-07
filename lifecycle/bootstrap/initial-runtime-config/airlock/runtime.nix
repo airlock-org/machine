@@ -70,6 +70,7 @@
       };
       features = {
         "airlock-role" = "usr-home";
+        "airlock-gui-reconnect" = "1";
         "menu-items" = "*";
       };
       services."network-manager" = false;

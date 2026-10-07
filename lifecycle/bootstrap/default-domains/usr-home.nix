@@ -16,6 +16,7 @@
   };
   features = {
     "airlock-managed" = "1";
+    "airlock-gui-reconnect" = "1";
     "airlock-role" = "usr-home";
     "menu-items" = "*";
   };

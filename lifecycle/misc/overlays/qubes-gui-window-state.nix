@@ -10,6 +10,7 @@ final: prev: {
     patches = (old.patches or [ ]) ++ [
       ../patches/qubes-gui-agent-linux/0001-gui-agent-forward-minimize-and-maximize-requests.patch
       ../patches/qubes-gui-agent-linux/0002-gui-agent-forward-interactive-window-move-requests.patch
+      ../patches/qubes-gui-agent-linux/0003-preserve-xorg-across-guivm-restart.patch
     ];
   });
 

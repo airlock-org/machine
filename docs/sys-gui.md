@@ -1,5 +1,34 @@
 # sys-gui desktop and login
 
+## Application preservation during a sys-gui update
+
+Unchanged application VMs with the trusted feature `airlock-gui-reconnect=1`
+can remain running while their existing assigned sys-gui restarts. The default
+sys-agent and usr-home declarations enable this after installing the patched
+GUI agent and Xorg modules. Networking, audio, storage and device dependencies
+retain the ordinary restart policy; changing a guest or its GUI assignment also
+requires its restart.
+
+On display disconnection the guest agent keeps Xorg alive. Its driver copies
+grant-backed pixmaps into anonymous mappings at the same virtual addresses,
+releasing the departed GUI domain's grants. Applications can continue drawing.
+The agent watches `/qubes-gui-domain-xid` in QubesDB, reconnects to that trusted
+domain, grants replacement buffers to it and republishes existing windows.
+The usual GUI protocol and VM identity metadata remain in use.
+
+Deployment records preserved boot IDs and checks them again after reconnecting.
+`/run/qubes/gui-reconnect-status` records `disconnected XID` or `connected XID`.
+The `gui-reconnecting` phase waits up to 180 seconds per preserved guest for the
+current sys-gui XID, including desktop login. It reports failure without
+automatically restarting application VMs if reconnection fails. Initial
+installation of this support still restarts guests to load the new Xorg modules.
+
+The existing GNOME extension rebuilds VM workspace ownership when windows
+return. Exact prior workspace counts, positions and focus are not persisted by
+this change.
+
+## Desktop configuration
+
 `sys-gui` owns LightDM's login screen, desktop session, Qubes Manager,
 application menus, tray widgets, notifications, and graphical settings tools.
 The connected `usr-home` personal VM owns Firefox, Files and Terminal processes

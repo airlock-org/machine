@@ -17,6 +17,7 @@
   };
   features = {
     "airlock-managed" = "1";
+    "airlock-gui-reconnect" = "1";
     "airlock-role" = "sys-agent";
     "menu-items" = "*";
     # Explicitly clear the prior provider features on deployed Qubes domains.
