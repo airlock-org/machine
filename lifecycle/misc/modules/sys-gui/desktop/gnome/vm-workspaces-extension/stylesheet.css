@@ -4,7 +4,7 @@
 .airlock-workspace-tab { padding: 2px 7px; min-width: 16px; border-radius: 0; color: white; }
 .airlock-workspace-tab:hover, .airlock-workspace-tab:focus { color: white; }
 .airlock-workspace-tab.active { color: white; box-shadow: inset 0 0 0 1px rgba(255,255,255,0.55); }
-.airlock-overview-workspace-border { border-style: solid; border-radius: 28px; }
+.airlock-overview-workspace-border { border-style: solid; border-radius: 0; }
 .airlock-overview-thumbnail-border { border-style: solid; border-radius: 0; }
 .airlock-workspace-group.vm-divider { border-left: 1px solid rgba(255,255,255,0.45); }
 .airlock-workspace-tab.slot-divider { border-left: 1px solid rgba(255,255,255,0.16); }

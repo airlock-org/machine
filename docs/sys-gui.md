@@ -127,7 +127,8 @@ opaque text and a light selection outline. Clicking a tab switches directly to i
 
 GNOME's Super overview uses the same VM colours around its workspace previews
 and small thumbnails. GNOME's moving thumbnail selection frame follows the VM
-colour, with square corners matching the small previews in both overview modes.
+colour, with square corners matching the previews in both overview modes.
+The larger workspace-preview outlines also use square corners.
 The active thumbnail uses that native frame rather than a second coloured outline.
 Hover shows the VM name and workspace number after a short
 delay; labels hide during window/app dragging. Neutral borders and actual VM names
