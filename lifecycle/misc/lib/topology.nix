@@ -23,6 +23,7 @@ let
     "blue"
     "purple"
     "black"
+    "khaki"
   ];
 
   qrexecActions = [

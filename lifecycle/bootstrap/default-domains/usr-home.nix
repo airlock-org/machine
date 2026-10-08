@@ -1,6 +1,6 @@
 {
   guestHostName = "usr-home";
-  label = "gray";
+  label = "khaki";
   rootImageSizeMiB = 1024;
   netvm = "sys-firewall";
   prefs = {
@@ -15,6 +15,7 @@
     vcpus = 2;
   };
   features = {
+    "airlock-label-color" = "0x6b7a3d";
     "airlock-managed" = "1";
     "airlock-gui-reconnect" = "1";
     "airlock-role" = "usr-home";

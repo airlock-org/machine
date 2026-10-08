@@ -2265,6 +2265,30 @@ setup_domain_connectivity() {
 
 printf 'setting up domains\n'
 mapfile -t domain_names < <(selected_domain_names)
+# Custom label creation remains a dom0 setup operation through the Qubes API.
+# The feature declares the colour; it grants no guest control authority.
+for domain in "${domain_names[@]}"; do
+  custom_label_color="$(jq_get '.domains[$name].features["airlock-label-color"] // empty' --arg name "$domain")"
+  [ -n "$custom_label_color" ] || continue
+  custom_label="$(jq_get '.domains[$name].label' --arg name "$domain")"
+  run_or_plan "$QUBESADMIN_PYTHON" -c '
+import re
+import sys
+import qubesadmin
+
+name, color = sys.argv[1:]
+if name != "khaki" or not re.fullmatch(r"0x[0-9a-fA-F]{6}", color):
+    raise ValueError("invalid managed custom label")
+app = qubesadmin.Qubes()
+try:
+    existing = app.labels[name]
+except KeyError:
+    app.qubesd_call("dom0", "admin.label.Create", name, color.encode("ascii"))
+else:
+    if existing.color.lower().replace("#", "0x") != color.lower():
+        raise ValueError("existing custom label colour differs; migration required")
+' "$custom_label" "$custom_label_color"
+done
 boot_phase=3
 boot_domain_total=${#domain_names[@]}
 for domain in "${domain_names[@]}"; do

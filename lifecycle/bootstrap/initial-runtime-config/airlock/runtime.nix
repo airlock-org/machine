@@ -57,7 +57,7 @@
       configuration.imports = [
         "${airlockSupport}/lifecycle/misc/modules/usr-home-guest.nix"
       ];
-      label = "gray";
+      label = "khaki";
       netvm = "sys-firewall";
       rootImageSizeMiB = 1024;
       prefs = {
@@ -69,6 +69,7 @@
         vcpus = 2;
       };
       features = {
+        "airlock-label-color" = "0x6b7a3d";
         "airlock-role" = "usr-home";
         "airlock-gui-reconnect" = "1";
         "menu-items" = "*";
