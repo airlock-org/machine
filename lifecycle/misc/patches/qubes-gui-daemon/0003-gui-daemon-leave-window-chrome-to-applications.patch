@@ -4,7 +4,7 @@ Date: Thu, 1 Oct 2026 15:12:21 +0100
 Subject: [PATCH] gui-daemon: leave window chrome to applications in GNOME
 
 Suppress window-manager decorations for every application. Retain a thin
-forced outline in the trusted VM label colour for every forwarded VM window.
+forced 3px outline in the trusted VM label colour with a 1px black outer edge.
 Docked tray icons have no added outline.
 
 ---
@@ -15,7 +15,16 @@ diff --git a/gui-daemon/xside.c b/gui-daemon/xside.c
 index a39d41d..784bab5 100644
 --- a/gui-daemon/xside.c
 +++ b/gui-daemon/xside.c
-@@ -382,6 +382,13 @@ static Window mkwindow(Ghandles * g, struct windowdata *vm_window)
+@@ -351,6 +351,9 @@ static void get_frame_gc(Ghandles * g, const char *name)
+     g->frame_gc =
+         XCreateGC(g->display, g->root_win, GCForeground, &values);
++    values.foreground = BlackPixel(g->display, g->screen);
++    g->black_frame_gc =
++        XCreateGC(g->display, g->root_win, GCForeground, &values);
+ }
+ 
+ /* create local window - on VM request.
+@@ -382,6 +385,13 @@ static Window mkwindow(Ghandles * g, struct windowdata *vm_window)
      (void) XSetStandardProperties(g->display, child_win,
                        "VMapp command", "Pixmap", None,
                        gargv, 0, &my_size_hints);
@@ -35,8 +44,8 @@ index a39d41d..784bab5 100644
  {
 -    int border_width = BORDER_WIDTH;
 +    /* The frame colour comes from trusted Qubes state, never an application.
-+     * All forwarded VM windows keep the same thin outline; tray icons do not. */
-+    int border_width = vm_window->is_docked ? 0 : BORDER_WIDTH;
++     * All forwarded VM windows keep the same 4px outline; tray icons do not. */
++    int border_width = vm_window->is_docked ? 0 : 4;
      int border_padding = 0; /* start forced border x pixels from the edge */
      int x = 0, y = 0, w = 0, h = 0;
      ASSERT_WIDTH_UNSIGNED(vm_window->width);
@@ -60,5 +69,21 @@ index a39d41d..784bab5 100644
      assert(x >= 0 && y >= 0 && w >= 0 && h >= 0);
      assert(border_width >= 0);
  
+@@ -2471,7 +2469,7 @@ static void do_shm_update(Ghandles * g, struct windowdata *vm_window,
+-                   g->frame_gc, i, i,
++                   i == 0 ? g->black_frame_gc : g->frame_gc, i, i,
+                    vm_window->width - 1 - 2 * i,
+                    vm_window->height - 1 - 2 * i);
+ 
+ }
+ 
+ /* handle local Xserver event: XExposeEvent
+diff --git a/gui-daemon/xside.h b/gui-daemon/xside.h
+--- a/gui-daemon/xside.h
++++ b/gui-daemon/xside.h
+@@ -169,2 +169,3 @@
+     GC frame_gc;        /* graphic context to paint window frame */
++    GC black_frame_gc;  /* trusted outer contrast edge */
+     GC tray_gc;        /* graphic context to paint tray background - only in TRAY_BACKGROUND mode */
 -- 
 2.54.0
