@@ -369,3 +369,35 @@ The opt-in physical laptop experiment now has a confirmed GUI login with
 keyboard and pointer input. Its [reusable input module and findings](sys-gui-input.md)
 are separate from machine-specific GPU reservation and firmware delivery.
 This does not change the default hybrid profile or establish reset safety.
+# Reloadable VM border style
+
+The committed `lifecycle/misc/modules/sys-gui/desktop/gnome/gui-style.json`
+selects 1–16 pixels of trusted VM label colour, plus a fixed 1px black outer
+edge. Nix installs that selection at sys-gui startup. The GUI daemon reads the
+root-owned runtime width and uses its existing SIGHUP handling to reload it
+and redraw all forwarded windows. Neither GNOME nor application VMs restart.
+Tray icons are excluded and applications cannot select their own border colour.
+
+After the one-time deployment of reload support, the parent repository provides:
+
+```sh
+make machine-gui-style-plan DEPLOY_TARGET=user@TAILSCALE_IP
+make machine-gui-style-apply DEPLOY_TARGET=user@TAILSCALE_IP
+```
+
+Commit a changed JSON selection first. Plan describes the source setting and
+support prerequisite; apply uses the existing password-protected development
+dom0 shell and administrator qrexec execution in sys-gui. It introduces no
+production RPC or new Qubes control authority. The guest helper rejects daemon
+executables without the reload-support marker before changing anything and
+uses pidfds to avoid signalling a reused PID. Width and source receipts are
+durable under `/rw/airlock/`; the booted Nix generation restores its declared
+default on the next sys-gui boot. A reload receipt means signals were sent;
+physical acceptance remains separate. An interrupted receipt remains prepared
+and can be reconciled by applying the committed setting again.
+
+This is a style-only deployment, not a live OS upgrade. It does not replace
+guest disks, change the machine selection, or make `/run/current-system` claim
+a different running generation. The whole-machine route remains necessary for
+GUI daemon binaries, GNOME, guest storage, host policy and hardware changes.
+

@@ -6,6 +6,13 @@
 }:
 let
   cfg = config.airlock.sysGuiDesktop;
+  guiStyle = builtins.fromJSON (builtins.readFile ./gui-style.json);
+  guiStyleBoot = pkgs.writeText "airlock-gui-style-boot.json" (
+    builtins.toJSON (guiStyle // { revision = null; })
+  );
+  guiStyleApply = pkgs.writeShellScriptBin "airlock-gui-style" ''
+    exec ${pkgs.python3}/bin/python3 ${./gui-style.py} "$@"
+  '';
   hostPoweroff = pkgs.writeShellScript "airlock-gnome-host-poweroff" ''
     exec ${pkgs.python3.pkgs.qubes-core-admin-client}/bin/qvm-run \
       --pass-io --no-gui --service dom0 airlock.Dom0Poweroff
@@ -92,6 +99,17 @@ in
 {
   imports = [ ./setup.nix ../../../capture-transfer.nix ];
   config = lib.mkIf (cfg.session == "gnome") {
+    systemd.services.airlock-gui-style-default = {
+      description = "Restore the booted generation's declarative VM border style";
+      wantedBy = [ "multi-user.target" ];
+      after = [ "airlock-qubes-rw-init.service" ];
+      requires = [ "airlock-qubes-rw-init.service" ];
+      before = [ "display-manager.service" ];
+      serviceConfig.Type = "oneshot";
+      script = ''
+        ${guiStyleApply}/bin/airlock-gui-style boot < ${guiStyleBoot}
+      '';
+    };
     airlock.captureTransfer.send.enable = lib.mkDefault (
       config.airlock.sysGuiGuest.defaultApplicationVM != null
     );
@@ -129,6 +147,10 @@ in
     nixpkgs.overlays = lib.mkAfter [
       (_final: prev: {
         qubes-gui-daemon = prev.qubes-gui-daemon.overrideAttrs (old: {
+          postInstall = (old.postInstall or "") + ''
+            mkdir -p "$out/share/airlock"
+            touch "$out/share/airlock/gui-border-reload-v1"
+          '';
           patches = (old.patches or [ ]) ++ [
             ../../../../patches/qubes-gui-daemon/0003-gui-daemon-leave-window-chrome-to-applications.patch
           ];
@@ -164,6 +186,7 @@ in
       config.airlock.sysGuiGuest.defaultApplicationVM == null
     );
     environment.systemPackages = [
+      guiStyleApply
       hostPoweroffExtension
       focusedVMExtension
       vmSearchExtension
