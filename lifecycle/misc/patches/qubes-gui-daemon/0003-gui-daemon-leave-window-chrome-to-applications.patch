@@ -15,7 +15,7 @@ diff --git a/gui-daemon/xside.c b/gui-daemon/xside.c
 index a39d41d..784bab5 100644
 --- a/gui-daemon/xside.c
 +++ b/gui-daemon/xside.c
-@@ -351,6 +351,9 @@ static void get_frame_gc(Ghandles * g, const char *name)
+@@ -351,5 +351,8 @@ static void get_frame_gc(Ghandles * g, const char *name)
      g->frame_gc =
          XCreateGC(g->display, g->root_win, GCForeground, &values);
 +    values.foreground = BlackPixel(g->display, g->screen);
