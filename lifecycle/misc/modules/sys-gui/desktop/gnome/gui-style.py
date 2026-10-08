@@ -13,10 +13,10 @@ import time
 STATE = Path('/rw/airlock')
 
 
-def atomic(path, value):
+def atomic(path, value, mode=0o600):
     temporary = path.with_name(path.name + '.new')
     with temporary.open('w') as stream:
-        os.chmod(temporary, 0o600)
+        os.chmod(temporary, mode)
         stream.write(value)
         stream.flush()
         os.fsync(stream.fileno())
@@ -71,7 +71,7 @@ def main():
             journal.mkdir(mode=0o700, exist_ok=True)
             receipt = journal / (str(time.time_ns()) + '.json')
             atomic(receipt, json.dumps(record) + '\n')
-            atomic(STATE / 'gui-border-width', str(width) + '\n')
+            atomic(STATE / 'gui-border-width', str(width) + '\n', mode=0o644)
             for handle in handles:
                 signal.pidfd_send_signal(handle, signal.SIGHUP)
             record['status'] = 'reload-requested' if handles else 'boot-default'
