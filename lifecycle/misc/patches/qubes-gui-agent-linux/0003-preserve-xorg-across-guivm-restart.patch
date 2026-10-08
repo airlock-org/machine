@@ -135,7 +135,7 @@ index ff9e5e0..a54f25b 100644
      /* Turn on Composite for all children of root window. This way X server
       * keeps separate buffers for each (root child) window.
       * There are two modes:
-@@ -2837,7 +2901,13 @@ int main(int argc, char **argv)
+@@ -2837,7 +2901,16 @@ int main(int argc, char **argv)
              exit(1);
          }
  
@@ -147,7 +147,11 @@ index ff9e5e0..a54f25b 100644
 +        if (setjmp(gui_message_checkpoint))
 +            continue;
 +        gui_message_checkpoint_ready = true;
-         wait_for_vchan_or_argfd(g.vchan, fds, QUBES_ARRAY_SIZE(fds));
+-        wait_for_vchan_or_argfd(g.vchan, fds, QUBES_ARRAY_SIZE(fds));
++        /* Readiness also arms write notifications. A reconnect checkpoint
++         * skips the ordinary drain, so check before waiting on the new ring. */
++        if (!libvchan_data_ready(g.vchan) && !XPending(g.display))
++            wait_for_vchan_or_argfd(g.vchan, fds, QUBES_ARRAY_SIZE(fds));
          /* first process possible qubes_drv reconnection, otherwise we may be
           * using stale g.xserver_fd */
 diff --git a/xf86-input-mfndev/src/qubes.c b/xf86-input-mfndev/src/qubes.c

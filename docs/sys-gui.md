@@ -33,6 +33,12 @@ The existing GNOME extension rebuilds VM workspace ownership when windows
 return. Exact prior workspace counts, positions and focus are not persisted by
 this change.
 
+The agent checks vchan readiness before waiting after a reconnection checkpoint.
+This both drains already queued input and arms Xen's write notifications for
+future input. Waiting first can leave a connected, repainted window unresponsive
+with a full input ring and notifications disabled. Installing this agent fix
+requires an application VM update; border style reload alone cannot replace it.
+
 ## Desktop configuration
 
 `sys-gui` owns LightDM's login screen, desktop session, Qubes Manager,
