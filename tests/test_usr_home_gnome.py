@@ -11,6 +11,87 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 @pytest.mark.nix
+def test_usr_home_uses_upstream_gnome_apps_without_installation_or_a_desktop():
+    expression = f"""
+      let
+        f = builtins.getFlake "{ROOT}";
+        lib = f.inputs.nixpkgs.lib;
+        home = f.nixosConfigurations.airlock-domain-usr-home.config;
+        stock = lib.nixosSystem {{
+          system = "x86_64-linux";
+          modules = [ ({{ ... }}: {{
+            nixpkgs.pkgs = home.nixpkgs.pkgs;
+            services.gnome.core-apps.enable = true;
+          }}) ];
+        }};
+        names = packages: map (p: p.pname or p.name) packages;
+        stockApps = lib.concatMap (definition: definition.value)
+          (builtins.filter (definition:
+            lib.hasSuffix "/services/desktop-managers/gnome.nix" definition.file)
+            stock.options.environment.systemPackages.definitionsWithLocations);
+        minimalNames = [ "sys-agent" "sys-ctrl" "sys-gui-usb-gui-lab" "sys-net" "sys-firewall" ];
+      in {{
+        packages = names home.environment.systemPackages;
+        stockApps = names stockApps;
+        defaultPackages = names home.environment.defaultPackages;
+        stockDefaultPackages = names stock.config.environment.defaultPackages;
+        documentation = {{ inherit (home.documentation) enable; man = home.documentation.man.enable; nixos = home.documentation.nixos.enable; }};
+        completion = home.programs.bash.completion.enable;
+        nano = home.programs.nano.enable;
+        minimal = home.airlock.minimalGuest.enable;
+        installation = {{ nix = home.nix.enable; channels = home.nix.channel.enable; flatpak = home.services.flatpak.enable; installerTools = !home.system.disableInstallerTools; }};
+        desktop = {{ gnome = home.services.desktopManager.gnome.enable; shell = home.services.gnome.core-shell.enable; gdm = home.services.displayManager.gdm.enable; }};
+        integrations = {{
+          apps = home.services.gnome.core-apps.enable;
+          mime = home.xdg.mime.enable;
+          icons = home.xdg.icons.enable;
+          autostart = home.xdg.autostart.enable;
+          portal = home.xdg.portal.enable;
+          keyring = home.services.gnome.gnome-keyring.enable;
+          calendar = home.services.gnome.evolution-data-server.enable;
+          gvfs = home.services.gvfs.enable;
+          capture = home.airlock.captureTransfer.receive.enable;
+          gui = home.systemd.services.qubes-gui-agent.enable;
+        }};
+        mimeDefaults = home.xdg.mime.defaultApplications;
+        portals = home.xdg.portal.config.common;
+        minimalGuests = builtins.listToAttrs (map (name: {{
+          inherit name;
+          value = let c = f.nixosConfigurations.${{"airlock-domain-" + name}}.config;
+          in {{ minimal = c.airlock.minimalGuest.enable; docs = c.documentation.enable; defaults = names c.environment.defaultPackages; }};
+        }}) minimalNames);
+      }}
+    """
+    result = subprocess.run(
+        [str(ROOT / "lifecycle/misc/tools/scripts/airlock-nix.sh"),
+         "eval", "--impure", "--json", "--expr", expression],
+        cwd=ROOT, capture_output=True, text=True, check=True,
+    )
+    log_dir = Path(os.environ["AIRLOCK_LOG_DIR"]) / "usr-home-stock-gnome"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    (log_dir / "configuration.json").write_text(result.stdout)
+    report = json.loads(result.stdout)
+    assert report["stockApps"]
+    assert set(report["stockApps"]) <= set(report["packages"])
+    assert {"epiphany", "loupe", "gnome-maps", "gnome-weather", "snapshot", "simple-scan", "gnome-connections"} <= set(report["packages"])
+    assert not {"firefox", "nix", "nix-info", "nixos-rebuild", "flatpak"} & set(report["packages"])
+    assert report["defaultPackages"] == report["stockDefaultPackages"]
+    assert all(report["documentation"].values())
+    assert report["completion"] and report["nano"]
+    assert report["minimal"] is False
+    assert not any(report["installation"].values())
+    assert not any(report["desktop"].values())
+    assert all(report["integrations"].values())
+    assert report["mimeDefaults"]["x-scheme-handler/https"] == "org.gnome.Epiphany.desktop"
+    assert report["mimeDefaults"]["text/html"] == "org.gnome.Epiphany.desktop"
+    assert report["mimeDefaults"]["image/png"] == "org.gnome.Loupe.desktop"
+    assert report["mimeDefaults"]["application/pdf"] == "org.gnome.Papers.desktop"
+    assert report["portals"]["default"] == "gtk"
+    assert all(c == {"minimal": True, "docs": False, "defaults": []}
+               for c in report["minimalGuests"].values())
+
+
+@pytest.mark.nix
 @pytest.mark.parametrize(
     "profile, configuration",
     [
@@ -70,7 +151,6 @@ def test_gnome_desktop_work_applications_are_routed_to_usr_home():
       let
         f = builtins.getFlake "{ROOT}";
         pkgs = import f.inputs.nixpkgs {{ system = "x86_64-linux"; }};
-        applications = import {ROOT}/lifecycle/misc/lib/usr-home-applications.nix {{ inherit pkgs; }};
         workspace = (f.nixosConfigurations.airlock-domain-sys-gui-usb-gui-lab.extendModules {{
           modules = [ ({{ lib, ... }}: {{
             airlock.sysGuiGuest.defaultApplicationVM = lib.mkForce "usr-home";
@@ -80,7 +160,7 @@ def test_gnome_desktop_work_applications_are_routed_to_usr_home():
         appGuest = f.nixosConfigurations.airlock-domain-usr-home.config;
         homeGuest = f.nixosConfigurations.airlock-domain-usr-home.config;
       in {{
-        applications = map (package: package.pname or package.name) applications;
+        applications = map (package: package.pname or package.name) homeGuest.environment.systemPackages;
         discovery = workspace.airlock.sysGuiGuest.applicationMenus.enable;
         timer = workspace.systemd.user.timers.airlock-application-menus.timerConfig;
         workspaceCoreApps = workspace.services.gnome.core-apps.enable;
@@ -200,7 +280,7 @@ def test_gnome_desktop_work_applications_are_routed_to_usr_home():
     packages = set(report["workspacePackages"])
     assert "airlock-application-menus" in packages
     assert not any(name.startswith("airlock-launch-") and name != "airlock-launch-qube-app" for name in packages)
-    for package in ("gnome-calculator", "gnome-text-editor", "nautilus", "firefox"):
+    for package in ("gnome-calculator", "gnome-text-editor", "nautilus", "epiphany"):
         assert not any(name.startswith(f"{package}-") for name in packages)
     assert not any("airlock-usr-home-application-icons" in name for name in packages)
     assert any(

@@ -12,7 +12,11 @@ let
 in
 {
   imports = [
-    "${modulesPath}/profiles/minimal.nix"
+    # Gate the upstream defaults too: opting out must restore ordinary NixOS
+    # defaults, without changing the existing minimal configuration of any role.
+    (args: {
+      config = lib.mkIf cfg.enable (import "${modulesPath}/profiles/minimal.nix" args);
+    })
   ];
 
   options.airlock.minimalGuest = {

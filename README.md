@@ -6,6 +6,10 @@ VM systems, runtime services and packages, bootstrap configuration, and the
 tests that maintain those components. It preserves Qubes' Xen, qrexec,
 QubesDB, qubesd, libvirt, policy, and VM lifecycle machinery.
 
+The [personal application VM](docs/usr-home.md) follows the pinned NixOS GNOME
+application defaults with GNOME Web and normal user conveniences. Other VMs
+retain their existing minimal configuration and role-specific packages.
+
 The deployable release outputs are:
 
 ```text

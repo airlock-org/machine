@@ -37,7 +37,7 @@ this change.
 
 `sys-gui` owns LightDM's login screen, desktop session, Qubes Manager,
 application menus, tray widgets, notifications, and graphical settings tools.
-The connected `usr-home` personal VM owns Firefox, Files and Terminal processes
+The connected `usr-home` personal VM owns GNOME Web, Files and Terminal processes
 and the user's persistent home directory; their windows render in `sys-gui`.
 Its default packages also include document, image, media, calendar, contact,
 editor, utility and help applications. These packages supply their own desktop
@@ -122,8 +122,8 @@ remain available through Qubes settings. The GUI's copy of an icon is a cache;
 applications and their dependencies remain owned by the originating VM's Nix
 profiles, with no additional GC roots created by the application menu.
 
-GNOME search displays entries such as `usr-home: Firefox` and
-`usr-work: Firefox`. Both launch through `qubes.StartApp` in the named VM,
+GNOME search displays entries such as `usr-home: Web` and
+`usr-work: Web`. Both launch through `qubes.StartApp` in the named VM,
 preserving separate browser profiles and files. Standard `StartupWMClass`
 metadata is namespaced using the VM name for forwarded-window matching.
 Airlock guests advertise their session-readiness RPC; other Qubes guests use

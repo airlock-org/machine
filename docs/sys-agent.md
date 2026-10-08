@@ -22,7 +22,7 @@ network hardware; sys-agent reaches the internet through sys-firewall.
 
 Codex needs your own login. For a ChatGPT account with device login enabled,
 run `codex login --device-auth` in sys-agent, then complete the displayed code
-using Firefox in usr-home. API-key login is also available. Credentials remain
+using GNOME Web in usr-home. API-key login is also available. Credentials remain
 inside sys-agent; the system does not import another VM's browser profile or
 embed authentication in the machine configuration.
 

@@ -1754,9 +1754,6 @@ def check_personal_domains(repo_root: Path, log_dir: Path) -> None:
     home_guest = (
         repo_root / "lifecycle/misc/modules/usr-home-guest.nix"
     ).read_text(encoding="utf-8")
-    home_applications = (
-        repo_root / "lifecycle/misc/lib/usr-home-applications.nix"
-    ).read_text(encoding="utf-8")
     sys_gui_guest = (
         repo_root / "lifecycle/misc/modules/sys-gui/base.nix"
     ).read_text(encoding="utf-8")
@@ -1768,10 +1765,9 @@ def check_personal_domains(repo_root: Path, log_dir: Path) -> None:
         / "lifecycle/bootstrap/initial-runtime-config/airlock/runtime.nix"
     ).read_text(encoding="utf-8")
 
-    assert "usr-home-applications.nix" in home_guest
-    assert "pkgs.nautilus" in home_applications
-    assert "pkgs.gnome-console" in home_applications
-    assert "pkgs.firefox" in home_guest
+    assert "core-apps.enable = true" in home_guest
+    assert "pkgs.firefox" not in home_guest
+    assert '"x-scheme-handler/https" = "org.gnome.Epiphany.desktop"' in home_guest
     assert "homeApplicationLauncher" not in sys_gui_guest
     assert "homeApplicationDesktop" not in sys_gui_guest
     assert "usr-home-applications.nix" not in sys_gui_guest
