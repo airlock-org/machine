@@ -4,7 +4,7 @@ Date: Thu, 1 Oct 2026 15:12:21 +0100
 Subject: [PATCH] gui-daemon: leave window chrome to applications in GNOME
 
 Suppress window-manager decorations for every application. Retain a thin
-forced 3px outline in the trusted VM label colour with a 1px black outer edge.
+forced 10px outline in the trusted VM label colour with a 1px black outer edge.
 Docked tray icons have no added outline.
 
 ---
@@ -44,8 +44,8 @@ index a39d41d..784bab5 100644
  {
 -    int border_width = BORDER_WIDTH;
 +    /* The frame colour comes from trusted Qubes state, never an application.
-+     * All forwarded VM windows keep the same 4px outline; tray icons do not. */
-+    int border_width = vm_window->is_docked ? 0 : 4;
++     * All forwarded VM windows keep the same 11px outline; tray icons do not. */
++    int border_width = vm_window->is_docked ? 0 : 11;
      int border_padding = 0; /* start forced border x pixels from the edge */
      int x = 0, y = 0, w = 0, h = 0;
      ASSERT_WIDTH_UNSIGNED(vm_window->width);
