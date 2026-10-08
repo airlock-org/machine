@@ -18,6 +18,9 @@ services, online accounts, search, keyring storage, thumbnails and a GTK desktop
 portal. HTTP, HTTPS and HTML open in GNOME Web; common image types open in
 Loupe, PDFs in Papers, text files in Text Editor and directories in Files.
 The portal uses the X-QUBES session and does not require another GNOME Shell.
+The standard NixOS graphics module supplies Mesa/EGL for application software
+rendering. Qubes supplies the X server, and no physical GPU is assigned to
+`usr-home`.
 
 GNOME Shell, login, display and physical hardware management remain in
 `sys-gui` and the existing service VMs. System Monitor and Disks operate on the

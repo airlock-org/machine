@@ -52,6 +52,7 @@ def test_usr_home_uses_upstream_gnome_apps_without_installation_or_a_desktop():
           gvfs = home.services.gvfs.enable;
           capture = home.airlock.captureTransfer.receive.enable;
           gui = home.systemd.services.qubes-gui-agent.enable;
+          graphics = home.hardware.graphics.enable;
         }};
         mimeDefaults = home.xdg.mime.defaultApplications;
         portals = home.xdg.portal.config.common;

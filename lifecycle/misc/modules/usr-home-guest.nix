@@ -23,6 +23,10 @@
   };
   programs.dconf.enable = true;
   fonts.packages = [ pkgs.adwaita-fonts ];
+  # The Qubes X server is supplied by the GUI agent, so NixOS's ordinary
+  # X-server switch does not enable Mesa/EGL here. WebKit still needs those
+  # runtime drivers for software rendering; this grants no GPU assignment.
+  hardware.graphics.enable = true;
   services.gvfs.enable = true;
   security.pam.services.qubes-gui-agent.enableGnomeKeyring = true;
 
