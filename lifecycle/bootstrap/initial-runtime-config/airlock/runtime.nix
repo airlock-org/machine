@@ -57,7 +57,7 @@
       configuration.imports = [
         "${airlockSupport}/lifecycle/misc/modules/usr-home-guest.nix"
       ];
-      label = "blue";
+      label = "gray";
       netvm = "sys-firewall";
       rootImageSizeMiB = 1024;
       prefs = {

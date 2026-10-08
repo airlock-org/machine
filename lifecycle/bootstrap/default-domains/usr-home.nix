@@ -1,6 +1,6 @@
 {
   guestHostName = "usr-home";
-  label = "blue";
+  label = "gray";
   rootImageSizeMiB = 1024;
   netvm = "sys-firewall";
   prefs = {
