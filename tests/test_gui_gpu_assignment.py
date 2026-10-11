@@ -558,3 +558,37 @@ print(json.dumps({{'schema': 'airlock.gui-gpu-live-check.v1', 'actual': actual, 
     report = json.loads(result.stdout)
     (logs / "live.json").write_text(json.dumps(report, indent=2) + "\n")
     assert report["qubes_xml_unchanged"] is True
+
+
+@pytest.mark.nix
+def test_machine_hardware_module_replaces_lab_gpu_assignment():
+    expression = f'''
+      let
+        f = builtins.getFlake "{ROOT}";
+        machine = f.lib.mkMachineConfiguration {{
+          includeRelease = false;
+          includeAlternativeGuiProfiles = false;
+          hardwareModules = [ ({{ ... }}: {{
+            airlock.guiGpu.device = {{
+              bdf = "0000:09:03.0";
+              port = "00_03.1-00_00.0";
+              vendor = "8086";
+              device = "1234";
+              driver = "i915";
+            }};
+          }}) ];
+        }};
+        cfg = machine.config.specialisation.usb-lab.configuration;
+      in {{
+        device = cfg.airlock.guiGpu.device;
+        assignments = cfg.airlock.qubes.domains.sys-gui.devices.pci;
+      }}
+    '''
+    result = subprocess.run(
+        [str(ROOT / "lifecycle/misc/tools/scripts/airlock-nix.sh"),
+         "eval", "--impure", "--json", "--expr", expression],
+        check=True, text=True, capture_output=True)
+    report = json.loads(result.stdout)
+    assert report["device"]["bdf"] == "0000:09:03.0"
+    assert report["assignments"] == [{"backend": "dom0", "id": "00_03.1-00_00.0",
+                                      "mode": "required", "match": "port", "options": {}}]

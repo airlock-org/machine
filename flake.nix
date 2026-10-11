@@ -425,6 +425,7 @@
           includeRelease ? true,
           includeAlternativeGuiProfiles ? true,
           extraModules ? [ ],
+          hardwareModules ? [ ./lifecycle/image/hardware/thinkpad-t14-gen3-amd.nix ],
           extraSpecialArgs ? { },
           extraGuestSpecialArgs ? { },
         }:
@@ -460,7 +461,6 @@
           ./lifecycle/image/profiles/machine-host.nix
           ./lifecycle/misc/modules/machine-deployment.nix
           ./lifecycle/misc/modules/host-store.nix
-          ./lifecycle/image/hardware/thinkpad-t14-gen3-amd.nix
           ({ config, lib, ... }: {
             airlock.dom0.bootMenu.source = {
               revision = extraSpecialArgs.airlockSourceRevision or (self.rev or "dirty");
@@ -505,10 +505,10 @@
                 # descriptor. Without it, the descriptor's device defaults can
                 # win during specialisation merging and sys-gui starts headless.
                 sys-gui = (builtins.removeAttrs (machineDomain "sys-gui") [ "devices" ]) // {
-                  devices.pci = [
+                  devices.pci = lib.optionals (config.airlock.guiGpu.device != null) [
                     {
                       backend = "dom0";
-                      id = "00_08.1-00_00.0";
+                      id = config.airlock.guiGpu.device.port;
                       mode = "required";
                       match = "port";
                       options = { };
@@ -526,6 +526,7 @@
         ]
         ++ lib.optional (!includeAlternativeGuiProfiles) ./lifecycle/image/profiles/usb-headless.nix
         ++ lib.optional includeRelease ./lifecycle/misc/modules/machine-release.nix
+        ++ hardwareModules
         ++ extraModules;
       };
 
