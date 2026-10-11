@@ -186,3 +186,39 @@ def test_machine_prepares_candidate_before_new_guest_payload(tmp_path, monkeypat
         assert response["paths_transferred"] == 3
         assert response["nar_bytes"] == 7
         assert response["compressed_bytes"] == 6
+
+
+def test_fresh_build_record_is_durable_before_return(tmp_path, monkeypatch):
+    import os
+    import stat
+
+    revision, lock_hash = "a" * 40, "b" * 64
+    release = "/nix/store/" + "c" * 32 + "-release"
+    monkeypatch.setattr(DEPLOY, "BUILDER_STORE", tmp_path / "store")
+    monkeypatch.setattr(DEPLOY, "BUILD_RECORDS", tmp_path / "records")
+    monkeypatch.setattr(DEPLOY, "identity", lambda _: (revision, lock_hash))
+    physical = DEPLOY.BUILDER_STORE / release.lstrip("/")
+    physical.mkdir(parents=True)
+    (physical / "release.json").write_text(json.dumps({
+        "schema": "airlock.machine-release.v1", "profile": "usb-lab",
+        "revision": revision, "lockHash": lock_hash}))
+    monkeypatch.setattr(DEPLOY, "output", lambda *_: release)
+    monkeypatch.setattr(DEPLOY.subprocess, "run", lambda *_a, **_k: None)
+    events = []
+    real_fsync = os.fsync
+    real_replace = Path.replace
+
+    def fsync(fd):
+        events.append("directory" if stat.S_ISDIR(os.fstat(fd).st_mode) else "file")
+        real_fsync(fd)
+
+    def replace(source, target):
+        events.append("replace")
+        return real_replace(source, target)
+
+    monkeypatch.setattr(DEPLOY.os, "fsync", fsync)
+    monkeypatch.setattr(Path, "replace", replace)
+    assert DEPLOY.build_machine_release(revision, lock_hash) == release
+    assert events == ["file", "replace", "directory"]
+    saved = json.loads((DEPLOY.BUILD_RECORDS / revision / "build.json").read_text())
+    assert (saved["release"], saved["revision"], saved["lock_hash"]) == (release, revision, lock_hash)

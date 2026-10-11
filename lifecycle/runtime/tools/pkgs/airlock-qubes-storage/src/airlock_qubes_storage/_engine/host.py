@@ -188,14 +188,7 @@ def publish_live(system):
         if (root / "host/boots" / (key(system) + ".json")).exists():
             record = validate_boot(root, system)
             timings["host_validation_seconds"] = time.monotonic() - started
-            started = time.monotonic()
-            seed_generation_metadata(record)
-            timings["host_database_seconds"] = time.monotonic() - started
-            started = time.monotonic()
-            refresh_builder(root, "sys-ctrl", Path(record["registration"]).read_text(), statistics=timings)
-            refresh_builder(root, "sys-agent", Path(record["registration"]).read_text(), seed_role="sys-ctrl")
-            timings["controller_base_seconds"] = time.monotonic() - started
-            return dict(record, timings=timings)
+            return finish_publication(root, record, Path(record["registration"]).read_text(), timings)
     temporary = Path(HOST) / "publishing"
     temporary.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(dir=temporary) as directory:
@@ -206,14 +199,19 @@ def publish_live(system):
             started = time.monotonic()
             record = publish(root, system, registration, statistics=timings)
             timings["host_pool_publication_seconds"] = time.monotonic() - started
-            started = time.monotonic()
-            seed_generation_metadata(record)
-            timings["host_database_seconds"] = time.monotonic() - started
-            started = time.monotonic()
-            refresh_builder(root, "sys-ctrl", registration, statistics=timings)
-            refresh_builder(root, "sys-agent", registration, seed_role="sys-ctrl")
-            timings["controller_base_seconds"] = time.monotonic() - started
-            return dict(record, timings=timings)
+            return finish_publication(root, record, registration, timings)
+
+
+def finish_publication(root, record, registration, timings):
+    """Finish under the caller's admission lock and any temporary Nix GC root."""
+    started = time.monotonic()
+    seed_generation_metadata(record)
+    timings["host_database_seconds"] = time.monotonic() - started
+    started = time.monotonic()
+    refresh_builder(root, "sys-ctrl", registration, statistics=timings)
+    refresh_builder(root, "sys-agent", registration, seed_role="sys-ctrl")
+    timings["controller_base_seconds"] = time.monotonic() - started
+    return dict(record, timings=timings)
 
 
 def seed_generation_metadata(record):

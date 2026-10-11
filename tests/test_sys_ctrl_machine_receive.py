@@ -157,3 +157,30 @@ def test_prepared_apply_checks_state_without_import_or_binding(monkeypatch, tmp_
             RECEIVER.apply_prepared(header)
         assert not any(call[0] == 'systemd-run' for call in calls)
     assert not any('machine-bind' in call for call in calls)
+
+
+def test_prepared_record_flushes_file_before_replace_and_directory_after(monkeypatch, tmp_path):
+    import os
+    import stat
+
+    monkeypatch.setattr(RECEIVER, "STATE", tmp_path)
+    monkeypatch.setattr(RECEIVER.subprocess, "run", lambda *_a, **_k:
+                        SimpleNamespace(stdout=json.dumps({"plan": {}, "state": "stable"})))
+    events = []
+    real_fsync = os.fsync
+    real_replace = Path.replace
+
+    def fsync(fd):
+        events.append("directory" if stat.S_ISDIR(os.fstat(fd).st_mode) else "file")
+        real_fsync(fd)
+
+    def replace(source, target):
+        events.append("replace")
+        return real_replace(source, target)
+
+    monkeypatch.setattr(RECEIVER.os, "fsync", fsync)
+    monkeypatch.setattr(Path, "replace", replace)
+    token, payload = RECEIVER.prepared_record("candidate", "coordinator", "release", "revision", "lock")
+    assert events == ["file", "replace", "directory"]
+    assert json.loads((tmp_path / "prepared" / (token + ".json")).read_text()) == payload
+    assert not (tmp_path / "prepared" / (token + ".new")).exists()

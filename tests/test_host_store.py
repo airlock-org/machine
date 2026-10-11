@@ -601,3 +601,112 @@ def test_saved_firmware_default_is_cleared_only_when_present(tmp_path, monkeypat
     (tmp_path / 'LoaderEntryOneShot-4a67b082-0a4c-41cf-b6c7-440b29bb8c4f').write_bytes(b'manual next boot')
     presentation.clear_saved_default(tmp_path, '/bin/bootctl')
     assert calls == [((['/bin/bootctl', command, ''],), {'check': True})]
+
+
+def test_startup_cleanup_attempts_every_unmount_and_preserves_original_error(tmp_path, monkeypatch, capsys):
+    import os
+    from types import SimpleNamespace
+
+    mount = load_builder()
+    state = tmp_path / "state"
+
+    class RootOwnedPath(type(tmp_path)):
+        def stat(self, *args, **kwargs):
+            result = super().stat(*args, **kwargs)
+            if self == state:
+                fields = list(result)
+                fields[4] = 0
+                return os.stat_result(fields)
+            return result
+
+    monkeypatch.setattr(mount, "Path", RootOwnedPath)
+    monkeypatch.setattr(mount.pwd, "getpwnam", lambda _: SimpleNamespace(pw_uid=1000, pw_gid=100))
+    monkeypatch.setattr(mount, "is_mountpoint", lambda _: False)
+    monkeypatch.setattr(mount, "read_identity", lambda *_: ({}, b"registration"))
+    monkeypatch.setattr(mount, "archive_foreign_base", lambda *_: None)
+    monkeypatch.setattr(mount, "record_base", lambda *_: None)
+    startup_error = RuntimeError("registration failed")
+    unmounted = []
+
+    def checked(*args, **kwargs):
+        if args[0] == "nix-store":
+            raise startup_error
+        if args[0] == "umount":
+            unmounted.append(args[1])
+            if len(unmounted) == 1:
+                raise RuntimeError("mount busy")
+
+    monkeypatch.setattr(mount, "checked", checked)
+    runtime = tmp_path / "runtime"
+    args = SimpleNamespace(state=state, runtime=runtime, user="user", store_device="store",
+                           blob_device="blob", nix_store="nix-store")
+    with pytest.raises(RuntimeError, match="registration failed") as error:
+        mount.start(args)
+    assert error.value is startup_error
+    assert unmounted == [str(runtime / "lower/nix/store"), str(runtime / "pool")]
+    assert "mount busy" in capsys.readouterr().err
+    assert "mount busy" in startup_error.__notes__[0]
+
+
+@pytest.mark.parametrize("already_published", [False, True])
+def test_publish_live_finishes_inside_lock_and_gc_root(tmp_path, monkeypatch, already_published):
+    from contextlib import contextmanager
+
+    root = tmp_path / "pool"
+    metadata = tmp_path / "host"
+    registration_file = tmp_path / "registration"
+    registration_file.write_text("saved registration")
+    record = {"registration": str(registration_file), "generation": 1}
+    monkeypatch.setattr(host, "POOL", root)
+    monkeypatch.setattr(host, "HOST", metadata)
+    boot = root / "host/boots" / (host.key(A) + ".json")
+    if already_published:
+        boot.parent.mkdir(parents=True)
+        boot.touch()
+    events = []
+    locked = False
+    gc_root = None
+
+    @contextmanager
+    def lock(_root):
+        nonlocal locked
+        locked = True
+        try:
+            yield
+        finally:
+            locked = False
+
+    def command(*args):
+        nonlocal gc_root
+        gc_root = Path(args[2])
+        gc_root.touch()
+
+    def seed(_record):
+        assert locked
+        assert already_published or gc_root.exists()
+        events.append("seed")
+
+    expected = "saved registration" if already_published else "fresh registration"
+
+    def refresh(_root, role, registration, **kwargs):
+        assert locked
+        assert already_published or gc_root.exists()
+        assert registration == expected
+        if role == "sys-agent":
+            assert kwargs == {"seed_role": "sys-ctrl"}
+        else:
+            assert "statistics" in kwargs
+        events.append(role)
+
+    monkeypatch.setattr(host, "admission_lock", lock)
+    monkeypatch.setattr(host, "validate_boot", lambda *_: record)
+    monkeypatch.setattr(host, "publish", lambda *_a, **_k: record)
+    monkeypatch.setattr(host, "command", command)
+    monkeypatch.setattr(host, "publication_registration", lambda _: "fresh registration")
+    monkeypatch.setattr(host, "seed_generation_metadata", seed)
+    monkeypatch.setattr(host, "refresh_builder", refresh)
+    result = host.publish_live(A)
+    assert events == ["seed", "sys-ctrl", "sys-agent"]
+    assert not locked
+    assert already_published or not gc_root.exists()
+    assert {"host_database_seconds", "controller_base_seconds"} <= result["timings"].keys()

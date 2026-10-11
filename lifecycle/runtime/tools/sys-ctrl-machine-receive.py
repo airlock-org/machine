@@ -48,6 +48,11 @@ def prepared_record(candidate, coordinator, release, revision, lock_hash):
         stream.flush()
         os.fsync(stream.fileno())
     temporary.replace(target)
+    fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
     return token, payload
 
 

@@ -217,11 +217,11 @@ def build_machine_release(revision, lock_hash):
     directory.mkdir(parents=True, exist_ok=True)
     subprocess.run(["airlock-config-nix", "build", release,
                     "--out-link", str(directory / "release")], check=True)
-    (directory / "build.json").write_text(json.dumps({
+    record(directory / "build.json", {
         "schema": MACHINE_SCHEMA, "release": release,
         "build_seconds": time.monotonic() - started,
         "revision": revision, "lock_hash": lock_hash,
-    }, sort_keys=True) + "\n")
+    })
     return release
 
 

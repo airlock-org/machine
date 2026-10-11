@@ -8,6 +8,7 @@ from pathlib import Path
 import pwd
 import re
 import subprocess
+import sys
 from urllib.parse import quote
 
 
@@ -190,9 +191,14 @@ def start(args):
         temporary = runtime / ".ready.json.tmp"
         temporary.write_text(json.dumps(ready) + "\n")
         os.replace(temporary, runtime / "ready.json")
-    except BaseException:
+    except BaseException as error:
         for path in reversed(mounts):
-            checked("umount", path)
+            try:
+                checked("umount", path)
+            except Exception as cleanup_error:
+                message = f"Builder cleanup failed for {path}: {cleanup_error}"
+                print(message, file=sys.stderr)
+                error.add_note(message)
         raise
 
 
