@@ -500,17 +500,6 @@ let
     ${access.rollbackService} * @anyvm @anyvm deny
     EOF
   '';
-  codexAuthPolicyPackage = pkgs.runCommand "airlock-codex-auth-policy" { } ''
-    install -d "$out/etc/qubes/policy.d"
-    cat > "$out/etc/qubes/policy.d/31-airlock-codex-auth.policy" <<'EOF'
-    # Host-provided Codex login state enters only the command workspace.
-    airlock.CodexAuthImport * dom0 usr-cmd allow
-    airlock.CodexAuthImport * @anyvm @anyvm deny
-    airlock.CodexConfigImport * dom0 usr-cmd allow
-    airlock.CodexConfigImport * @anyvm @anyvm deny
-    EOF
-  '';
-
   qrexecPolicyPathScript = pkgs.writeShellScript "airlock-qubes-policy-path" ''
     set -euo pipefail
 
@@ -833,7 +822,6 @@ in
 
     virtualisation.qubes.packages = lib.optionals cfg.configAccessPolicy.enable [
       configAccessPolicyPackage
-      codexAuthPolicyPackage
     ];
 
     environment.etc."qubes-rpc/${access.statusService}" = lib.mkIf cfg.configAccessPolicy.enable {
