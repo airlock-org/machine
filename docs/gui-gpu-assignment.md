@@ -58,7 +58,7 @@ The USB AMD lab now opts into a temporary firmware console for bootstrap
 progress. Its startup precondition detaches that console and firmware driver
 before `qvm-start`; failed release blocks the guest. This sole-display-GPU
 experiment does not change the default reservation behavior for other users
-of the module. See [the framebuffer handoff](usb-gui-lab.md#temporary-bootstrap-framebuffer).
+of the module. See [the framebuffer handoff](https://github.com/airlock-org/airlock/blob/main/docs/history/usb-gui-lab.md#temporary-bootstrap-framebuffer).
 
 Boot reservation is address-based and happens before userspace identity
 validation. If hardware changes, a stale BDF can reserve the wrong function;
@@ -98,7 +98,7 @@ The procedure below remains the checklist for subsequent acceptance runs.
 
 ```sh
 make usb-dev-image
-make usb-dev-provision USB_SERIAL=25110814640207
+make usb-dev-provision USB_SERIAL=YOUR_USB_SERIAL
 ```
 
 Boot the normal **Airlock** entry. `usb-gui-lab` is an internal profile name,

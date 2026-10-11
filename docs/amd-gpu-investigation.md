@@ -271,6 +271,6 @@ Record findings and next actions at each gate. Distinguish a confirmed defect
 from an untested hypothesis; do not change several subsystems in response to
 a black screen without logs locating the failure.
 
-See [the GUI lab runbook](usb-gui-lab.md) for profile details and
+See [the GUI lab runbook](https://github.com/airlock-org/airlock/blob/main/docs/history/usb-gui-lab.md) for profile details and
 [Qubes device-handling security](https://doc.qubes-os.org/en/latest/user/security-in-qubes/device-handling-security.html)
 for the reset trust model to review alongside the pinned implementation.
