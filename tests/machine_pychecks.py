@@ -1769,7 +1769,6 @@ def check_personal_domains(repo_root: Path, log_dir: Path) -> None:
     ).read_text(encoding="utf-8")
 
     assert "core-apps.enable = true" in home_guest
-    assert "pkgs.firefox" not in home_guest
     assert '"x-scheme-handler/https" = "org.gnome.Epiphany.desktop"' in home_guest
     assert "homeApplicationLauncher" not in sys_gui_guest
     assert "homeApplicationDesktop" not in sys_gui_guest
