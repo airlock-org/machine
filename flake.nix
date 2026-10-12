@@ -375,6 +375,7 @@
           devices.pci = [ ];
           modules = [
             usbSysGuiLoginModule
+            ./lifecycle/image/hardware/thinkpad-t14-gen3-amd-sys-gui.nix
             ./lifecycle/misc/modules/sys-gui/desktop/selector.nix
           ] ++ lib.optionals (desktop == "hyprland") [
             ./lifecycle/misc/modules/sys-gui/desktop/hyprland/hidpi-amd-lab.nix
