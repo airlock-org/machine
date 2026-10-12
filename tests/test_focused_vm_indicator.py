@@ -30,9 +30,18 @@ def test_invalid_names_are_unknown(name):
     assert IDENTITY.resolve({**PROPERTIES, "_QUBES_VMNAME": name}, IDENTITY.GUID) == IDENTITY.UNKNOWN
 
 
-@pytest.mark.parametrize("label", [None, 0, 9, True, "6"])
+@pytest.mark.parametrize("label", [None, 0, 256, True, "6"])
 def test_invalid_label_is_unknown(label):
     assert IDENTITY.resolve({**PROPERTIES, "_QUBES_LABEL": label}, IDENTITY.GUID) == IDENTITY.UNKNOWN
+
+
+@pytest.mark.parametrize("label", [9, 255])
+def test_custom_label_preserves_daemon_provenance(label):
+    properties = {**PROPERTIES, "_QUBES_LABEL": label, "_QUBES_LABEL_COLOR": 0x6B7A3D}
+    assert IDENTITY.resolve(properties, IDENTITY.GUID) == {
+        "kind": "vm", "name": "usr-home", "color": "#6b7a3d",
+    }
+    assert IDENTITY.resolve(properties, "/nix/store/local/bin/xterm") == IDENTITY.UNKNOWN
 
 
 @pytest.mark.parametrize("color", [None, -1, 0x1000000, True, "red; width:10000px"])
