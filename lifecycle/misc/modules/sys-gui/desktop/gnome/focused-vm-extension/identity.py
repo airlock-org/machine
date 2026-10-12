@@ -27,7 +27,10 @@ def resolve(properties, peer_executable):
     color = properties.get("_QUBES_LABEL_COLOR")
     if not isinstance(name, str) or not NAME.fullmatch(name):
         return UNKNOWN.copy()
-    if type(label) is not int or not 1 <= label <= 8:
+    # Qubes custom labels follow the eight defaults. The trusted daemon
+    # supplies this property as one byte; its executable, not the label's
+    # position in the default palette, establishes window provenance.
+    if type(label) is not int or not 1 <= label <= 0xFF:
         return UNKNOWN.copy()
     # A readable, verified name is still useful if its colour is malformed.
     color = f"#{color:06x}" if type(color) is int and 0 <= color <= 0xFFFFFF else None
