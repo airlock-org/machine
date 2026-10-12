@@ -28,16 +28,32 @@ let
     log="$(${pkgs.coreutils}/bin/mktemp --tmpdir="''${XDG_RUNTIME_DIR:-/tmp}" airlock-app-launch.XXXXXX)"
     trap '${pkgs.coreutils}/bin/rm -f "$log"' EXIT
 
-    readiness_service="$(${appmenusPython}/bin/python3 -c '
+    # Only readiness is retried: a control-service restart during boot must
+    # not reject the user's launch, and StartApp must never be submitted twice.
+    readiness_deadline=$((SECONDS + 90))
+    ready_status=124
+    while [ "$SECONDS" -lt "$readiness_deadline" ]; do
+      remaining=$((readiness_deadline - SECONDS))
+      if readiness_service="$(${pkgs.coreutils}/bin/timeout --foreground \
+        --signal=TERM --kill-after=5s "$remaining" ${appmenusPython}/bin/python3 -c '
 import qubesadmin, sys
 vm = qubesadmin.Qubes().domains[sys.argv[1]]
 print("airlock.AppSessionReady" if vm.features.get("supported-rpc.airlock.AppSessionReady", False) else "qubes.WaitForSession")
-' "$target")" || exit 1
-    ${pkgs.coreutils}/bin/timeout --foreground --signal=TERM --kill-after=5s 90s \
-      ${pkgs.python3.pkgs.qubes-core-admin-client}/bin/qvm-run \
-      --auto --gui --pass-io --service "$target" "$readiness_service" \
-      >"$log" 2>&1
-    ready_status=$?
+' "$target" 2>>"$log")"; then
+        remaining=$((readiness_deadline - SECONDS))
+        [ "$remaining" -gt 0 ] || break
+        ${pkgs.coreutils}/bin/timeout --foreground --signal=TERM --kill-after=5s "$remaining" \
+          ${pkgs.python3.pkgs.qubes-core-admin-client}/bin/qvm-run \
+          --auto --gui --pass-io --service "$target" "$readiness_service" \
+          >>"$log" 2>&1
+        ready_status=$?
+        [ "$ready_status" -ne 0 ] || break
+      fi
+      ready_status=124
+      printf 'Session readiness interrupted; retrying within the launch deadline.\n' >>"$log"
+      [ "$((readiness_deadline - SECONDS))" -gt 2 ] || break
+      ${pkgs.coreutils}/bin/sleep 2
+    done
     if [ "$ready_status" -ne 0 ]; then
       ${pkgs.systemd}/bin/systemd-cat -t airlock-app-launch <"$log" || true
       if [ "$ready_status" -eq 124 ]; then
