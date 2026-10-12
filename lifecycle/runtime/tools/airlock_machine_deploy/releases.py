@@ -133,6 +133,9 @@ class ReleaseManager:
             )
         blockers = []
         waived_blockers = []
+        from .generation_retention import GenerationRetention
+        if GenerationRetention(self.machine).protect_release(release, manifest, now):
+            blockers.append("machine generation retention: newest two, weekly anchor or aging successor")
         selected = self.machine.pointer() or {}
         for key in ("release", "previous"):
             if selected.get(key) == str(release):
@@ -258,70 +261,77 @@ class ReleaseManager:
                 "release pruning confirmation must match the full release path"
             )
         with self.machine.locked():
-            path = self.prune_record_path(release)
-            record = self.read_prune_record(path) if path.exists() else None
-            if record and record["status"] == "pruned":
-                return record
-            preview = self._prune_plan(
-                release, manifest=record["manifest"] if record else None,
-                early_purge_trash=early_purge_trash,
-            )
-            if preview["blockers"]:
-                raise DeploymentError(
-                    "cannot prune release: " + "; ".join(preview["blockers"])
-                )
-            if record is None:
-                self.require_no_pruning()
-                record = dict(preview, status="pruning", started_at=time.time())
-                atomic_json(path, record)
-            # Verify exact targets on retry. Keep journalled targets even if a
-            # previous attempt already removed some profile links or roots.
-            for name, target in record["roots"].items():
-                root = self.machine.state / "roots" / name
-                if root.is_symlink() and str(root.resolve()) != target:
-                    raise DeploymentError(
-                        "release root changed during pruning: " + name
-                    )
-                if root.exists() and not root.is_symlink():
-                    raise DeploymentError("release root is not a symlink: " + name)
-            generations = []
-            for number in record["profile_generations"]:
-                link = self.machine.profiles / f"system-{number}-link"
-                if link.is_symlink():
-                    if str(link.resolve()) != record["host"]:
-                        raise DeploymentError(
-                            "Nix profile generation changed during pruning"
-                        )
-                    generations.append(str(number))
-            if generations:
-                self.machine.command(
-                    "nix-env",
-                    "-p",
-                    str(self.machine.profiles / "system"),
-                    "--delete-generations",
-                    *generations,
-                )
-            # Refresh the boot menu even on retry after profile deletion.
-            selected = self.machine.pointer()
-            if selected and record["profile_generations"]:
-                host = load_release(selected["release"])[0]["host"]
-                self.machine.command("airlock-host-store", "install-boot", host, timeout=600)
-                self.machine.command("airlock-host-store", "seal-boot")
-            for name in record["roots"]:
-                (self.machine.state / "roots" / name).unlink(missing_ok=True)
-            roots = self.machine.state / "roots"
-            if roots.exists():
-                fd = os.open(roots, os.O_RDONLY | os.O_DIRECTORY)
-                try:
-                    os.fsync(fd)
-                finally:
-                    os.close(fd)
-            if not any(
-                other != release and not self.prune_record_path(other).exists()
-                and load_release(other)[0]["host"] == record["host"]
-                for other in self.release_inventory()
-            ):
-                self.machine.command("airlock-host-store", "retire", record["host"])
-            record.update(status="pruned", finished_at=time.time())
-            atomic_json(path, record)
+            return self._prune_release_locked(release, confirmation, early_purge_trash)
+
+    def _prune_release_locked(self, release, confirmation, early_purge_trash=()):
+        """Existing journalled pruner; caller already holds the deployment lock."""
+        release = str(Path(release).resolve())
+        if confirmation != release:
+            raise DeploymentError("release pruning confirmation must match the full release path")
+        path = self.prune_record_path(release)
+        record = self.read_prune_record(path) if path.exists() else None
+        if record and record["status"] == "pruned":
             return record
+        preview = self._prune_plan(
+            release, manifest=record["manifest"] if record else None,
+            early_purge_trash=early_purge_trash,
+        )
+        if preview["blockers"]:
+            raise DeploymentError(
+                "cannot prune release: " + "; ".join(preview["blockers"])
+            )
+        if record is None:
+            self.require_no_pruning()
+            record = dict(preview, status="pruning", started_at=time.time())
+            atomic_json(path, record)
+        # Verify exact targets on retry. Keep journalled targets even if a
+        # previous attempt already removed some profile links or roots.
+        for name, target in record["roots"].items():
+            root = self.machine.state / "roots" / name
+            if root.is_symlink() and str(root.resolve()) != target:
+                raise DeploymentError(
+                    "release root changed during pruning: " + name
+                )
+            if root.exists() and not root.is_symlink():
+                raise DeploymentError("release root is not a symlink: " + name)
+        generations = []
+        for number in record["profile_generations"]:
+            link = self.machine.profiles / f"system-{number}-link"
+            if link.is_symlink():
+                if str(link.resolve()) != record["host"]:
+                    raise DeploymentError(
+                        "Nix profile generation changed during pruning"
+                    )
+                generations.append(str(number))
+        if generations:
+            self.machine.command(
+                "nix-env",
+                "-p",
+                str(self.machine.profiles / "system"),
+                "--delete-generations",
+                *generations,
+            )
+        # Refresh the boot menu even on retry after profile deletion.
+        selected = self.machine.pointer()
+        if selected and record["profile_generations"]:
+            host = load_release(selected["release"])[0]["host"]
+            self.machine.command("airlock-host-store", "install-boot", host, timeout=600)
+            self.machine.command("airlock-host-store", "seal-boot")
+        for name in record["roots"]:
+            (self.machine.state / "roots" / name).unlink(missing_ok=True)
+        roots = self.machine.state / "roots"
+        if roots.exists():
+            fd = os.open(roots, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(fd)
+            finally:
+                os.close(fd)
+        if not any(
+            other != release and not self.prune_record_path(other).exists()
+            and load_release(other)[0]["host"] == record["host"]
+            for other in self.release_inventory()
+        ):
+            self.machine.command("airlock-host-store", "retire", record["host"])
+        record.update(status="pruned", finished_at=time.time())
+        atomic_json(path, record)
+        return record

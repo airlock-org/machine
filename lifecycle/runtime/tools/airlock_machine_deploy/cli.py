@@ -41,6 +41,8 @@ def main(argv=None):
         "rollback",
         "trash-list",
         "release-list",
+        "generation-retention-plan",
+        "generation-maintenance",
     ):
         sub.add_parser(action)
     purge = sub.add_parser("trash-purge")
@@ -141,6 +143,13 @@ def main(argv=None):
             )
         elif args.action == "release-list":
             result = coordinator.releases.list_releases()
+        elif args.action == "generation-retention-plan":
+            from .generation_retention import GenerationRetention
+            with coordinator.locked():
+                result = GenerationRetention(coordinator).plan()
+        elif args.action == "generation-maintenance":
+            from .generation_retention import GenerationRetention
+            result = GenerationRetention(coordinator).run()
         elif args.action == "release-prune":
             result = coordinator.releases.prune_release(
                 args.release, args.confirm,

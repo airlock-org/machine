@@ -778,6 +778,8 @@ class Coordinator:
                 record.update(phase=value, **extra)
                 atomic_json(directory / "status.json", record)
                 atomic_json(latest, record)
+                if value == "complete":
+                    self.record_generation_verification(record)
                 if diagnostics:
                     diagnostics.event("phase", phase=value)
                 print(
@@ -940,6 +942,23 @@ class Coordinator:
         )
         return result
 
+    def record_generation_verification(self, record):
+        """Persist success before queuing independent maintenance; never prune here."""
+        from .generation_retention import GenerationRetention
+        if record["phase"] == "complete":
+            record.setdefault("generation_verified_at", time.time())
+            record["verified_at"] = time.time()
+            directory = self.state / "transactions" / record["id"]
+            atomic_json(directory / "status.json", record)
+            atomic_json(self.state / "latest.json", record)
+            try:
+                GenerationRetention(self).record_verified(record)
+                record.pop("maintenance_error", None)
+            except (OSError, ValueError, DeploymentError) as error:
+                record["maintenance_error"] = str(error)
+            atomic_json(directory / "status.json", record)
+            atomic_json(self.state / "latest.json", record)
+
     def verify_selected(self) -> DeploymentRecord:
         with self.locked():
             selected = self.pointer()
@@ -965,6 +984,7 @@ class Coordinator:
             record["verified_at"] = time.time()
             atomic_json(directory / "status.json", record)
             atomic_json(self.state / "latest.json", record)
+            self.record_generation_verification(record)
             return record
 
     def wait_boot_guest(self, name, expected, timeout=180):
@@ -1046,6 +1066,13 @@ class Coordinator:
                     name, topology["domains"][name]["backend"]["system"]["source"]
                 )
             observed = self.verify(topology, set(starts) | set(require_running))
+            if selected:
+                manifest, _ = load_release(selected["release"])
+                current_host = str(Path("/run/current-system").resolve())
+                if current_host == manifest["host"]:
+                    status.update(phase="complete", observed=observed,
+                                  host_running=current_host, host_selected=manifest["host"])
+                    self.record_generation_verification(status)
             return {
                 "autostart": starts,
                 "started": started,

@@ -94,6 +94,11 @@ in
       type = lib.types.str;
       default = "default";
     };
+    generationRetention.enable = lib.mkOption {
+      type = lib.types.bool;
+      default = true;
+      description = "Retain the newest two verified machine generations plus a rolling weekly anchor and aging successor; queue serialized pool GC after successful verification.";
+    };
     retireDomains = lib.mkOption {
       type = lib.types.listOf lib.types.str;
       default = [ ];
@@ -158,7 +163,39 @@ in
       ];
     }];
     environment.etc."airlock/machine-profile".text = cfg.profile + "\n";
+    environment.etc."airlock/generation-retention.json".text = builtins.toJSON {
+      enabled = cfg.generationRetention.enable;
+      newest = 2;
+      weeklyDays = 7;
+      keepAgingSuccessor = true;
+    };
+    systemd.paths.airlock-generation-maintenance = lib.mkIf cfg.generationRetention.enable {
+      wantedBy = [ "multi-user.target" ];
+      pathConfig = {
+        PathExists = "/var/lib/airlock/machine/maintenance/pending.json";
+        Unit = "airlock-generation-maintenance.service";
+      };
+    };
     systemd.services = lib.mkMerge [
+      (lib.mkIf cfg.generationRetention.enable {
+        airlock-generation-maintenance = {
+          description = "Prune obsolete verified machine generations and collect unused pool artifacts";
+          after = [ "airlock-machine-autostart.service" ];
+          restartIfChanged = false;
+          stopIfChanged = false;
+          unitConfig.StartLimitIntervalSec = 0;
+          serviceConfig = {
+            Type = "oneshot";
+            ExecStart = "${engine}/bin/airlock-machine-deploy generation-maintenance";
+            TimeoutStartSec = "infinity";
+            Restart = "on-failure";
+            RestartSec = "60s";
+            Nice = 10;
+            IOSchedulingClass = "best-effort";
+            IOSchedulingPriority = 7;
+          };
+        };
+      })
       (lib.mkIf config.airlock.qubes.setupConfigOnBoot.enable {
         airlock-machine-autostart = {
           description = "Start declared autostart VMs after guarded bootstrap";

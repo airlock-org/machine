@@ -68,6 +68,8 @@ class DeploymentRecord(TypedDict):
     failed_phase: NotRequired[DeploymentPhase]
     trash_active: NotRequired[list[str]]
     verified_at: NotRequired[float]
+    generation_verified_at: NotRequired[float]
+    maintenance_error: NotRequired[str]
 
 
 class Selection(TypedDict):
