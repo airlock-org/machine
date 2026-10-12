@@ -5,6 +5,7 @@
   fetchurl,
   autoPatchelfHook,
   alsa-lib,
+  ncurses,
 }:
 stdenvNoCC.mkDerivation (finalAttrs: {
   pname = "codex";
@@ -15,7 +16,7 @@ stdenvNoCC.mkDerivation (finalAttrs: {
   };
   sourceRoot = ".";
   nativeBuildInputs = [ autoPatchelfHook ];
-  buildInputs = [ stdenv.cc.cc.lib alsa-lib ];
+  buildInputs = [ stdenv.cc.cc.lib alsa-lib ncurses ];
   dontBuild = true;
   dontStrip = true;
   installPhase = ''
@@ -37,6 +38,9 @@ stdenvNoCC.mkDerivation (finalAttrs: {
     test -x "$out/bin/codex-code-mode-host"
     test -x "$out/codex-path/rg"
     test -x "$out/codex-resources/bwrap"
+    "$out/codex-resources/zsh/bin/zsh" --version
+    "$out/codex-path/rg" --version > /dev/null
+    "$out/codex-resources/bwrap" --version
     runHook postInstallCheck
   '';
   meta = {
