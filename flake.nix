@@ -134,6 +134,7 @@
           overlays = [
             nixos-qubes.overlays.default
             airlockQubesGuiWindowStateOverlay
+            (import ./lifecycle/misc/overlays/codex-release.nix)
             airlockImageBuildToolsOverlay
           ];
           config.allowUnfreePredicate =

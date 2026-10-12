@@ -15,6 +15,14 @@ Nix. The checkout, login credentials, session history, and Python dependency
 cache live on sys-agent's private volume and survive root-generation updates.
 The existing upstream remote is not needed to commit and deploy locally.
 
+On x86_64 Linux, Codex is pinned to the complete upstream `0.162.1` release
+package by `lifecycle/misc/overlays/codex-release.nix`. Its CLI, code-mode host,
+sandbox tools and other package-relative runtimes are installed together;
+glibc-linked runtime helpers are adapted to Nix during the build. Update the
+version and archive hash in `lifecycle/runtime/tools/pkgs/codex-release/default.nix`,
+then commit, deploy and verify `codex --version` in the running sys-agent.
+An npm or home-directory replacement would not update this managed package.
+
 Sys-agent uses PVH with no assigned PCI devices. Sys-net owns the physical
 network hardware; sys-agent reaches the internet through sys-firewall.
 

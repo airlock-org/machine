@@ -40,6 +40,7 @@ let
     libvirt105Overlay
     (import "${nixosQubesSource}/nix/overlay.nix")
     (import "${airlockSupport}/lifecycle/misc/overlays/qubes-gui-window-state.nix")
+    (import "${airlockSupport}/lifecycle/misc/overlays/codex-release.nix")
     (import "${airlockSupport}/lifecycle/misc/overlays/qubes-manager-without-template-tools.nix")
     (final: prev: {
       # Mutter embeds this path; programs.xwayland.package alone is not enough.
