@@ -19,14 +19,17 @@ def _command_available(command: str) -> bool:
 
 
 def _command_output(command: list[str]) -> str:
-    result = subprocess.run(
-        command,
-        check=False,
-        encoding="utf-8",
-        errors="replace",
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
-    )
+    try:
+        result = subprocess.run(
+            command,
+            check=False,
+            encoding="utf-8",
+            errors="replace",
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        )
+    except FileNotFoundError:
+        return ""
     return result.stdout.strip()
 
 
@@ -5595,6 +5598,8 @@ def check_config_apply_domain_references(repo_root: Path, log_dir: Path) -> None
         _setup_fake_command_dir(
             bin_dir,
             {
+                "nix": "#!/usr/bin/env bash\necho unexpected Nix evaluation >&2\nexit 99\n",
+                "nix-env": "#!/usr/bin/env bash\necho unexpected profile change >&2\nexit 99\n",
                 "airlock-config-archive-candidate": f"""
                     #!/usr/bin/env bash
                     set -euo pipefail
@@ -5963,6 +5968,8 @@ def check_config_apply_nix_domain_materialization(
     _setup_fake_command_dir(
         bin_dir,
         {
+            "nix": "#!/usr/bin/env bash\necho unexpected Nix evaluation >&2\nexit 99\n",
+            "nix-env": "#!/usr/bin/env bash\necho unexpected profile change >&2\nexit 99\n",
             "airlock-config-archive-candidate": f"""
                 #!/usr/bin/env bash
                 set -euo pipefail
