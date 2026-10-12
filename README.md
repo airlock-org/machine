@@ -45,7 +45,7 @@ hardware module describes a ThinkPad T14 Gen 3 AMD; another machine can replace
 ## Runtime and evidence
 
 The personal VM [usr-home](docs/usr-home.md) owns normal applications and files.
-[sys-agent](docs/sys-agent.md) is the development/management workspace, and
+[usr-assistant](docs/usr-assistant.md) is the development/management workspace, and
 sys-ctrl prepares committed deployment candidates. Tailscale enrollment remains
 interactive, with persistent private state. Codex remains installed as an
 application; credential importing and vault management are removed.

@@ -296,7 +296,7 @@ under `.airlock-logs/prepared-store-reproducibility/`; a rebuilt/flashed USB
 boot remains the hardware acceptance check.
 
 The 2026-09-16 USB failure exposed a gap in that earlier test: `--mtime=@1`
-does not remove POSIX tar's PAX `atime` and `ctime` fields. The failed sys-agent
+does not remove POSIX tar's PAX `atime` and `ctime` fields. The failed usr-assistant
 fragment contained real host timestamps, and the local pool failed the same
 metadata checksum as the USB. The separate validation receipt was still cached
 as passed. The archive normalization and in-image-build check above address

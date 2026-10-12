@@ -33,7 +33,7 @@ or the local parent checkout's `docs/lab-configuration.md`.
 Commit each coherent machine change, then update the parent's submodule pointer.
 Do not keep editable copies of component helpers or tests in the parent.
 Physical deployment from the external computer uses the parent runbook;
-installed sys-agent development uses [docs/sys-agent.md](docs/sys-agent.md).
+installed usr-assistant development uses [docs/usr-assistant.md](docs/usr-assistant.md).
 The current request only prepares source locally. A build is not a live deployment.
 Record and remove any diagnostic mutation before claiming generation verification.
 Use guarded Airlock GC targets only; never collect the host store or guest builder.

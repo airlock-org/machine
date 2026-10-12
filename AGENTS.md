@@ -9,8 +9,8 @@
 - From the external development computer, physical deployment orchestration
   lives in the parent `airlock` repository. Commit machine changes here first,
   then update and commit the `airlock-machine/` submodule pointer there.
-  From the installed sys-agent workspace, read `docs/sys-agent.md` and use
-  `airlock-sys-agent-machine-deploy` directly from this clean committed checkout;
+  From the installed usr-assistant workspace, read `docs/usr-assistant.md` and use
+  `airlock-usr-assistant-machine-deploy` directly from this clean committed checkout;
   a parent checkout is not required. A successful build is not a live deployment.
 - Keep development observation separate from production behavior. Observation
   tools should report state without expanding Qubes control authority.
@@ -26,4 +26,4 @@
 - Long Airlock image/template/VM iterations can grow the custom store quickly.
   Run `make gc-auto` periodically and after large failed build loops. Use only
   the guarded Airlock GC targets on the external development computer; do not
-  garbage collect the host `/nix/store` or sys-agent's pool-backed builder.
+  garbage collect the host `/nix/store` or usr-assistant's pool-backed builder.

@@ -66,10 +66,10 @@ let
 in
 {
   options.airlock.poolAdmission = {
-    enable = lib.mkEnableOption "sys-agent guest artifact admission into the shared pool";
+    enable = lib.mkEnableOption "usr-assistant guest artifact admission into the shared pool";
     caller = lib.mkOption {
       type = lib.types.str;
-      default = "sys-agent";
+      default = "usr-assistant";
       description = "Qubes domain allowed to submit guest pool artifacts.";
     };
     targets = lib.mkOption {

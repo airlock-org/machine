@@ -4,7 +4,7 @@
 
 Unchanged application VMs with the trusted feature `airlock-gui-reconnect=1`
 can remain running while their existing assigned sys-gui restarts. The default
-sys-agent and usr-home declarations enable this after installing the patched
+usr-assistant and usr-home declarations enable this after installing the patched
 GUI agent and Xorg modules. Networking, audio, storage and device dependencies
 retain the ordinary restart policy; changing a guest or its GUI assignment also
 requires its restart.
@@ -94,7 +94,7 @@ diagnostics are in `journalctl -b -u display-manager` inside `sys-gui`.
 In GNOME, forwarded applications supply their own title bars. The trusted Qubes
 GUI daemon requests no additional window-manager decorations. Forwarded windows
 from every application VM have a two-pixel outline in their Qubes label colour
-(for example, red for `sys-agent`). The daemon draws this on the outer pixels
+(for example, red for `usr-assistant`). The daemon draws this on the outer pixels
 of the forwarded window using the VM identity supplied by Qubes, independently
 of application names or classes. Docked tray icons have no added outline.
 This includes personal VMs such as `usr-home`, using the same thickness for
@@ -185,7 +185,7 @@ in place. This POC decorates GNOME 50's existing preview actors using small hook
 disabling the extension removes decorations and restores actor input properties.
 
 Normally only workspaces containing application windows appear. No VM has a reserved
-workspace: sys-gui has no group, and sys-agent appears only when its apps open.
+workspace: sys-gui has no group, and usr-assistant appears only when its apps open.
 Minimized windows count; background services do not. Closing the last window in
 a workspace removes it. Closing a VM's last window removes its group. GNOME keeps
 one underlying blank workspace when all apps close, with no VM bar entries.
@@ -268,7 +268,7 @@ five-minute periodic icon check.
 
 The shared `app-gui-guest.nix` configuration exposes Hicolor and Adwaita icon
 assets in each application VM's active profile. Applications resolve their own
-toolbar and action icons there, including in headless guests such as sys-agent;
+toolbar and action icons there, including in headless guests such as usr-assistant;
 these assets do not require a desktop session or per-application overrides.
 
 `airlock.sysGuiGuest.applicationMenus.enable` controls discovery.

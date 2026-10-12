@@ -1,7 +1,7 @@
 { flake }:
 let
   pkgs = import flake.inputs.nixpkgs { system = "x86_64-linux"; };
-  guest = flake.nixosConfigurations.airlock-domain-sys-agent.config;
+  guest = flake.nixosConfigurations.airlock-domain-usr-assistant.config;
   uplink = guest.systemd.services."qubes-network-uplink@";
   # Dummy interfaces exercise real udev/systemd device events without Xen.
   # Only the hardware matcher and setup-ip payload are substituted. Keep the

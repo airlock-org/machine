@@ -178,12 +178,12 @@ def test_host_and_controller_publication_reuse_verified_indexes(index_store, mon
     image = dict(manifest['store'], canonical_metadata_image=current['metadata_image'])
     files = extract(image, 'controller')
     assert (files / Path(a).name / 'payload').read_bytes() == b'previous'
-    agent = host.refresh_builder(root, 'sys-agent', registration([a, b]), seed_role='sys-ctrl')
-    assert agent['domain'] == 'sys-agent-builder'
-    assert agent['schema'] == 'airlock.sys-agent-builder.v1'
+    agent = host.refresh_builder(root, 'usr-assistant', registration([a, b]), seed_role='sys-ctrl')
+    assert agent['domain'] == 'usr-assistant-builder'
+    assert agent['schema'] == 'airlock.usr-assistant-builder.v1'
     assert 'predecessors' not in agent or not agent['predecessors']
     assert core.read_json(root / 'builders/sys-ctrl.json') == current
-    assert host.refresh_builder(root, 'sys-agent', registration([a, b]), seed_role='sys-ctrl') == agent
+    assert host.refresh_builder(root, 'usr-assistant', registration([a, b]), seed_role='sys-ctrl') == agent
     assert (files / Path(b).name / 'payload').read_bytes() == b'next'
     assert builder.registration_paths((files / '.airlock-builder/registration').read_text()) == {a, b}
 

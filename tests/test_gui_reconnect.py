@@ -24,7 +24,7 @@ def topology():
             "backend": {"type": "nix-closure", "state": {},
                         "store": {"mode": "shared-closure"}},
         }
-    return {"domains": {"sys-gui": domain(), "sys-agent": domain("sys-gui"),
+    return {"domains": {"sys-gui": domain(), "usr-assistant": domain("sys-gui"),
                         "usr-home": domain("sys-gui")}}
 
 
@@ -38,14 +38,14 @@ def test_gui_update_preserves_unchanged_capable_clients():
     old = topology()
     result = planning.plan(old, changed_gui(old), set(old["domains"]))
     assert result["stop"] == ["sys-gui"]
-    assert result["gui_reconnect"] == {"sys-gui": ["sys-agent", "usr-home"]}
+    assert result["gui_reconnect"] == {"sys-gui": ["usr-assistant", "usr-home"]}
     assert result["start"][0] == "sys-gui"
 
 
 @pytest.mark.parametrize("reason", ["unsupported", "changed", "network", "audio", "device"])
 def test_other_dependencies_still_restart(reason):
     old = topology()
-    client = old["domains"]["sys-agent"]
+    client = old["domains"]["usr-assistant"]
     if reason == "unsupported":
         client["features"]["airlock-gui-reconnect"] = "0"
     elif reason == "network":
@@ -56,19 +56,19 @@ def test_other_dependencies_still_restart(reason):
         client["devices"] = {"pci": [{"backend": "sys-gui"}]}
     new = changed_gui(old)
     if reason == "changed":
-        new["domains"]["sys-agent"]["prefs"]["vcpus"] = 4
+        new["domains"]["usr-assistant"]["prefs"]["vcpus"] = 4
     result = planning.plan(old, new, set(old["domains"]))
-    assert "sys-agent" in result["stop"]
+    assert "usr-assistant" in result["stop"]
     assert result["gui_reconnect"] == {"sys-gui": ["usr-home"]}
 
 
 def test_network_provider_update_still_stops_clients():
     old = topology()
-    old["domains"]["usr-home"]["netvm"] = "sys-agent"
+    old["domains"]["usr-home"]["netvm"] = "usr-assistant"
     new = deepcopy(old)
-    new["domains"]["sys-agent"]["backend"]["revision"] = "new"
+    new["domains"]["usr-assistant"]["backend"]["revision"] = "new"
     result = planning.plan(old, new, set(old["domains"]))
-    assert set(result["stop"]) == {"sys-agent", "usr-home"}
+    assert set(result["stop"]) == {"usr-assistant", "usr-home"}
     assert "gui_reconnect" not in result
 
 
@@ -78,7 +78,7 @@ def test_changed_gui_assignment_requires_client_restart():
     new["domains"]["usr-home"]["prefs"]["guivm"] = None
     result = planning.plan(old, new, set(old["domains"]))
     assert "usr-home" in result["stop"]
-    assert result["gui_reconnect"] == {"sys-gui": ["sys-agent"]}
+    assert result["gui_reconnect"] == {"sys-gui": ["usr-assistant"]}
 
 
 class Commands:
@@ -86,7 +86,7 @@ class Commands:
         self.calls = []
         self.boot = "same-boot"
         self.status = "connected 99"
-        self.clients = {"sys-agent": "sys-gui"}
+        self.clients = {"usr-assistant": "sys-gui"}
 
     def __call__(self, *args, **kwargs):
         self.calls.append(args)
@@ -109,11 +109,11 @@ def checker(commands):
 def test_planned_gui_shutdown_preserves_clients_and_uses_graceful_force():
     commands = Commands()
     reconnect = checker(commands)
-    before = reconnect.snapshot({"sys-gui": ["sys-agent"]})
-    reconnect.shutdown("sys-gui", ["sys-agent"])
+    before = reconnect.snapshot({"sys-gui": ["usr-assistant"]})
+    reconnect.shutdown("sys-gui", ["usr-assistant"])
     after = reconnect.verify(before)
-    assert after["sys-agent"]["boot_id"] == "same-boot"
-    assert after["sys-agent"]["gui_xid"] == "99"
+    assert after["usr-assistant"]["boot_id"] == "same-boot"
+    assert after["usr-assistant"]["gui_xid"] == "99"
     assert commands.calls.count(("qvm-shutdown", "--force", "--wait", "--timeout",
                                  "120", "sys-gui")) == 1
     assert not any(call[0] == "qvm-kill" for call in commands.calls)
@@ -123,14 +123,14 @@ def test_unexpected_attached_vm_blocks_forced_shutdown():
     commands = Commands()
     commands.clients["other"] = "sys-gui"
     with pytest.raises(gui.DeploymentError, match="unexpected running GUI client other"):
-        checker(commands).shutdown("sys-gui", ["sys-agent"])
+        checker(commands).shutdown("sys-gui", ["usr-assistant"])
     assert not any(call[0] == "qvm-shutdown" for call in commands.calls)
 
 
 def test_restarted_guest_is_not_preservation_success():
     commands = Commands()
     reconnect = checker(commands)
-    before = reconnect.snapshot({"sys-gui": ["sys-agent"]})
+    before = reconnect.snapshot({"sys-gui": ["usr-assistant"]})
     commands.boot = "different-boot"
     with pytest.raises(gui.DeploymentError, match="guest restarted"):
         reconnect.verify(before)
@@ -139,7 +139,7 @@ def test_restarted_guest_is_not_preservation_success():
 def test_stale_display_connection_times_out_without_restarting_guest(monkeypatch):
     commands = Commands()
     reconnect = checker(commands)
-    before = reconnect.snapshot({"sys-gui": ["sys-agent"]})
+    before = reconnect.snapshot({"sys-gui": ["usr-assistant"]})
     commands.status = "connected 42"
     clock = [0.0]
     monkeypatch.setattr(gui.time, "monotonic", lambda: clock[0])
@@ -152,10 +152,10 @@ def test_stale_display_connection_times_out_without_restarting_guest(monkeypatch
 def test_resume_cannot_hide_an_intervening_guest_restart():
     commands = Commands()
     reconnect = checker(commands)
-    before = reconnect.snapshot({"sys-gui": ["sys-agent"]})
+    before = reconnect.snapshot({"sys-gui": ["usr-assistant"]})
     commands.boot = "different-boot"
     with pytest.raises(gui.DeploymentError, match="interrupted GUI update"):
-        reconnect.snapshot({"sys-gui": ["sys-agent"]}, before)
+        reconnect.snapshot({"sys-gui": ["usr-assistant"]}, before)
 
 
 @pytest.mark.skipif(shutil.which("cc") is None, reason="C compiler unavailable")

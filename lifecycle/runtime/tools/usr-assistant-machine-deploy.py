@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build and deploy a committed whole-machine release directly from sys-agent."""
+"""Build and deploy a committed whole-machine release directly from usr-assistant."""
 
 import argparse
 import base64
@@ -38,7 +38,7 @@ def atomic_json(path, value):
 
 
 def physical_store_path(path):
-    """Resolve a canonical store path through sys-agent's private overlay."""
+    """Resolve a canonical store path through usr-assistant's private overlay."""
     path = Path(path)
     try:
         relative = path.relative_to("/nix/store")
@@ -266,7 +266,7 @@ def transfer(release, session, state=DEFAULT_STATE):
         stdin=export.stdout,
     )
     export.stdout.close()
-    fetch = shlex.join(["qrexec-client", "-d", "sys-agent", "user:cat " + str(fifo)])
+    fetch = shlex.join(["qrexec-client", "-d", "usr-assistant", "user:cat " + str(fifo)])
     print(f"Streaming {len(missing)} missing Nix paths to dom0…", flush=True)
     try:
         session.run(
@@ -458,7 +458,7 @@ def main(argv=None):
             )
         return 0
     except (RuntimeError, OSError, subprocess.SubprocessError, ValueError) as exc:
-        print(f"airlock-sys-agent-machine-deploy: {exc}", file=sys.stderr)
+        print(f"airlock-usr-assistant-machine-deploy: {exc}", file=sys.stderr)
         return 1
     finally:
         if session:

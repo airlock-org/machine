@@ -44,7 +44,7 @@ def javascript(tmp_path):
             "import assert from 'node:assert/strict';\n" + imports
             + f"const HOME={json.dumps(HOME)},AGENT={json.dumps(AGENT)};\n"
             + "const inventory=new Map([[HOME,{name:'usr-home',color:'#3465a4',running:true}],"
-            "[AGENT,{name:'sys-agent',color:'#cc0000',running:false}]]);\n"
+            "[AGENT,{name:'usr-assistant',color:'#cc0000',running:false}]]);\n"
         )
         if shell:
             header += MOCKS + f"\nconst {{default:Controller}}=await import({json.dumps(controller.as_uri())});\n"
@@ -62,14 +62,14 @@ identities.set(a,[{kind:'vm',name:'usr-home',color:'#ffffff'}]);
 const groups=groupOccupiedWorkspaces([], [a,b], identities, inventory);
 assert.equal(groups.length,1);assert.equal(groups[0].key,HOME);
 assert.equal(groups[0].color,'#3465a4');assert.deepEqual(groups[0].slots,[a]);
-assert.equal(groups.some(g=>g.name==='sys-agent'),false);
+assert.equal(groups.some(g=>g.name==='usr-assistant'),false);
 """)
 
 
 def test_groups_keep_order_and_drop_closed_workspaces(javascript):
     javascript("""
 const a={},b={},c={},d={};
-const home={kind:'vm',name:'usr-home'},agent={kind:'vm',name:'sys-agent'};
+const home={kind:'vm',name:'usr-home'},agent={kind:'vm',name:'usr-assistant'};
 const identities=new Map([[a,[home]],[b,[agent]],[c,[home]],[d,[agent]]]);
 let groups=groupOccupiedWorkspaces([], [a,b,c,d], identities, inventory);
 assert.deepEqual(groups.map(g=>g.slots),[[a,c],[b,d]]);
@@ -85,9 +85,9 @@ assert.deepEqual(groups.map(g=>g.key),[AGENT]);
 def test_mixed_and_unknown_windows_use_neutral_identity(javascript):
     javascript("""
 const description=describeWorkspace([
- {kind:'vm',name:'usr-home'}, {kind:'vm',name:'sys-agent'},LOCAL],inventory);
+ {kind:'vm',name:'usr-home'}, {kind:'vm',name:'usr-assistant'},LOCAL],inventory);
 assert.equal(description.kind,'mixed');assert.equal(description.color,'#888888');
-assert.deepEqual(description.names,['sys-agent','usr-home']);
+assert.deepEqual(description.names,['usr-assistant','usr-home']);
 assert.equal(describeWorkspace([UNKNOWN],inventory).kind,'unknown');
 assert.equal(describeWorkspace([LOCAL],inventory),null);
 """)
@@ -99,7 +99,7 @@ const homeWindow=new Window(wm.workspaces[0]),agentWindow=new Window(wm.workspac
 actors.push({meta_window:homeWindow},{meta_window:agentWindow});
 const ext=new Controller();ext.enable();finishInventory();
 ext._identities.set(homeWindow,{kind:'vm',name:'usr-home'});
-ext._identities.set(agentWindow,{kind:'vm',name:'sys-agent'});ext._sync();
+ext._identities.set(agentWindow,{kind:'vm',name:'usr-assistant'});ext._sync();
 assert.equal(activities.get_first_child(),nativeIndicators);
 assert.equal(activities.reactive,true);assert.equal(activities.accessible_name,'Activities');
 assert.equal(shellMocks.Main.panel.placement.side,'right');
@@ -126,7 +126,7 @@ const homeWindow=new Window(wm.workspaces[0]),agentWindow=new Window(wm.workspac
 actors.push({meta_window:homeWindow},{meta_window:agentWindow});
 const ext=new Controller();ext.enable();finishInventory();
 ext._identities.set(homeWindow,{kind:'vm',name:'usr-home'});
-ext._identities.set(agentWindow,{kind:'vm',name:'sys-agent'});ext._sync();
+ext._identities.set(agentWindow,{kind:'vm',name:'usr-assistant'});ext._sync();
 const second=new Window(homeWindow.workspace);ext._watch(second);
 ext._identities.set(second,{kind:'vm',name:'usr-home'});ext._splitWindow(second);ext._sync();
 assert.deepEqual(ext._groups.map(g=>g.slots.length),[2,1]);
@@ -150,7 +150,7 @@ overview._overview.controls._workspacesDisplay._workspacesViews=[{_workspaces:[e
 const originalInit=WorkspacePreview.prototype._init;
 const ext=new Controller();ext.enable();finishInventory();
 ext._identities.set(homeWindow,{kind:'vm',name:'usr-home'});
-ext._identities.set(agentWindow,{kind:'vm',name:'sys-agent'});ext._sync();
+ext._identities.set(agentWindow,{kind:'vm',name:'usr-assistant'});ext._sync();
 const thumbnail=new ThumbnailPreview(agentWindow.workspace);
 assert.equal(ext._overviewActors.size,2);
 assert.match(ext._overviewActors.get(existing).border.style,/#3465a4/);
@@ -160,7 +160,7 @@ const agent=ext._tabs[1];assert.match(agent.button.style,/rgba\(204,0,0,0.35\)/)
 agent.button.hover=true;agent.button.emit('notify::hover');assert.match(agent.button.style,/,0.45\)/);
 agent.button.emit('clicked');assert.match(agent.button.style,/,0.55\)/);
 overview.visible=true;thumbnail.hover=true;thumbnail.emit('notify::hover');
-sources.get(ext._tooltipSource)();assert.match(ext._tooltip.text,/sys-agent/);
+sources.get(ext._tooltipSource)();assert.match(ext._tooltip.text,/usr-assistant/);
 overview.emit('window-drag-begin');assert.equal(ext._tooltip.visible,false);
 thumbnail.emit('notify::hover');assert.equal(ext._tooltipSource,0);
 overview.emit('window-drag-end');

@@ -181,7 +181,7 @@ def test_preparation_and_admission_are_controller_only(interfaces):
     assert "airlock.Ctrl.MachinePrepare + sys-ctrl dom0 allow" in interfaces["controlPolicy"]
     assert "airlock.Pool.AdmitCandidate * sys-ctrl dom0 allow" in interfaces["controlPolicy"]
     for handler in (interfaces["prepare"], interfaces["candidate"]):
-        for caller in ("usr-new", "sys-gui", "sys-agent", ""):
+        for caller in ("usr-new", "sys-gui", "usr-assistant", ""):
             result = subprocess.run(["bash", "-c", handler],
                                     env={**os.environ, "QREXEC_REMOTE_DOMAIN": caller},
                                     capture_output=True)

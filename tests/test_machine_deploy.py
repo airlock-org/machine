@@ -69,8 +69,8 @@ def topology():
         "prefs": {},
         "domains": {
             "sys-gui": domain("sys-gui"),
-            "sys-agent": domain("sys-agent", guivm="sys-gui"),
-            "usr-browser": domain("usr-browser", netvm="sys-agent", guivm="sys-gui"),
+            "usr-assistant": domain("usr-assistant", guivm="sys-gui"),
+            "usr-browser": domain("usr-browser", netvm="usr-assistant", guivm="sys-gui"),
             "usr-home": domain("usr-home", guivm="sys-gui"),
         },
     }
@@ -83,8 +83,35 @@ def test_dependency_order_and_affected_closure(topology):
     assert result["changed"] == ["sys-gui"]
     assert result["stop"][-1] == "sys-gui"
     assert result["start"][0] == "sys-gui"
-    assert result["stop"].index("usr-browser") < result["stop"].index("sys-agent")
+    assert result["stop"].index("usr-browser") < result["stop"].index("usr-assistant")
     assert set(result["affected"]) == set(topology["domains"])
+
+
+def test_assistant_rename_requires_retirement_and_preserves_network_dependencies():
+    old = {
+        "schema": "airlock.qubes-topology.v1", "kernels": {}, "prefs": {},
+        "domains": {
+            "sys-gui": domain("sys-gui"),
+            "sys-net": domain("sys-net"),
+            "sys-firewall": domain("sys-firewall", netvm="sys-net"),
+            "sys-agent": domain("sys-agent", netvm="sys-firewall", guivm="sys-gui"),
+            "usr-home": domain("usr-home", netvm="sys-firewall", guivm="sys-gui"),
+        },
+    }
+    new = deepcopy(old)
+    del new["domains"]["sys-agent"]
+    new["domains"]["usr-assistant"] = domain(
+        "usr-assistant", netvm="sys-firewall", guivm="sys-gui"
+    )
+    with pytest.raises(deploy.DeploymentError):
+        planning.plan(old, new, set(old["domains"]))
+    result = planning.plan(old, new, set(old["domains"]), retire_removed=["sys-agent"])
+    assert result["retire"] == ["sys-agent"]
+    assert result["stop"] == ["sys-agent"]
+    assert result["stage"] == ["usr-assistant"]
+    assert result["start"].index("sys-firewall") < result["start"].index("usr-assistant")
+    assert result["start"].index("sys-gui") < result["start"].index("usr-assistant")
+    assert "sys-agent" in old["domains"]
 
 
 def test_app_change_does_not_restart_providers(topology):
@@ -96,7 +123,7 @@ def test_app_change_does_not_restart_providers(topology):
 
 
 def test_apply_gui_update_preserves_guests_and_records_reconnection(machine, tmp_path, topology):
-    for name in ("sys-agent", "usr-home"):
+    for name in ("usr-assistant", "usr-home"):
         topology["domains"][name]["features"]["airlock-gui-reconnect"] = "1"
     deploy.atomic_json(machine.initial / "topology.json", topology)
     new = deepcopy(topology)
@@ -118,17 +145,17 @@ def test_apply_gui_update_preserves_guests_and_records_reconnection(machine, tmp
     result = machine.apply(write_release(tmp_path / "gui-update", new))
     # The fixture's old browser lacks reconnection support and still restarts.
     assert [call[-1] for call in machine.calls if call[0] == "qvm-shutdown"] == ["usr-browser", "sys-gui"]
-    assert result["gui_reconnected"]["sys-agent"]["boot_id"] == "boot-sys-agent"
+    assert result["gui_reconnected"]["usr-assistant"]["boot_id"] == "boot-usr-assistant"
     assert result["gui_reconnected"]["usr-home"]["gui_xid"] == "99"
     assert result["phase"] == "reboot-required"
 
 
 def test_network_pci_handoff_stops_old_provider_and_orders_new_chain(topology):
-    old_dev = topology["domains"]["sys-agent"]
+    old_dev = topology["domains"]["usr-assistant"]
     old_dev["features"] = {"airlock-auto-network-pci": "1"}
     old_dev["prefs"]["provides_network"] = True
     new = deepcopy(topology)
-    new_dev = new["domains"]["sys-agent"]
+    new_dev = new["domains"]["usr-assistant"]
     new_dev["features"]["airlock-auto-network-pci"] = "0"
     new_dev["prefs"]["provides_network"] = False
     new_dev["netvm"] = "sys-firewall"
@@ -139,21 +166,21 @@ def test_network_pci_handoff_stops_old_provider_and_orders_new_chain(topology):
     new["domains"]["sys-firewall"]["prefs"]["provides_network"] = True
     new["domains"]["usr-browser"]["netvm"] = "sys-firewall"
 
-    migration = planning.plan(topology, new, {"sys-agent", "usr-browser"})
-    assert migration["pci_handoff"] == {"from": "sys-agent", "to": "sys-net"}
-    assert migration["stop"].index("usr-browser") < migration["stop"].index("sys-agent")
+    migration = planning.plan(topology, new, {"usr-assistant", "usr-browser"})
+    assert migration["pci_handoff"] == {"from": "usr-assistant", "to": "sys-net"}
+    assert migration["stop"].index("usr-browser") < migration["stop"].index("usr-assistant")
     assert migration["start"].index("sys-net") < migration["start"].index(
         "sys-firewall"
     )
     assert migration["start"].index("sys-firewall") < migration["start"].index(
-        "sys-agent"
+        "usr-assistant"
     )
 
     rollback = planning.plan(
-        new, topology, {"sys-agent", "sys-net", "sys-firewall"}, retain_removed=True
+        new, topology, {"usr-assistant", "sys-net", "sys-firewall"}, retain_removed=True
     )
-    assert rollback["pci_handoff"] == {"from": "sys-net", "to": "sys-agent"}
-    assert rollback["stop"].index("sys-agent") < rollback["stop"].index("sys-firewall")
+    assert rollback["pci_handoff"] == {"from": "sys-net", "to": "usr-assistant"}
+    assert rollback["stop"].index("usr-assistant") < rollback["stop"].index("sys-firewall")
     assert rollback["stop"].index("sys-firewall") < rollback["stop"].index("sys-net")
 
 
@@ -184,20 +211,20 @@ def test_network_pci_handoff_releases_only_old_owners_network_nics(
         commands.append(args)
         if args[:3] == ("qvm-device", "pci", "list"):
             return (
-                "dom0:00_02.0  *sys-agent (required)\ndom0:00_08.0  *sys-agent (required)"
+                "dom0:00_02.0  *usr-assistant (required)\ndom0:00_08.0  *usr-assistant (required)"
             )
         return ""
 
     coordinator = deploy.Coordinator(state=tmp_path, command=command)
-    coordinator.handoff_network_pci({"from": "sys-agent", "to": "sys-net"})
+    coordinator.handoff_network_pci({"from": "usr-assistant", "to": "sys-net"})
     assert commands == [
         ("qvm-device", "pci", "list", "--assignments", "dom0"),
-        ("qvm-device", "pci", "unassign", "sys-agent", "dom0:00_02.0"),
+        ("qvm-device", "pci", "unassign", "usr-assistant", "dom0:00_02.0"),
     ]
 
 
 def test_cycle_fails(topology):
-    topology["domains"]["sys-gui"]["netvm"] = "sys-agent"
+    topology["domains"]["sys-gui"]["netvm"] = "usr-assistant"
     with pytest.raises(deploy.DeploymentError, match="cycle"):
         planning.ordered(topology)
 
@@ -231,9 +258,9 @@ def test_removal_requires_exact_authorization_and_no_surviving_dependencies(topo
         planning.plan(topology, new, set(), retire_removed=["usr-browser"])
 
     dependent = deepcopy(topology)
-    del dependent["domains"]["sys-agent"]
+    del dependent["domains"]["usr-assistant"]
     with pytest.raises(deploy.DeploymentError, match="still depends"):
-        planning.plan(topology, dependent, set(), retire_removed=["sys-agent"])
+        planning.plan(topology, dependent, set(), retire_removed=["usr-assistant"])
 
 
 @pytest.mark.parametrize(
@@ -261,7 +288,7 @@ def test_retirement_rejects_machine_default_reference(topology, field):
 def test_retirement_rejects_policy_reference(topology, endpoint):
     new = deepcopy(topology)
     del new["domains"]["usr-home"]
-    new["qrexec_policy"] = {"rules": [{"source": "sys-agent", "target": "sys-gui"}]}
+    new["qrexec_policy"] = {"rules": [{"source": "usr-assistant", "target": "sys-gui"}]}
     new["qrexec_policy"]["rules"][0][endpoint] = "usr-home"
     with pytest.raises(deploy.DeploymentError, match=f"rules\\[0\\].{endpoint}"):
         planning.plan(topology, new, set(), retire_removed=["usr-home"])
@@ -270,7 +297,7 @@ def test_retirement_rejects_policy_reference(topology, endpoint):
 def test_retirement_rejects_domain_dispvm_reference(topology):
     new = deepcopy(topology)
     del new["domains"]["usr-home"]
-    new["domains"]["sys-agent"]["prefs"]["default_dispvm"] = "usr-home"
+    new["domains"]["usr-assistant"]["prefs"]["default_dispvm"] = "usr-home"
     with pytest.raises(deploy.DeploymentError, match="still depends"):
         planning.plan(topology, new, set(), retire_removed=["usr-home"])
 
@@ -281,12 +308,12 @@ def test_later_release_cannot_reference_already_trashed_vm(topology, reference):
     del retired["domains"]["usr-home"]
     later = deepcopy(retired)
     if reference == "netvm":
-        later["domains"]["sys-agent"]["netvm"] = "usr-home"
+        later["domains"]["usr-assistant"]["netvm"] = "usr-home"
     elif reference == "default_netvm":
         later["prefs"]["default_netvm"] = "usr-home"
     else:
         later["qrexec_policy"] = {
-            "rules": [{"source": "sys-agent", "target": "usr-home"}]
+            "rules": [{"source": "usr-assistant", "target": "usr-home"}]
         }
     with pytest.raises(deploy.DeploymentError, match="retired VM"):
         planning.plan(retired, later, set(), trashed={"usr-home": {}})
@@ -296,7 +323,7 @@ def test_restored_vm_can_be_referenced_after_identity_validation(topology):
     retired = deepcopy(topology)
     del retired["domains"]["usr-home"]
     restored = deepcopy(topology)
-    restored["domains"]["sys-agent"]["netvm"] = "usr-home"
+    restored["domains"]["usr-assistant"]["netvm"] = "usr-home"
     result = planning.plan(retired, restored, set(), trashed={"usr-home": {}})
     assert result["restore"] == ["usr-home"]
 
@@ -307,7 +334,7 @@ def test_later_apply_rejects_reference_to_trash_before_disruption(
     machine.apply(retirement_release(tmp_path, topology))
     later = deepcopy(topology)
     del later["domains"]["usr-home"]
-    later["domains"]["sys-agent"]["netvm"] = "usr-home"
+    later["domains"]["usr-assistant"]["netvm"] = "usr-home"
     release = write_release(tmp_path / "later", later)
     machine.calls.clear()
     with pytest.raises(deploy.DeploymentError, match="retired VM"):
@@ -320,7 +347,7 @@ def test_boot_rejects_selected_topology_referencing_trash(machine, tmp_path, top
     release = retirement_release(tmp_path, topology)
     machine.apply(release)
     inconsistent = deploy.read_json(release / "topology.json")
-    inconsistent["domains"]["sys-agent"]["netvm"] = "usr-home"
+    inconsistent["domains"]["usr-assistant"]["netvm"] = "usr-home"
     deploy.atomic_json(release / "topology.json", inconsistent)
     with pytest.raises(deploy.DeploymentError, match="retired VM"):
         machine.boot_start("/missing-image")
@@ -331,7 +358,7 @@ def test_dependencies_started_even_without_autostart(topology):
         vm["prefs"]["autostart"] = False
     result = planning.plan(topology, topology, {"usr-browser"})
     assert result["stop"] == []
-    assert result["start"] == ["sys-gui", "sys-agent", "usr-browser"]
+    assert result["start"] == ["sys-gui", "usr-assistant", "usr-browser"]
 
 
 def write_release(path, topology, revision="new", retire=()):
@@ -577,7 +604,7 @@ def guest_receipt(machine, topology, generation=17):
             "closure_hash": "c" * 64,
         },
         "approval": {
-            "approved_by": "sys-agent",
+            "approved_by": "usr-assistant",
             "source": source,
             "transport": "qrexec",
         },
@@ -612,7 +639,7 @@ def test_boot_start_image_autostart_and_dependencies(machine, tmp_path, topology
     topology["domains"]["usr-home"]["prefs"]["autostart"] = True
     path = tmp_path / "image.json"
     deploy.atomic_json(path, topology)
-    machine.live = {"sys-gui", "sys-agent"}
+    machine.live = {"sys-gui", "usr-assistant"}
     result = machine.boot_start(path, ["sys-gui"])
     assert result["started"] == ["usr-home"]
     assert machine.boot_start(path, ["sys-gui"])["started"] == []
@@ -623,22 +650,22 @@ def test_boot_start_image_autostart_and_dependencies(machine, tmp_path, topology
 def test_boot_start_handles_race_without_hiding_start_failure(
     machine, monkeypatch, concurrent_start
 ):
-    machine.live.remove("sys-agent")
+    machine.live.remove("usr-assistant")
     command = machine.command
 
     def racing_command(*args, **kwargs):
         if args[0] == "qvm-start":
-            assert args == ("qvm-start", "--skip-if-running", "sys-agent")
+            assert args == ("qvm-start", "--skip-if-running", "usr-assistant")
             if concurrent_start:
-                machine.live.add("sys-agent")
+                machine.live.add("usr-assistant")
             raise subprocess.CalledProcessError(1, args)
         return command(*args, **kwargs)
 
     monkeypatch.setattr(machine, "command", racing_command)
     if concurrent_start:
         result = machine.boot_start(machine.initial / "topology.json", ["sys-gui"])
-        assert "sys-agent" in result["autostart"]
-        assert "sys-agent" not in result["started"]
+        assert "usr-assistant" in result["autostart"]
+        assert "usr-assistant" not in result["started"]
         assert any(call[0] == "qrexec-client" for call in machine.calls)
     else:
         wait = machine.wait_boot_guest
@@ -654,7 +681,7 @@ def test_boot_start_handles_race_without_hiding_start_failure(
 def test_boot_start_uses_selected_release_not_image(machine, tmp_path, topology):
     topology["domains"]["usr-browser"]["prefs"]["autostart"] = False
     machine.apply(new_release(tmp_path, topology))
-    machine.live = {"sys-gui", "sys-agent"}
+    machine.live = {"sys-gui", "usr-assistant"}
     assert machine.boot_start("/missing-image", ["sys-gui"])["started"] == ["usr-home"]
 
 
@@ -703,14 +730,14 @@ def test_post_reboot_verification_checks_autostart_dependencies_and_manual_guest
     machine, tmp_path, topology, monkeypatch, readiness_clock
 ):
     monkeypatch.setattr(deploy, "boot_id", lambda: "apply-boot")
-    topology["domains"]["sys-agent"]["prefs"]["autostart"] = False
+    topology["domains"]["usr-assistant"]["prefs"]["autostart"] = False
     topology["domains"]["usr-home"]["prefs"]["autostart"] = False
     machine.apply(new_release(tmp_path, topology))
     monkeypatch.setattr(deploy, "boot_id", lambda: "next-boot")
-    machine.live.remove("sys-agent")
-    with pytest.raises(deploy.DeploymentError, match="sys-agent: readiness timed out"):
+    machine.live.remove("usr-assistant")
+    with pytest.raises(deploy.DeploymentError, match="usr-assistant: readiness timed out"):
         machine.verify_selected()
-    machine.live.add("sys-agent")
+    machine.live.add("usr-assistant")
     command = machine.command
 
     def wrong_manual_guest(*args, **kwargs):
@@ -802,7 +829,7 @@ def test_guest_start_failure_keeps_previous_host_binding_and_boot_choice(machine
                    for call in machine.calls)
 
 
-def test_stage_reuses_sys_agent_admitted_generation(machine, tmp_path, topology):
+def test_stage_reuses_usr_assistant_admitted_generation(machine, tmp_path, topology):
     machine.pool_match = 17
     result = machine.apply(new_release(tmp_path, topology))
     staged = deploy.read_json(
@@ -852,7 +879,7 @@ def test_guest_candidate_updates_boot_system_and_preserves_other_options(
     assert changed["domains"]["usr-home"]["prefs"]["kernelopts"] == opts.replace(
         old, receipt["system"]
     )
-    assert changed["domains"]["sys-agent"] == topology["domains"]["sys-agent"]
+    assert changed["domains"]["usr-assistant"] == topology["domains"]["usr-assistant"]
     assert machine.guest_candidate(receipt) == candidate
     machine.apply(candidate)
     machine.calls.clear()
@@ -1175,12 +1202,12 @@ def test_replacement_copies_private_after_setup_before_first_start(
     machine, tmp_path, topology, monkeypatch, interrupted
 ):
     new = deepcopy(topology)
-    del new["domains"]["sys-agent"]
+    del new["domains"]["usr-assistant"]
     new["domains"]["sys-replacement"] = domain("sys-replacement", guivm="sys-gui")
     new["domains"]["usr-browser"]["netvm"] = "sys-replacement"
     release = write_release(tmp_path / "replacement", new)
     manifest = deploy.read_json(release / "release.json")
-    manifest.update(retireDomains=["sys-agent"], privateVolumeCopies={"sys-replacement": "sys-agent"})
+    manifest.update(retireDomains=["usr-assistant"], privateVolumeCopies={"sys-replacement": "usr-assistant"})
     deploy.atomic_json(release / "release.json", manifest)
     monkeypatch.setattr(machine.private_copies, "inspect", lambda *args: [{"target_name": "sys-replacement"}])
     monkeypatch.setattr(machine.private_copies, "prepare", lambda entries: machine.calls.append(("prepare-copy",)))
@@ -1189,8 +1216,8 @@ def test_replacement_copies_private_after_setup_before_first_start(
     def clone(entries):
         nonlocal fail_once
         assert machine.selected["sys-replacement"] == new["domains"]["sys-replacement"]["backend"]["system"]["source"]
-        assert not {"sys-agent", "sys-replacement"} & machine.live
-        assert "airlock-retired" in machine.tags["sys-agent"]
+        assert not {"usr-assistant", "sys-replacement"} & machine.live
+        assert "airlock-retired" in machine.tags["usr-assistant"]
         machine.calls.append(("private-copy",))
         if fail_once:
             fail_once = False
@@ -1734,7 +1761,7 @@ def test_purge_checks_identity_and_ownership_before_mutation(
         volume = deepcopy(machine.volumes[name]["private"])
         if conflict == "source":
             volume["source"], volume["vid"] = volume["vid"], "other/private"
-        machine.volumes["sys-agent"]["private"] = volume
+        machine.volumes["usr-assistant"]["private"] = volume
     elif conflict == "tag":
         machine.tags[name].clear()
     elif conflict == "generation":
@@ -1809,8 +1836,8 @@ def test_boot_readiness_waits_for_running_and_qrexec(
     def delayed(*args, **kwargs):
         if args[0] == "qvm-ls":
             if clock[0] < 2 or not becomes_ready:
-                return "sys-agent|Transient"
-            return "sys-agent|Running"
+                return "usr-assistant|Transient"
+            return "usr-assistant|Running"
         if args[0] == "qrexec-client":
             probes.append(clock[0])
             if clock[0] < 3:
@@ -1818,19 +1845,19 @@ def test_boot_readiness_waits_for_running_and_qrexec(
         return command(*args, **kwargs)
 
     monkeypatch.setattr(machine, "command", delayed)
-    expected = machine.selected["sys-agent"]
+    expected = machine.selected["usr-assistant"]
     if becomes_ready:
-        machine.wait_boot_guest("sys-agent", expected, timeout=5)
+        machine.wait_boot_guest("usr-assistant", expected, timeout=5)
         assert probes == [2, 3]
     else:
         with pytest.raises(deploy.DeploymentError, match="readiness timed out"):
-            machine.wait_boot_guest("sys-agent", expected, timeout=5)
+            machine.wait_boot_guest("usr-assistant", expected, timeout=5)
         assert clock[0] == 5
 
 
 def test_boot_readiness_rejects_wrong_generation(machine):
     with pytest.raises(deploy.DeploymentError, match="differs from release"):
-        machine.wait_boot_guest("sys-agent", "/nix/store/wrong-system")
+        machine.wait_boot_guest("usr-assistant", "/nix/store/wrong-system")
 
 
 @pytest.mark.parametrize("becomes_ready", [True, False])
@@ -1839,7 +1866,7 @@ def test_apply_waits_for_guest_readiness_before_selecting_release(
     machine, tmp_path, topology, monkeypatch, readiness_clock, becomes_ready, failure
 ):
     wanted = deepcopy(topology)
-    wanted["domains"]["sys-agent"]["prefs"]["virt_mode"] = "pvh"
+    wanted["domains"]["usr-assistant"]["prefs"]["virt_mode"] = "pvh"
     release = write_release(tmp_path / "pvh", wanted)
     command = machine.command
     probes = []
@@ -1847,8 +1874,8 @@ def test_apply_waits_for_guest_readiness_before_selecting_release(
     def delayed(*args, **kwargs):
         result = command(*args, **kwargs)
         if args[0] == "qvm-ls" and readiness_clock[0] < 2:
-            return result.replace("sys-agent|Running", "sys-agent|Transient")
-        if args[:3] == ("qrexec-client", "-d", "sys-agent"):
+            return result.replace("usr-assistant|Running", "usr-assistant|Transient")
+        if args[:3] == ("qrexec-client", "-d", "usr-assistant"):
             probes.append(readiness_clock[0])
             assert 0 < kwargs["timeout"] <= 10
             if readiness_clock[0] < 3 or not becomes_ready:
@@ -1861,10 +1888,10 @@ def test_apply_waits_for_guest_readiness_before_selecting_release(
     if becomes_ready:
         result = machine.apply(release)
         assert probes == [2, 3]
-        assert result["observed"]["sys-agent"]["running"] == machine.selected["sys-agent"]
+        assert result["observed"]["usr-assistant"]["running"] == machine.selected["usr-assistant"]
         assert machine.pointer()["release"] == str(release)
     else:
-        with pytest.raises(deploy.DeploymentError, match="sys-agent: readiness timed out"):
+        with pytest.raises(deploy.DeploymentError, match="usr-assistant: readiness timed out"):
             machine.apply(release)
         assert readiness_clock[0] == 180
         assert machine.status()["phase"] == "failed"
@@ -1881,13 +1908,13 @@ def test_apply_rejects_wrong_running_generation_without_readiness_retry(
     probes = []
 
     def wrong_generation(*args, **kwargs):
-        if args[:3] == ("qrexec-client", "-d", "sys-agent"):
+        if args[:3] == ("qrexec-client", "-d", "usr-assistant"):
             probes.append(args)
             return "/nix/store/wrong-running-system"
         return command(*args, **kwargs)
 
     monkeypatch.setattr(machine, "command", wrong_generation)
-    with pytest.raises(deploy.DeploymentError, match="sys-agent: running system differs"):
+    with pytest.raises(deploy.DeploymentError, match="usr-assistant: running system differs"):
         machine.apply(new_release(tmp_path, topology))
     assert len(probes) == 1
     assert readiness_clock[0] == 0
@@ -1927,7 +1954,7 @@ def test_direct_binding_rejects_missing_receipts(machine, tmp_path, topology):
 
 def test_direct_binding_checks_pool_authority(machine, tmp_path, topology):
     release, receipts = direct_candidate_fixture(machine, tmp_path, topology)
-    machine.generation_details["approval"]["approved_by"] = "sys-agent"
+    machine.generation_details["approval"]["approved_by"] = "usr-assistant"
     with pytest.raises(deploy.DeploymentError, match="requires sys-ctrl"):
         machine.machine_candidate(release, receipts)
 

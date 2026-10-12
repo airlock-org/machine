@@ -115,7 +115,7 @@ def prepare_builder(root, admission, registration, offline_inputs_source=None, p
     manifest_path = Path(admission["manifest"])
     manifest = core.read_json(manifest_path)
     builder_domain = manifest["domain"]
-    if builder_domain not in ("sys-agent-builder", "sys-ctrl-builder"):
+    if builder_domain not in ("usr-assistant-builder", "sys-ctrl-builder"):
         core.fail("builder preparation is restricted to declared builder domains")
     role = builder_domain.removesuffix("-builder")
     registration = Path(registration).read_bytes()
@@ -212,10 +212,10 @@ def prepare_builder(root, admission, registration, offline_inputs_source=None, p
     core.atomic_json(root / f"builders/{role}.json", manifest["builder"])
 
 
-def builder_volume_configs(root, pool_name, *, domain="sys-agent", physical_root=None):
+def builder_volume_configs(root, pool_name, *, domain="usr-assistant", physical_root=None):
     """Validated boot volumes for an image-seeded builder role."""
     root = Path(root)
-    if domain not in ("sys-agent", "sys-ctrl"):
+    if domain not in ("usr-assistant", "sys-ctrl"):
         core.fail("invalid builder domain")
     builder_domain = f"{domain}-builder"
 

@@ -37,6 +37,6 @@ on executing user files.
 
 An update to this guest module can use the documented controller single-guest
 plan/apply route. Inspect the plan before activation: only `usr-home` should
-change or restart, with the host and `sys-agent` preserved. Verify the entire
+change or restart, with the host and `usr-assistant` preserved. Verify the entire
 machine selection afterwards and check application discovery, file opening and
 persistence separately from generation equality.

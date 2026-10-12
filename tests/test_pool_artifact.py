@@ -152,7 +152,7 @@ def receive(case, data=None):
         io.BytesIO(case["bytes"] if data is None else data),
         pool_root=case["pool"],
         expected_domain="usr-home",
-        approved_by="sys-agent",
+        approved_by="usr-assistant",
     )
 
 
@@ -170,7 +170,7 @@ def test_transferred_artifact_is_inactive_retained_and_reused(artifact_input):
     manifest = core.read_json(second["manifest"])
     assert manifest["store"]["index_depth"] == 0
     assert manifest["approval"] == {
-        "approved_by": "sys-agent",
+        "approved_by": "usr-assistant",
         "source": artifact_input["closure"],
         "transport": "qrexec",
     }
@@ -182,7 +182,7 @@ def test_transferred_artifact_is_inactive_retained_and_reused(artifact_input):
             closure_source=artifact_input["closure"],
             root_source="/nix/store/" + "c" * 32 + "-root/root.img",
             kernel_name="test-kernel",
-            approved_by="sys-agent",
+            approved_by="usr-assistant",
             view_backend="erofs-objectmap",
         )
     )
@@ -216,7 +216,7 @@ def test_system_only_artifact_inherits_committed_boot_identity(artifact_input):
         io.BytesIO(output.getvalue()),
         pool_root=artifact_input["pool"],
         expected_domain="usr-home",
-        approved_by="sys-agent",
+        approved_by="usr-assistant",
     )
     assert result["root_source"] == expected_root
     assert result["kernel_name"] == expected_kernel
@@ -238,7 +238,7 @@ def test_system_only_artifact_requires_existing_boot_identity(artifact_input):
             io.BytesIO(output.getvalue()),
             pool_root=artifact_input["pool"],
             expected_domain="usr-home",
-            approved_by="sys-agent",
+            approved_by="usr-assistant",
         )
 
 
@@ -256,7 +256,7 @@ def test_describe_generation_exposes_activation_identity(artifact_input):
     assert described["system"] == artifact_input["system"]
     assert described["root_source"].endswith("-root/root.img")
     assert described["kernel_name"] == "test-kernel"
-    assert described["approval"]["approved_by"] == "sys-agent"
+    assert described["approval"]["approved_by"] == "usr-assistant"
     assert described["retention"]["retain"] is True
 
 
@@ -325,7 +325,7 @@ def test_pool_retirement_interruption_preserves_current_until_retry(
     assert generations.retire_generation(args)["status"] == "retired"
 
 
-@pytest.mark.parametrize("consumer", ["usr-browser", "sys-agent-builder"])
+@pytest.mark.parametrize("consumer", ["usr-browser", "usr-assistant-builder"])
 def test_purged_generation_gc_preserves_shared_consumer_objects(
     artifact_input, consumer, tmp_path
 ):
@@ -359,7 +359,7 @@ def test_purged_generation_gc_preserves_shared_consumer_objects(
         io.BytesIO(artifact.getvalue()),
         pool_root=artifact_input["pool"],
         expected_domain=consumer,
-        approved_by="sys-agent",
+        approved_by="usr-assistant",
     )
     assert second["objects_reused"] == 1
     args = SimpleNamespace(
@@ -430,7 +430,7 @@ def test_transferred_artifact_target_is_checked(artifact_input):
             io.BytesIO(artifact_input["bytes"]),
             pool_root=artifact_input["pool"],
             expected_domain="sys-gui",
-            approved_by="sys-agent",
+            approved_by="usr-assistant",
         )
     assert not list((artifact_input["pool"] / "tmp").iterdir())
 
@@ -476,7 +476,7 @@ def incremental_exchange(case, transform=lambda data: data, expected_identity=No
                 receiver,
                 pool_root=case["pool"],
                 expected_domain="usr-home",
-                approved_by="sys-agent",
+                approved_by="usr-assistant",
                 expected_identity=expected_identity,
             )
 
@@ -708,7 +708,7 @@ def test_receiver_cli_reports_errors_over_protocol(
                 "--expected-domain",
                 "usr-home",
                 "--approved-by",
-                "sys-agent",
+                "usr-assistant",
                 "--pool-root",
                 str(artifact_input["pool"]),
             ]
@@ -864,7 +864,7 @@ def test_inventory_hash_conflict_rejected_before_request(artifact_input):
             output,
             pool_root=artifact_input["pool"],
             expected_domain="usr-home",
-            approved_by="sys-agent",
+            approved_by="usr-assistant",
         )
     assert output.getvalue() == b""
 
@@ -948,7 +948,7 @@ def test_sender_cli_negotiates_and_prints_only_final_response(
                 receiver,
                 pool_root=artifact_input["pool"],
                 expected_domain="usr-home",
-                approved_by="sys-agent",
+                approved_by="usr-assistant",
             )
             artifacts.write_message(receiver, result)
             return 0
@@ -1023,7 +1023,7 @@ def test_unchanged_generation_reuses_original_provenance_without_inventory(artif
     first = receive(artifact_input)
     monkeypatch.setattr(artifacts, '_receive_members', lambda *_a, **_k: pytest.fail('payload read'))
     result = artifacts.receive_incremental(io.BytesIO(json.dumps(generation_probe(artifact_input)).encode()+b'\n'),
-        io.BytesIO(), pool_root=artifact_input['pool'], expected_domain='usr-home', approved_by='sys-agent')
+        io.BytesIO(), pool_root=artifact_input['pool'], expected_domain='usr-home', approved_by='usr-assistant')
     assert result['generation'] == first['generation']
     assert result['source_revision'] == '1' * 40
     assert result['generation_reused'] is True
@@ -1036,7 +1036,7 @@ def test_changed_guest_identity_cannot_reuse_generation(artifact_input, field):
     receive(artifact_input)
     probe = generation_probe(artifact_input)
     probe[field] += '-changed'
-    assert artifacts.reuse_generation(artifact_input['pool'], probe, 'usr-home', 'sys-agent') is None
+    assert artifacts.reuse_generation(artifact_input['pool'], probe, 'usr-home', 'usr-assistant') is None
 
 
 @pytest.mark.parametrize('damage', ['metadata', 'missing-map', 'unretained', 'authority'])
@@ -1055,9 +1055,9 @@ def test_generation_reuse_rejects_damaged_or_unapproved_state(artifact_input, da
     core.atomic_json(manifest_path, manifest)
     if damage in {'metadata', 'missing-map'}:
         with pytest.raises((core.EngineError, FileNotFoundError)):
-            artifacts.reuse_generation(artifact_input['pool'], generation_probe(artifact_input), 'usr-home', 'sys-agent')
+            artifacts.reuse_generation(artifact_input['pool'], generation_probe(artifact_input), 'usr-home', 'usr-assistant')
     else:
-        assert artifacts.reuse_generation(artifact_input['pool'], generation_probe(artifact_input), 'usr-home', 'sys-agent') is None
+        assert artifacts.reuse_generation(artifact_input['pool'], generation_probe(artifact_input), 'usr-home', 'usr-assistant') is None
 
 
 def test_sender_rejects_incomplete_reuse_identities(artifact_input):
@@ -1103,7 +1103,7 @@ def test_generation_without_reuse_proof_takes_normal_admission(artifact_input):
     manifest = core.read_json(first['manifest'])
     del manifest['store']['integrity']
     core.atomic_json(first['manifest'], manifest)
-    assert artifacts.reuse_generation(artifact_input['pool'], generation_probe(artifact_input), 'usr-home', 'sys-agent') is None
+    assert artifacts.reuse_generation(artifact_input['pool'], generation_probe(artifact_input), 'usr-home', 'usr-assistant') is None
     second, _, _ = incremental_exchange(artifact_input)
     assert second['generation'] != first['generation']
     assert second['objects_transferred'] == 0

@@ -10,8 +10,8 @@ ROOT = Path(__file__).resolve().parents[1]
 @pytest.mark.parametrize(
     "domain,route,exclusions,expected",
     [
-        ("sys-agent", "00_03.0", "", ("00_03.0", "00_04.0")),
-        ("sys-agent", "00_03.0", "00_04.0", ("00_03.0",)),
+        ("usr-assistant", "00_03.0", "", ("00_03.0", "00_04.0")),
+        ("usr-assistant", "00_03.0", "00_04.0", ("00_03.0",)),
         ("sys-net", "", "", ("00_03.0", "00_04.0")),
         ("sys-net", "00_03.0", "", ("00_04.0",)),
     ],

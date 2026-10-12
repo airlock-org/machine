@@ -8,7 +8,7 @@ import subprocess
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-INIT = ROOT / "lifecycle/misc/modules/sys-agent/workspace-init.sh"
+INIT = ROOT / "lifecycle/misc/modules/usr-assistant/workspace-init.sh"
 
 
 def initialize(codex_state, instructions, guest_home=None, home_instructions=None):
@@ -85,6 +85,32 @@ def test_workspace_guidance_follows_generation_without_replacing_user_state(tmp_
     assert (state / "auth.json").read_text() == "private credentials"
 
 
+def test_rename_retargets_only_managed_guidance_and_preserves_workspace(tmp_path):
+    home = tmp_path / "home"
+    state = home / ".codex"
+    state.mkdir(parents=True)
+    (home / "AGENTS.md").symlink_to("/etc/airlock/sys-agent/home-AGENTS.md")
+    (state / "AGENTS.md").symlink_to("/etc/airlock/sys-agent/AGENTS.md")
+    (state / "auth.json").write_text("existing credentials")
+    (home / "notes.txt").write_text("existing work")
+    instructions = tmp_path / "new-generation.md"
+    intro = tmp_path / "new-intro.md"
+    initialize(state, instructions, home, intro)
+    assert (home / "AGENTS.md").readlink() == intro
+    assert (state / "AGENTS.md").readlink() == instructions
+    assert (state / "auth.json").read_text() == "existing credentials"
+    assert (home / "notes.txt").read_text() == "existing work"
+    # Re-running initialization must keep deliberate overrides.
+    (home / "AGENTS.md").unlink()
+    (home / "AGENTS.md").write_text("user guidance")
+    (state / "AGENTS.md").unlink()
+    custom = tmp_path / "custom.md"
+    (state / "AGENTS.md").symlink_to(custom)
+    initialize(state, instructions, home, intro)
+    assert (home / "AGENTS.md").read_text() == "user guidance"
+    assert (state / "AGENTS.md").readlink() == custom
+
+
 @pytest.mark.parametrize("existing", ["file", "symlink", "dangling-symlink"])
 def test_workspace_preserves_custom_guidance(tmp_path, existing):
     state = tmp_path / "codex"
@@ -104,22 +130,22 @@ def test_workspace_preserves_custom_guidance(tmp_path, existing):
 
 
 @pytest.mark.nix
-def test_sys_agent_console_tools_and_guidance_use_existing_management_interfaces():
+def test_usr_assistant_console_tools_and_guidance_use_existing_management_interfaces():
     expression = f"""
       let
         f = builtins.getFlake "{ROOT}";
-        c = f.nixosConfigurations.airlock-domain-sys-agent.config;
-        defaults = import {ROOT}/lifecycle/bootstrap/default-domains/sys-agent.nix;
+        c = f.nixosConfigurations.airlock-domain-usr-assistant.config;
+        defaults = import {ROOT}/lifecycle/bootstrap/default-domains/usr-assistant.nix;
       in {{
         inherit (defaults) prefs features netvm;
         packages = map (p: p.pname or p.name) c.environment.systemPackages;
         session = c.environment.sessionVariables;
         guiEnabled = c.systemd.services.qubes-gui-agent.enable;
         readyConfig = c.environment.etc."qubes/rpc-config/airlock.AppSessionReady".text;
-        instructions = builtins.readFile c.environment.etc."airlock/sys-agent/AGENTS.md".source;
-        intro = builtins.readFile c.environment.etc."airlock/sys-agent/home-AGENTS.md".source;
+        instructions = builtins.readFile c.environment.etc."airlock/usr-assistant/AGENTS.md".source;
+        intro = builtins.readFile c.environment.etc."airlock/usr-assistant/home-AGENTS.md".source;
         repoPath = c.airlock.qubeGuest.configRepoPath;
-        workspace = {{ inherit (c.systemd.services.airlock-sys-agent-workspace)
+        workspace = {{ inherit (c.systemd.services.airlock-usr-assistant-workspace)
           after before requires serviceConfig; }};
         assertionsPass = builtins.all (a: a.assertion) c.assertions;
       }}
@@ -130,7 +156,7 @@ def test_sys_agent_console_tools_and_guidance_use_existing_management_interfaces
         cwd=ROOT, capture_output=True, text=True,
     )
     assert result.returncode == 0, result.stderr
-    log_dir = Path(os.environ["AIRLOCK_LOG_DIR"]) / "sys-agent-workspace"
+    log_dir = Path(os.environ["AIRLOCK_LOG_DIR"]) / "usr-assistant-workspace"
     log_dir.mkdir(parents=True, exist_ok=True)
     (log_dir / "configuration.json").write_text(result.stdout)
     report = json.loads(result.stdout)
@@ -155,4 +181,4 @@ def test_sys_agent_console_tools_and_guidance_use_existing_management_interfaces
     assert "~/airlock-machine" in report["intro"]
     assert len(report["intro"].splitlines()) <= 12
     for command in ("plan", "apply", "status", "verify", "resume", "rollback"):
-        assert f"airlock-sys-agent-machine-deploy {command}" in report["instructions"]
+        assert f"airlock-usr-assistant-machine-deploy {command}" in report["instructions"]

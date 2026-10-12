@@ -37,7 +37,7 @@ def javascript(tmp_path):
             f"const HOME={json.dumps(HOME)}, AGENT={json.dumps(AGENT)};\n"
             "const app=(vm,name='org.gnome.Console')=>`org.qubes-os.vm.${vm}.${name}.desktop`;\n"
             "const snapshot=()=>({[HOME]:{uuid:HOME,name:'usr-home',label:'0x3465a4',running:true},"
-            "[AGENT]:{uuid:AGENT,name:'sys-agent',label:'0xcc0000',running:false}});\n"
+            "[AGENT]:{uuid:AGENT,name:'usr-assistant',label:'0xcc0000',running:false}});\n"
         )
         if presentation:
             header += SHELL_MOCKS + f"\nconst {{VMSearchResults, default: VMSearchExtension}} = await import({json.dumps(extension.as_uri())});\n"
@@ -54,7 +54,7 @@ def test_groups_follow_best_match_and_preserve_gnome_order(javascript):
 const inventory=parseInventory(JSON.stringify(snapshot()));
 const ids=[app(AGENT), app(HOME,'firefox'), app(AGENT,'dev-terminal'), app(HOME)];
 const groups=groupResults(ids,inventory);
-assert.deepEqual(groups.map(g=>g.heading),['sys-agent','usr-home']);
+assert.deepEqual(groups.map(g=>g.heading),['usr-assistant','usr-home']);
 assert.deepEqual(groups[0].ids,[ids[0],ids[2]]);
 assert.deepEqual(groups[1].ids,[ids[1],ids[3]]);
 assert.equal(groups[0].stopped,true);
@@ -105,9 +105,9 @@ data[AGENT].uuid=HOME;
 const inventory=parseInventory(JSON.stringify(data));
 assert.equal(inventory.get(HOME).color,null);
 assert.equal(inventory.has(AGENT),false);
-const local=describeResult('fake.desktop','sys-agent: Console',inventory);
+const local=describeResult('fake.desktop','usr-assistant: Console',inventory);
 assert.equal(local.heading,'sys-gui');
-assert.equal(local.title,'sys-agent: Console');
+assert.equal(local.title,'usr-assistant: Console');
 assert.equal(local.color,null);
 assert.equal(describeResult('shutdown','Power Off',inventory).heading,'System');
 for(const name of ['<b>bad</b>','bad\\n','a'.repeat(32)]) {
@@ -170,7 +170,7 @@ def test_rows_reuse_original_controls_and_wrap_full_names(javascript):
     javascript("""
 const inventory=parseInventory(JSON.stringify(snapshot()));
 const id=app(AGENT), action='shutdown';
-const names={[id]:'sys-agent: A very long application name', [action]:'Power Off'};
+const names={[id]:'usr-assistant: A very long application name', [action]:'Power Off'};
 const display=new VMSearchResults(provider(names),{},()=>inventory);
 await display.updateSearch([id,action],['app']);
 const row=display.getFirstResult();
@@ -184,7 +184,7 @@ assert.equal(row.icon.iconSize,32);
 assert.equal(display._groups[0].get_child().get_children().at(-1).text,'Stopped');
 assert.equal(display._resultDisplays[action].activate(),action);
 assert.equal(display._groups[0].get_child().can_focus,false);
-names[id]='sys-agent: Renamed application';
+names[id]='usr-assistant: Renamed application';
 await display.updateSearch([id],['app']);
 assert.equal(display.getFirstResult(),row);
 assert.equal(row.destroyed,undefined);
@@ -199,7 +199,7 @@ def test_late_queries_and_destroyed_displays_cannot_publish(javascript):
     javascript("""
 const inventory=parseInventory(JSON.stringify(snapshot()));
 const home=app(HOME), agent=app(AGENT);
-const display=new VMSearchResults(provider({[home]:'usr-home: Console',[agent]:'sys-agent: Console'}),{},()=>inventory);
+const display=new VMSearchResults(provider({[home]:'usr-home: Console',[agent]:'usr-assistant: Console'}),{},()=>inventory);
 const requests=[];
 const original=display._ensureResultActors.bind(display);
 display._ensureResultActors=ids=>new Promise(resolve=>requests.push(async()=>{await original(ids);resolve();}));

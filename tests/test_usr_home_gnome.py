@@ -29,7 +29,7 @@ def test_usr_home_uses_upstream_gnome_apps_without_installation_or_a_desktop():
           (builtins.filter (definition:
             lib.hasSuffix "/services/desktop-managers/gnome.nix" definition.file)
             stock.options.environment.systemPackages.definitionsWithLocations);
-        minimalNames = [ "sys-agent" "sys-ctrl" "sys-gui-usb-gui-lab" "sys-net" "sys-firewall" ];
+        minimalNames = [ "usr-assistant" "sys-ctrl" "sys-gui-usb-gui-lab" "sys-net" "sys-firewall" ];
       in {{
         packages = names home.environment.systemPackages;
         stockApps = names stockApps;

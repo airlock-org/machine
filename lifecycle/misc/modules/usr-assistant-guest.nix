@@ -6,12 +6,12 @@ in
 {
   imports = [
     ./app-gui-guest.nix
-    ./sys-agent-machine-build.nix
-    ./sys-agent-build-store.nix
+    ./usr-assistant-machine-build.nix
+    ./usr-assistant-build-store.nix
     ./machine-source-seed.nix
   ];
 
-  # sys-agent is an intentionally privileged USB-lab development domain. It
+  # usr-assistant is an intentionally privileged USB-lab development domain. It
   # remains the Tailnet entry point for the development-only dom0 qrexec shell.
   services.tailscale = {
     enable = true;
@@ -36,7 +36,7 @@ in
     requires = [ "airlock-agent-tailscale-state.service" ];
     after = [ "airlock-agent-tailscale-state.service" ];
     serviceConfig.BindPaths = [ "/rw/config/tailscale:/var/lib/tailscale" ];
-    serviceConfig.ExecStartPost = [ "${pkgs.tailscale}/bin/tailscale set --hostname=sys-agent" ];
+    serviceConfig.ExecStartPost = [ "${pkgs.tailscale}/bin/tailscale set --hostname=usr-assistant" ];
   };
   environment.systemPackages = [
     pkgs.codex
@@ -61,19 +61,19 @@ in
     UV_PYTHON = "${pkgs.python3}/bin/python3";
     UV_PYTHON_DOWNLOADS = "never";
   };
-  environment.etc."airlock/sys-agent/AGENTS.md".source = ./sys-agent/AGENTS.md;
-  environment.etc."airlock/sys-agent/home-AGENTS.md".source = ./sys-agent/home-AGENTS.md;
-  systemd.services.airlock-sys-agent-workspace = {
-    description = "Initialize persistent sys-agent workspace and guidance";
+  environment.etc."airlock/usr-assistant/AGENTS.md".source = ./usr-assistant/AGENTS.md;
+  environment.etc."airlock/usr-assistant/home-AGENTS.md".source = ./usr-assistant/home-AGENTS.md;
+  systemd.services.airlock-usr-assistant-workspace = {
+    description = "Initialize persistent usr-assistant workspace and guidance";
     wantedBy = [ "multi-user.target" ];
     requires = [ "airlock-qubes-rw-init.service" ];
     after = [ "airlock-qubes-rw-init.service" ];
     before = [ "airlock-machine-source-seed.service" "qubes-qrexec-agent.service" ];
     path = [ pkgs.coreutils ];
     script = ''
-      ${pkgs.bash}/bin/bash ${./sys-agent/workspace-init.sh} \
-        ${lib.escapeShellArg cfg.codexHome} /etc/airlock/sys-agent/AGENTS.md \
-        ${lib.escapeShellArg "/home/${cfg.user}"} /etc/airlock/sys-agent/home-AGENTS.md \
+      ${pkgs.bash}/bin/bash ${./usr-assistant/workspace-init.sh} \
+        ${lib.escapeShellArg cfg.codexHome} /etc/airlock/usr-assistant/AGENTS.md \
+        ${lib.escapeShellArg "/home/${cfg.user}"} /etc/airlock/usr-assistant/home-AGENTS.md \
         ${lib.escapeShellArg cfg.configRepoPath}
     '';
     serviceConfig = {

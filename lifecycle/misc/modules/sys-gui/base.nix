@@ -134,20 +134,20 @@ print("airlock.AppSessionReady" if vm.features.get("supported-rpc.airlock.AppSes
     noDisplay = true;
     mimeTypes = [ "x-scheme-handler/http" "x-scheme-handler/https" ];
   };
-  sysAgentTailscaleEnrollment = pkgs.writeShellScript "airlock-start-sys-agent-tailscale" ''
+  usrAssistantTailscaleEnrollment = pkgs.writeShellScript "airlock-start-usr-assistant-tailscale" ''
     set -eu
     exec ${pkgs.python3.pkgs.qubes-core-admin-client}/bin/qvm-run \
-      --pass-io --no-gui --service sys-agent airlock.DevTailscaleUp
+      --pass-io --no-gui --service usr-assistant airlock.DevTailscaleUp
   '';
-  sysAgentTailscaleLauncher = pkgs.writeShellScriptBin "airlock-start-sys-agent-tailscale" ''
-    exec ${pkgs.xterm}/bin/xterm -hold -fa 'DejaVu Sans Mono' -fs 16 -geometry 100x30 -T 'Start sys-agent Tailscale' \
-      -e ${sysAgentTailscaleEnrollment}
+  usrAssistantTailscaleLauncher = pkgs.writeShellScriptBin "airlock-start-usr-assistant-tailscale" ''
+    exec ${pkgs.xterm}/bin/xterm -hold -fa 'DejaVu Sans Mono' -fs 16 -geometry 100x30 -T 'Start usr-assistant Tailscale' \
+      -e ${usrAssistantTailscaleEnrollment}
   '';
-  sysAgentTailscaleDesktop = pkgs.makeDesktopItem {
-    name = "airlock-start-sys-agent-tailscale";
-    desktopName = "Start sys-agent Tailscale";
-    comment = "Enroll sys-agent in Tailscale and display the login URL";
-    exec = "airlock-start-sys-agent-tailscale";
+  usrAssistantTailscaleDesktop = pkgs.makeDesktopItem {
+    name = "airlock-start-usr-assistant-tailscale";
+    desktopName = "Start usr-assistant Tailscale";
+    comment = "Enroll usr-assistant in Tailscale and display the login URL";
+    exec = "airlock-start-usr-assistant-tailscale";
     icon = "network-workgroup";
     categories = [ "System" "Network" ];
   };
@@ -233,8 +233,8 @@ in
     default = "usr-home";
     description = "VM whose default browser handles web links; null for local desktop applications.";
   };
-  options.airlock.sysGuiGuest.sysAgentTailscaleShortcut.enable = lib.mkEnableOption
-    "the desktop shortcut that enrolls sys-agent in Tailscale";
+  options.airlock.sysGuiGuest.usrAssistantTailscaleShortcut.enable = lib.mkEnableOption
+    "the desktop shortcut that enrolls usr-assistant in Tailscale";
 
   config = lib.mkIf cfg.enable {
     airlock.inputProxy.receiver.enable = lib.mkDefault (!hybrid);
@@ -273,9 +273,9 @@ in
     ]
     ++ lib.optional cfg.applicationMenus.enable applicationMenus
     ++ lib.optionals (cfg.defaultApplicationVM != null) [ openUrlLauncher openUrlDesktop ]
-    ++ lib.optionals cfg.sysAgentTailscaleShortcut.enable [
-      sysAgentTailscaleLauncher
-      sysAgentTailscaleDesktop
+    ++ lib.optionals cfg.usrAssistantTailscaleShortcut.enable [
+      usrAssistantTailscaleLauncher
+      usrAssistantTailscaleDesktop
     ];
 
     services.udev.packages = [ guiAgent ];

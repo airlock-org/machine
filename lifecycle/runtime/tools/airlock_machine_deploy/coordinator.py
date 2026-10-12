@@ -521,7 +521,7 @@ class Coordinator:
                     "--view-backend",
                     store["viewBackend"],
                     "--approved-by",
-                    "sys-agent",
+                    "usr-assistant",
                 )
             )
             if match["status"] == "found":
@@ -588,7 +588,9 @@ class Coordinator:
 
         previous = handoff["from"]
         target = handoff["to"]
-        if {previous, target} != {"sys-agent", "sys-net"}:
+        if {previous, target} not in (
+            {"sys-agent", "sys-net"}, {"usr-assistant", "sys-net"}
+        ):
             raise DeploymentError("unsupported automatic network PCI handoff")
         app = qubesadmin.Qubes()
         network_ports = set()

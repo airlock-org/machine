@@ -1,8 +1,8 @@
 { config, lib, pkgs, ... }:
 let
   cfg = config.airlock.qubeGuest;
-  tool = pkgs.writeShellScript "sys-agent-build-store" ''
-    exec ${pkgs.python3}/bin/python3 ${../../runtime/tools/scripts/sys-agent-build-store.py} \
+  tool = pkgs.writeShellScript "usr-assistant-build-store" ''
+    exec ${pkgs.python3}/bin/python3 ${../../runtime/tools/scripts/usr-assistant-build-store.py} \
       "$@" --domain ${lib.escapeShellArg cfg.role} --user ${lib.escapeShellArg cfg.user} --nix-store ${pkgs.nix}/bin/nix-store
   '';
   devices = [ "dev-xvdg.device" "dev-xvdh.device" ];

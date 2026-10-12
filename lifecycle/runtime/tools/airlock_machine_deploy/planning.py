@@ -8,7 +8,7 @@ def automatic_network_pci_owner(topology):
     """The USB lab's sole root provider that discovers physical network PCI."""
     owners = [
         name
-        for name in ("sys-agent", "sys-net")
+        for name in ("sys-agent", "usr-assistant", "sys-net")
         if (domain := topology.get("domains", {}).get(name))
         and domain.get("prefs", {}).get("provides_network") is True
         and not domain.get("netvm")

@@ -209,7 +209,7 @@ def finish_publication(root, record, registration, timings):
     timings["host_database_seconds"] = time.monotonic() - started
     started = time.monotonic()
     refresh_builder(root, "sys-ctrl", registration, statistics=timings)
-    refresh_builder(root, "sys-agent", registration, seed_role="sys-ctrl")
+    refresh_builder(root, "usr-assistant", registration, seed_role="sys-ctrl")
     timings["controller_base_seconds"] = time.monotonic() - started
     return dict(record, timings=timings)
 

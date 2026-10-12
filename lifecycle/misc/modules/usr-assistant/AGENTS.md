@@ -1,20 +1,23 @@
-# Working on Airlock from sys-agent
+# Computer assistance from usr-assistant
 
-These instructions describe the installed sys-agent development workspace.
+These instructions describe the installed usr-assistant computer workspace.
+Assist with inspection, configuration, maintenance, automation and development.
+Use scoped existing tools and Qubes interfaces; the assistant role does not
+grant automatic access to other VMs' files, credentials or system authority.
 Honor discussion-only requests. Complete authorized work without repeatedly
 asking for permission; apply a deployment when the user's request authorizes it.
 
 ## Find the system and source
 
-- `sys-agent` is the connected development and management VM. Its Console,
+- `usr-assistant` is the user's connected computer-assistant VM. Its Console,
   Codex, checkout, and private data live here; sys-gui displays its windows.
 - `sys-gui` owns GNOME and forwards application windows. `usr-home` owns the
-  user's applications and files. Both usr-home and sys-agent connect through
+  user's applications and files. Both usr-home and usr-assistant connect through
   `sys-firewall`; `sys-net` owns the network device.
 - `sys-ctrl` builds committed sources and submits validated artifacts. Dom0
   owns Xen, Qubes policy, VM configuration, and journalled deployment.
 - The editable machine checkout is `~/airlock-machine`. Start
-  with `git status`, `AGENTS.md`, `README.md`, and `docs/sys-agent.md` there.
+  with `git status`, `AGENTS.md`, `README.md`, and `docs/usr-assistant.md` there.
 - Guest modules are in `lifecycle/misc/modules/`; built-in VM defaults are in
   `lifecycle/bootstrap/default-domains/`. `flake.nix` exposes configurations
   and releases. Deployment clients are in `lifecycle/runtime/tools/`.
@@ -31,7 +34,7 @@ author identity, ask the user for their name/email before making commits.
 The seeded remote can point at the external development computer; a working
 upstream remote is not required for local commits or deployment.
 
-Run `make test-quick`. The sys-agent login environment sets `AIRLOCK_LOG_DIR`
+Run `make test-quick`. The usr-assistant login environment sets `AIRLOCK_LOG_DIR`
 to `/home/user/.local/state/airlock/logs`; keep the test reports and logs there.
 The quick suite must remain free of Nix evaluations/builds and automatic tool
 provisioning. `uv sync --locked` prepares the pinned Python dependencies if
@@ -43,13 +46,13 @@ Deployment requires a clean committed checkout.
 ## Deploy through the existing controller
 
 For whole-machine changes, including VM additions, routing, preferences, or
-policy, run these commands from sys-agent:
+policy, run these commands from usr-assistant:
 
 ```sh
-airlock-sys-agent-machine-deploy plan
-airlock-sys-agent-machine-deploy apply
-airlock-sys-agent-machine-deploy status
-airlock-sys-agent-machine-deploy verify
+airlock-usr-assistant-machine-deploy plan
+airlock-usr-assistant-machine-deploy apply
+airlock-usr-assistant-machine-deploy status
+airlock-usr-assistant-machine-deploy verify
 ```
 
 `plan` builds and validates without activation. Inspect its changed/affected
@@ -61,33 +64,33 @@ the selected/running generations for the host and every VM.
 For a guest-package/module change with no topology or host-policy change:
 
 ```sh
-airlock-sys-agent-machine-deploy guest-plan --target usr-home
-airlock-sys-agent-machine-deploy guest-apply --target usr-home
-airlock-sys-agent-machine-deploy status
-airlock-sys-agent-machine-deploy verify
+airlock-usr-assistant-machine-deploy guest-plan --target usr-home
+airlock-usr-assistant-machine-deploy guest-apply --target usr-home
+airlock-usr-assistant-machine-deploy status
+airlock-usr-assistant-machine-deploy verify
 ```
 
-Replace `usr-home` with the changed guest. A sys-agent update terminates this
+Replace `usr-home` with the changed guest. A usr-assistant update terminates this
 Console/Codex process; the worker continues. Reconnect, inspect status, and
 resume the saved Codex session. Zellij survives a terminal disconnection, not
 a VM restart. A selected host update may require the user to reboot the laptop;
 report guest verification separately and verify again after reboot.
 
-An unchanged sys-agent with `airlock-gui-reconnect=1` can survive a sys-gui-only
+An unchanged usr-assistant with `airlock-gui-reconnect=1` can survive a sys-gui-only
 update. Check the plan's `gui_reconnect` entry: the guest, SSH and application
 processes stay up while their existing windows reconnect after desktop login.
-Installing or updating sys-agent itself still requires a guest restart.
+Installing or updating usr-assistant itself still requires a guest restart.
 
 ## Observe and recover
 
-- `airlock-sys-agent-machine-deploy status` reads the journal even when the
+- `airlock-usr-assistant-machine-deploy status` reads the journal even when the
   controller is unavailable; `verify` checks running generations.
 - `~/.local/share/airlock/machine-deploy/` contains agent deployment state.
   The controller keeps source candidates and observations under
   `~/.local/share/airlock/controller/` inside sys-ctrl.
 - If an interrupted transaction needs continuation, inspect status first,
-  then use `airlock-sys-agent-machine-deploy resume` when appropriate.
-  `airlock-sys-agent-machine-deploy rollback` restores the previous selection;
+  then use `airlock-usr-assistant-machine-deploy resume` when appropriate.
+  `airlock-usr-assistant-machine-deploy rollback` restores the previous selection;
   assess its restart effects and the user's authorized scope first.
 - The development-only `airlock-dom0-shell` provides diagnostics if needed.
   Use read-only observation first; normal deployment uses typed controller

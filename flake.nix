@@ -215,8 +215,8 @@
         mkHomeVmDomainEntry
         mkSysFirewallDomainEntry
         mkSysGuiDomainEntry
-        mkSysAgentDomainEntry
-        mkSysAgentDomainEntryWith
+        mkUsrAssistantDomainEntry
+        mkUsrAssistantDomainEntryWith
         mkSysCtrlDomainEntry
         mkSysCtrlDomainEntryWith
         mkSysNetDomainEntry
@@ -228,7 +228,7 @@
           bootstrapDomainEntriesSource = mkBootstrapDomains networkDebug;
           bootstrapDomainEntries = {
             sys-ctrl = bootstrapDomainEntriesSource.mkSysCtrlDomainEntry system;
-            sys-agent = bootstrapDomainEntriesSource.mkSysAgentDomainEntry system;
+            usr-assistant = bootstrapDomainEntriesSource.mkUsrAssistantDomainEntry system;
             usr-cmd = bootstrapDomainEntriesSource.mkCmdVmDomainEntry system;
             usr-home = bootstrapDomainEntriesSource.mkHomeVmDomainEntry system;
             sys-net = bootstrapDomainEntriesSource.mkSysNetDomainEntry system;
@@ -247,9 +247,9 @@
         inherit airlockConfigInputs;
       };
 
-      mkPoolAdmissionTestSysAgent = system:
+      mkPoolAdmissionTestUsrAssistant = system:
         let
-          entry = bootstrapDomains.mkSysAgentDomainEntry system;
+          entry = bootstrapDomains.mkUsrAssistantDomainEntry system;
         in
         materializeNixClosureDomain (entry // {
           domain = entry.domain // {
@@ -290,7 +290,7 @@
               }
               // lib.optionalAttrs poolAdmissionTest {
                 airlockConfigDomains = (mkBootstrapConfigDomains system networkDebug) // {
-                  sys-agent = mkPoolAdmissionTestSysAgent system;
+                  usr-assistant = mkPoolAdmissionTestUsrAssistant system;
                 };
               }
             )
@@ -316,8 +316,8 @@
             {
               airlock.poolAdmission = {
                 enable = true;
-                caller = "sys-agent";
-                targets = [ "sys-agent" ];
+                caller = "usr-assistant";
+                targets = [ "usr-assistant" ];
               };
               environment.systemPackages = [ machineDeploy ];
               environment.etc."airlock/machine-profile".text = "vm-pool-admission-test\n";
@@ -393,7 +393,7 @@
                 displayMode = "physical-amd-lab";
                 physicalDesktopOnBoot = true;
                 defaultApplicationVM = if withHome then "usr-home" else null;
-                sysAgentTailscaleShortcut.enable = withHome && !directDom0Terminal;
+                usrAssistantTailscaleShortcut.enable = withHome && !directDom0Terminal;
               };
               airlock.devDom0Terminal.guest.enable = directDom0Terminal;
               hardware.enableRedistributableFirmware = true;
@@ -411,7 +411,7 @@
           sys-gui-hybrid = mkUsbSysGuiDomainEntry system;
           sys-gui-standalone = mkUsbAmdSysGuiDomainEntry system "gnome" false true;
           sys-gui = mkUsbAmdSysGuiDomainEntry system "gnome" true false;
-          sys-agent = (bootstrapDomains.mkSysAgentDomainEntryWith system { inherit extraSpecialArgs; }) // { preparedDomainName = "sys-agent"; };
+          usr-assistant = (bootstrapDomains.mkUsrAssistantDomainEntryWith system { inherit extraSpecialArgs; }) // { preparedDomainName = "usr-assistant"; };
           sys-net = (bootstrapDomains.mkSysNetDomainEntry system) // { preparedDomainName = "sys-net"; };
           sys-firewall = (bootstrapDomains.mkSysFirewallDomainEntry system) // { preparedDomainName = "sys-firewall"; };
           sys-ctrl = (bootstrapDomains.mkSysCtrlDomainEntryWith system { inherit extraSpecialArgs; }) // { preparedDomainName = "sys-ctrl"; };
@@ -517,7 +517,7 @@
                     }
                   ];
                 };
-                sys-agent = machineDomain "sys-agent";
+                usr-assistant = machineDomain "usr-assistant";
                 sys-net = machineDomain "sys-net";
                 sys-firewall = machineDomain "sys-firewall";
                 sys-ctrl = machineDomain "sys-ctrl";
@@ -672,6 +672,9 @@
           airlock-domain-sys-gpu-store-closure = (mkSysGpuDomainEntry system).storeArtifact;
           airlock-machine-release-usb-lab =
             self.nixosConfigurations.machine.config.specialisation.usb-lab.configuration.system.build.airlockMachineRelease;
+          # One-shot migration; normal releases and fresh images have no copy/retirement intent.
+          airlock-machine-release-usb-lab-assistant-rename =
+            self.nixosConfigurations.machine-assistant-rename.config.specialisation.usb-lab.configuration.system.build.airlockMachineRelease;
           airlock-machine-release-usb-gui-lab =
             self.nixosConfigurations.machine.config.specialisation.usb-gui-lab.configuration.system.build.airlockMachineRelease;
           airlock-vm-gpu-lab-image = self.nixosConfigurations.vm-gpu-lab.config.system.build.image;
@@ -781,6 +784,14 @@
       # Minimal nested desktop harness. No physical GPU assignment and no
       # dependency on the full bootstrap/configuration VM topology.
       nixosConfigurations.machine = mkMachineConfiguration { };
+      nixosConfigurations.machine-assistant-rename = self.nixosConfigurations.machine.extendModules {
+        modules = [ ({ lib, ... }: {
+          specialisation.usb-lab.configuration.airlock.machineDeployment = {
+            retireDomains = lib.mkForce [ "sys-agent" ];
+            privateVolumeCopies.usr-assistant = "sys-agent";
+          };
+        }) ];
+      };
       nixosConfigurations.airlock-domain-sys-gui-usb =
         (mkUsbSysGuiDomainEntry "x86_64-linux").configuration;
       nixosConfigurations.airlock-domain-sys-gui-usb-gui-lab =
@@ -834,8 +845,8 @@
         (networkDebugBootstrapDomains.mkSysNetDomainEntry "x86_64-linux").configuration;
       nixosConfigurations.airlock-domain-sys-firewall =
         (mkSysFirewallDomainEntry "x86_64-linux").configuration;
-      nixosConfigurations.airlock-domain-sys-agent =
-        (mkSysAgentDomainEntry "x86_64-linux").configuration;
+      nixosConfigurations.airlock-domain-usr-assistant =
+        (mkUsrAssistantDomainEntry "x86_64-linux").configuration;
       nixosConfigurations.airlock-domain-sys-ctrl =
         (mkSysCtrlDomainEntry "x86_64-linux").configuration;
       nixosConfigurations.airlock-domain-usr-home =

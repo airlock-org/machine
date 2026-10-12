@@ -1,5 +1,5 @@
 {
-  guestHostName = "sys-agent";
+  guestHostName = "usr-assistant";
   label = "red";
   rootImageSizeMiB = 1024;
   netvm = "sys-firewall";
@@ -18,7 +18,7 @@
   features = {
     "airlock-managed" = "1";
     "airlock-gui-reconnect" = "1";
-    "airlock-role" = "sys-agent";
+    "airlock-role" = "usr-assistant";
     "menu-items" = "*";
     # Explicitly clear the prior provider features on deployed Qubes domains.
     "airlock-auto-network-pci" = "0";

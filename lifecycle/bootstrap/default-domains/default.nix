@@ -9,7 +9,7 @@ let
   sysNetPrivateSizeBytes = 2147483648;
 
   sysNetRoleDefaults = import ./sys-net.nix { inherit sysNetPrivateSizeBytes; };
-  sysAgentRoleDefaults = import ./sys-agent.nix;
+  usrAssistantRoleDefaults = import ./usr-assistant.nix;
   sysCtrlRoleDefaults = import ./sys-ctrl.nix;
   sysFirewallRoleDefaults = import ./sys-firewall.nix { inherit networkDebug; };
   sysGuiRoleDefaults = import ./sys-gui.nix;
@@ -47,36 +47,36 @@ let
       state = sysNetRoleDefaults.state;
     };
 
-  mkSysAgentDomainEntryWith =
+  mkUsrAssistantDomainEntryWith =
     system:
     { extraSpecialArgs ? { } }:
     let
       qubeBuilders = mkAirlockQubeBuilders system;
     in
     qubeBuilders.mkNixNativeDomain {
-      name = "sys-agent";
-      guestRole = "sys-agent";
+      name = "usr-assistant";
+      guestRole = "usr-assistant";
       inherit extraSpecialArgs;
       modules = [
         ({ lib, ... }: {
-          networking.hostName = sysAgentRoleDefaults.guestHostName;
+          networking.hostName = usrAssistantRoleDefaults.guestHostName;
           # Match the personal application VMs on the current lab display.
           airlock.appGui.scale = lib.mkDefault 3;
         })
-        ../../misc/modules/sys-agent-guest.nix
+        ../../misc/modules/usr-assistant-guest.nix
       ];
-      rootImageSizeMiB = sysAgentRoleDefaults.rootImageSizeMiB;
+      rootImageSizeMiB = usrAssistantRoleDefaults.rootImageSizeMiB;
       kernelName = airlockQubesVmKernelName;
-      label = sysAgentRoleDefaults.label;
-      netvm = sysAgentRoleDefaults.netvm;
-      prefs = sysAgentRoleDefaults.prefs;
-      features = sysAgentRoleDefaults.features;
-      services = sysAgentRoleDefaults.services;
-      devices = sysAgentRoleDefaults.devices;
-      state = sysAgentRoleDefaults.state;
+      label = usrAssistantRoleDefaults.label;
+      netvm = usrAssistantRoleDefaults.netvm;
+      prefs = usrAssistantRoleDefaults.prefs;
+      features = usrAssistantRoleDefaults.features;
+      services = usrAssistantRoleDefaults.services;
+      devices = usrAssistantRoleDefaults.devices;
+      state = usrAssistantRoleDefaults.state;
     };
 
-  mkSysAgentDomainEntry = system: mkSysAgentDomainEntryWith system { };
+  mkUsrAssistantDomainEntry = system: mkUsrAssistantDomainEntryWith system { };
 
   mkSysCtrlDomainEntryWith =
     system: { extraSpecialArgs ? { } }:
@@ -95,8 +95,8 @@ let
           nix.settings.max-jobs = 1;
         })
         ../../misc/modules/machine-source-seed.nix
-        ../../misc/modules/sys-agent-build-store.nix
-        ../../misc/modules/sys-agent-machine-build.nix
+        ../../misc/modules/usr-assistant-build-store.nix
+        ../../misc/modules/usr-assistant-machine-build.nix
       ];
       rootImageSizeMiB = sysCtrlRoleDefaults.rootImageSizeMiB;
       kernelName = airlockQubesVmKernelName;
@@ -251,8 +251,8 @@ in
     mkSysGuiDomainEntry
     mkSysGuiDomainEntryWith
     mkSysNetDomainEntry
-    mkSysAgentDomainEntry
-    mkSysAgentDomainEntryWith
+    mkUsrAssistantDomainEntry
+    mkUsrAssistantDomainEntryWith
     mkSysCtrlDomainEntry
     mkSysCtrlDomainEntryWith
     sysFirewallRoleDefaults

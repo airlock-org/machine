@@ -1,21 +1,21 @@
 { config, lib, pkgs, ... }:
 let
   cfg = config.airlock.qubeGuest;
-  role = cfg.role or "sys-agent";
+  role = cfg.role or "usr-assistant";
   repo = cfg.configRepoPath;
   state = "/home/${cfg.user}/.local/share/airlock/machine-build";
   cache = "/home/${cfg.user}/.cache/airlock-machine-source";
-  sourceTool = pkgs.writeShellScriptBin "airlock-sys-agent-machine-source" ''
+  sourceTool = pkgs.writeShellScriptBin "airlock-usr-assistant-machine-source" ''
     set -eu
 
     usage() {
       printf '%s\n' \
-        'usage: airlock-sys-agent-machine-source import --revision REV --lock-hash HASH < source.tar.gz' \
-        '       airlock-sys-agent-machine-source status'
+        'usage: airlock-usr-assistant-machine-source import --revision REV --lock-hash HASH < source.tar.gz' \
+        '       airlock-usr-assistant-machine-source status'
     }
 
     fail() {
-      printf 'airlock-sys-agent-machine-source: %s\n' "$*" >&2
+      printf 'airlock-usr-assistant-machine-source: %s\n' "$*" >&2
       exit 1
     }
 
@@ -108,7 +108,7 @@ let
         ;;
     esac
   '';
-  buildTool = pkgs.writeShellScriptBin "airlock-sys-agent-machine-build" ''
+  buildTool = pkgs.writeShellScriptBin "airlock-usr-assistant-machine-build" ''
     set -euo pipefail
     # build_installable runs inside command substitution during admission.
     # Bash otherwise clears errexit there and can hide a failed/interrupted build.
@@ -121,13 +121,13 @@ let
 
     usage() {
       printf '%s\n' \
-        'usage: airlock-sys-agent-machine-build preflight [--offline]' \
-        '       airlock-sys-agent-machine-build build [--offline] [.#INSTALLABLE]' \
-        '       airlock-sys-agent-machine-build admit [--offline] TARGET [.#INSTALLABLE]'
+        'usage: airlock-usr-assistant-machine-build preflight [--offline]' \
+        '       airlock-usr-assistant-machine-build build [--offline] [.#INSTALLABLE]' \
+        '       airlock-usr-assistant-machine-build admit [--offline] TARGET [.#INSTALLABLE]'
     }
 
     fail() {
-      printf 'airlock-sys-agent-machine-build: %s\n' "$*" >&2
+      printf 'airlock-usr-assistant-machine-build: %s\n' "$*" >&2
       exit 1
     }
 
@@ -278,7 +278,7 @@ let
       --option build-hook "" --store "$store_uri" "$@"
   '';
   deployTool = pkgs.writeShellApplication {
-    name = "airlock-sys-agent-machine-deploy";
+    name = "airlock-usr-assistant-machine-deploy";
     runtimeInputs = [
       configNixStore
       pkgs.coreutils
@@ -289,7 +289,7 @@ let
       pkgs.python3.pkgs.qubes-core-qrexec.domU
     ];
     text = ''
-      exec ${pkgs.python3}/bin/python3 ${../../runtime/tools/sys-agent-machine-deploy.py} "$@"
+      exec ${pkgs.python3}/bin/python3 ${../../runtime/tools/usr-assistant-machine-deploy.py} "$@"
     '';
   };
   ctrlDeploy = pkgs.writeShellApplication {
@@ -312,7 +312,7 @@ in
     ctrlDeploy
     pkgs.gitMinimal
     pkgs.gnutar
-  ] ++ (if role == "sys-agent" then [ deployTool ] else [ ]);
+  ] ++ (if role == "usr-assistant" then [ deployTool ] else [ ]);
   systemd.services.airlock-controller-observe = lib.mkIf (role == "sys-ctrl") {
     description = "Record authoritative dom0 deployment outcomes";
     after = [ "qubes-qrexec-agent.service" ];
@@ -329,7 +329,7 @@ in
   };
   environment.etc."qubes-rpc/airlock.Ctrl.GuestDeploy" = lib.mkIf (role == "sys-ctrl") {
     source = pkgs.writeShellScript "airlock-ctrl-guest-deploy-qrexec" ''
-      [ "''${QREXEC_REMOTE_DOMAIN:-}" = sys-agent ] || exit 1
+      [ "''${QREXEC_REMOTE_DOMAIN:-}" = usr-assistant ] || exit 1
       exec ${ctrlDeploy}/bin/airlock-sys-ctrl-guest-deploy serve
     '';
     mode = "0555";

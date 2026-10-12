@@ -12,23 +12,23 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 @pytest.mark.nix
-def test_sys_agent_machine_source_and_build_tools_are_persistent_and_scoped():
+def test_usr_assistant_machine_source_and_build_tools_are_persistent_and_scoped():
     expression = f"""
       let
         flake = builtins.getFlake "{ROOT}";
-        guest = flake.nixosConfigurations.airlock-domain-sys-agent.config;
+        guest = flake.nixosConfigurations.airlock-domain-usr-assistant.config;
         package = name: builtins.head (builtins.filter (item:
           (item.pname or item.name) == name
         ) guest.environment.systemPackages);
-        sourceTool = package "airlock-sys-agent-machine-source";
-        buildTool = package "airlock-sys-agent-machine-build";
+        sourceTool = package "airlock-usr-assistant-machine-source";
+        buildTool = package "airlock-usr-assistant-machine-build";
         storeTool = package "airlock-config-nix-store";
-        deployTool = package "airlock-sys-agent-machine-deploy";
+        deployTool = package "airlock-usr-assistant-machine-deploy";
       in {{
-        sourceTool = builtins.readFile "${{sourceTool}}/bin/airlock-sys-agent-machine-source";
-        buildTool = builtins.readFile "${{buildTool}}/bin/airlock-sys-agent-machine-build";
+        sourceTool = builtins.readFile "${{sourceTool}}/bin/airlock-usr-assistant-machine-source";
+        buildTool = builtins.readFile "${{buildTool}}/bin/airlock-usr-assistant-machine-build";
         storeTool = builtins.readFile "${{storeTool}}/bin/airlock-config-nix-store";
-        deployTool = builtins.readFile "${{deployTool}}/bin/airlock-sys-agent-machine-deploy";
+        deployTool = builtins.readFile "${{deployTool}}/bin/airlock-usr-assistant-machine-deploy";
         privateStore = guest.airlock.qubeGuest.configNixStoreRoot;
         assertionsPass = builtins.all (entry: entry.assertion) guest.assertions;
       }}
@@ -41,7 +41,7 @@ def test_sys_agent_machine_source_and_build_tools_are_persistent_and_scoped():
         check=False,
     )
     assert result.returncode == 0, result.stderr
-    log_dir = Path(os.environ["AIRLOCK_LOG_DIR"]) / "sys-agent-machine-build"
+    log_dir = Path(os.environ["AIRLOCK_LOG_DIR"]) / "usr-assistant-machine-build"
     log_dir.mkdir(parents=True, exist_ok=True)
     (log_dir / "report.json").write_text(result.stdout)
     report = json.loads(result.stdout)
@@ -58,21 +58,21 @@ def test_sys_agent_machine_source_and_build_tools_are_persistent_and_scoped():
     assert 'if type == "array" then .[] | .path else keys[] end' in report["buildTool"]
     assert "airlock-pool-send" in report["buildTool"]
     assert '--domain "$target"' in report["buildTool"]
-    assert "--domain sys-agent" not in report["buildTool"]
+    assert "--domain usr-assistant" not in report["buildTool"]
     assert ".activated == false and .retained == true" in report["buildTool"]
     assert "receipt_path" in report["buildTool"]
     assert "local-overlay-store" in report["storeTool"]
     assert "nix-store" in report["storeTool"]
-    assert "sys-agent-machine-deploy.py" in report["deployTool"]
+    assert "usr-assistant-machine-deploy.py" in report["deployTool"]
 
 
 def test_shared_machine_seed_service_includes_gzip_for_the_embedded_archive():
     seed_module = (ROOT / "lifecycle/misc/modules/machine-source-seed.nix").read_text()
-    sys_agent_module = (ROOT / "lifecycle/misc/modules/sys-agent-guest.nix").read_text()
+    usr_assistant_module = (ROOT / "lifecycle/misc/modules/usr-assistant-guest.nix").read_text()
     domains = (ROOT / "lifecycle/bootstrap/default-domains/default.nix").read_text()
 
     assert "pkgs.gnutar pkgs.gzip" in seed_module
-    assert "./machine-source-seed.nix" in sys_agent_module
+    assert "./machine-source-seed.nix" in usr_assistant_module
     assert "../../misc/modules/machine-source-seed.nix" in domains
 
 
@@ -83,7 +83,7 @@ def build_script(tmp_path):
       let
         tools = builtins.listToAttrs (map (name: {{ inherit name; value = "/tools"; }})
           [ "coreutils" "gitMinimal" "jq" "gawk" "gnugrep" ]);
-        module = import {ROOT}/lifecycle/misc/modules/sys-agent-machine-build.nix {{
+        module = import {ROOT}/lifecycle/misc/modules/usr-assistant-machine-build.nix {{
           config.airlock.qubeGuest = {{ user = "user"; configNixStoreRoot = "/unused";
             configRepoPath = "/home/user/airlock-machine"; }};
           lib.escapeShellArg = x: x;

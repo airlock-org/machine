@@ -53,7 +53,7 @@ def test_boot_extracts_exact_host_and_specialisation_identity():
 
 
 def load_builder():
-    spec = importlib.util.spec_from_file_location("builder_mount", ROOT / "lifecycle/runtime/tools/scripts/sys-agent-build-store.py")
+    spec = importlib.util.spec_from_file_location("builder_mount", ROOT / "lifecycle/runtime/tools/scripts/usr-assistant-build-store.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -76,18 +76,19 @@ def test_offline_additive_transition_preserves_upper_and_refuses_unknown_base(tm
     assert json.loads((tmp_path / "base.json").read_text()) == successor
 
 
-def test_cloned_builder_archives_former_role_without_reusing_its_upper(tmp_path):
+@pytest.mark.parametrize("previous_domain", ["former-builder", "sys-agent-builder"])
+def test_cloned_builder_archives_former_role_without_reusing_its_upper(tmp_path, previous_domain):
     mount = load_builder()
     state = tmp_path / "airlock-builder"
     state.mkdir()
-    previous = {"domain": "former-builder", "generation": 1}
+    previous = {"domain": previous_domain, "generation": 1}
     (state / "base.json").write_text(json.dumps(previous))
     (state / "upper").mkdir()
     (state / "upper/saved-output").write_text("preserved")
-    identity = {"domain": "sys-agent-builder", "generation": 1}
+    identity = {"domain": "usr-assistant-builder", "generation": 1}
     mount.archive_foreign_base(state, identity)
     mount.record_base(state, identity)
-    archive = tmp_path / "airlock-builder-former-builder"
+    archive = tmp_path / ("airlock-builder-" + previous_domain)
     assert (archive / "upper/saved-output").read_text() == "preserved"
     assert not (state / "upper").exists()
     mount.archive_foreign_base(state, identity)
@@ -101,7 +102,7 @@ def test_cloned_builder_refuses_to_replace_an_existing_archive(tmp_path):
     (state / "base.json").write_text(json.dumps({"domain": "former-builder"}))
     (tmp_path / "airlock-builder-former-builder").mkdir()
     with pytest.raises(RuntimeError, match="archive already exists"):
-        mount.archive_foreign_base(state, {"domain": "sys-agent-builder"})
+        mount.archive_foreign_base(state, {"domain": "usr-assistant-builder"})
     assert (state / "base.json").exists()
 
 
@@ -692,7 +693,7 @@ def test_publish_live_finishes_inside_lock_and_gc_root(tmp_path, monkeypatch, al
         assert locked
         assert already_published or gc_root.exists()
         assert registration == expected
-        if role == "sys-agent":
+        if role == "usr-assistant":
             assert kwargs == {"seed_role": "sys-ctrl"}
         else:
             assert "statistics" in kwargs
@@ -706,7 +707,7 @@ def test_publish_live_finishes_inside_lock_and_gc_root(tmp_path, monkeypatch, al
     monkeypatch.setattr(host, "seed_generation_metadata", seed)
     monkeypatch.setattr(host, "refresh_builder", refresh)
     result = host.publish_live(A)
-    assert events == ["seed", "sys-ctrl", "sys-agent"]
+    assert events == ["seed", "sys-ctrl", "usr-assistant"]
     assert not locked
     assert already_published or not gc_root.exists()
     assert {"host_database_seconds", "controller_base_seconds"} <= result["timings"].keys()

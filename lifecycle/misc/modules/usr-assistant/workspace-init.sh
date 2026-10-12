@@ -22,9 +22,17 @@ fi
 if [ ! -e "$guest_home/AGENTS.md" ] && [ ! -L "$guest_home/AGENTS.md" ]; then
   ln -s "$home_instructions" "$guest_home/AGENTS.md"
 fi
+# Retarget only the exact managed links copied from the previous VM. User
+# files, custom links and deliberate overrides keep their original contents.
+if [ -L "$guest_home/AGENTS.md" ] && [ "$(readlink -- "$guest_home/AGENTS.md")" = /etc/airlock/sys-agent/home-AGENTS.md ]; then
+  ln -sfn -- "$home_instructions" "$guest_home/AGENTS.md"
+fi
 install -d -m 0700 "$codex_state"
 # A stable /etc link follows system generations. Preserve user-written guidance
 # and deliberate overrides, including an existing dangling symlink.
 if [ ! -e "$codex_state/AGENTS.md" ] && [ ! -L "$codex_state/AGENTS.md" ]; then
   ln -s "$instructions" "$codex_state/AGENTS.md"
+fi
+if [ -L "$codex_state/AGENTS.md" ] && [ "$(readlink -- "$codex_state/AGENTS.md")" = /etc/airlock/sys-agent/AGENTS.md ]; then
+  ln -sfn -- "$instructions" "$codex_state/AGENTS.md"
 fi

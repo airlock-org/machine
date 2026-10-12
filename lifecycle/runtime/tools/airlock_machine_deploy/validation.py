@@ -82,7 +82,8 @@ def validate_staged_generation(
     approval = info.get("approval", {})
     provenance = info.get("provenance", {})
     if (
-        approval.get("approved_by") not in {"sys-agent", "sys-ctrl"}
+        # Recorded approvals from retained pre-rename generations remain valid.
+        approval.get("approved_by") not in {"sys-agent", "usr-assistant", "sys-ctrl"}
         or approval.get("transport") != "qrexec"
         or approval.get("source") != store["source"]
     ):

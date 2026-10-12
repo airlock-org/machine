@@ -43,7 +43,7 @@ let
   '';
   controlHandler = pkgs.writeShellScript "airlock-machine-control-qrexec" ''
     set -eu
-    case "''${QREXEC_REMOTE_DOMAIN:-}" in sys-agent|sys-ctrl) ;; *) exit 1 ;; esac
+    case "''${QREXEC_REMOTE_DOMAIN:-}" in usr-assistant|sys-ctrl) ;; *) exit 1 ;; esac
     exec /run/wrappers/bin/sudo -n ${control}
   '';
   guestHandler = action: helper: pkgs.writeShellScript "airlock-ctrl-guest-${action}-qrexec" ''
@@ -62,10 +62,10 @@ let
     exec /run/wrappers/bin/sudo -n ${candidateAdmission} "''${QREXEC_SERVICE_ARGUMENT:-}"
   '';
   guestPolicy = pkgs.writeTextDir "etc/qubes/policy.d/43-airlock-ctrl-guest.policy" ''
-    airlock.Ctrl.MachineControl + sys-agent dom0 allow
+    airlock.Ctrl.MachineControl + usr-assistant dom0 allow
     airlock.Ctrl.MachineControl + sys-ctrl dom0 allow
     airlock.Ctrl.MachineControl * @anyvm @anyvm deny
-    airlock.Ctrl.GuestDeploy * sys-agent sys-ctrl allow
+    airlock.Ctrl.GuestDeploy * usr-assistant sys-ctrl allow
     airlock.Ctrl.GuestDeploy * @anyvm @anyvm deny
     airlock.Ctrl.GuestPlan * sys-ctrl dom0 allow
     airlock.Ctrl.GuestPlan * @anyvm @anyvm deny

@@ -13,8 +13,8 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location(
-    "sys_agent_machine_deploy",
-    ROOT / "lifecycle/runtime/tools/sys-agent-machine-deploy.py",
+    "usr_assistant_machine_deploy",
+    ROOT / "lifecycle/runtime/tools/usr-assistant-machine-deploy.py",
 )
 DEPLOY = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(DEPLOY)
@@ -41,8 +41,8 @@ def test_guest_apply_delegates_to_controller(monkeypatch):
 def test_guest_plan_passes_explicit_checkout_to_controller(monkeypatch, tmp_path):
     calls = []
     monkeypatch.setattr(DEPLOY.subprocess, "call", lambda argv: calls.append(argv) or 0)
-    assert DEPLOY.main(["guest-plan", "--target", "sys-agent", "--repo", str(tmp_path)]) == 0
-    assert calls == [["airlock-sys-ctrl-guest-deploy", "plan", "sys-agent",
+    assert DEPLOY.main(["guest-plan", "--target", "usr-assistant", "--repo", str(tmp_path)]) == 0
+    assert calls == [["airlock-sys-ctrl-guest-deploy", "plan", "usr-assistant",
                       "--repo", str(tmp_path)]]
 
 
@@ -236,7 +236,7 @@ def test_transfer_exports_only_paths_missing_from_dom0(tmp_path, monkeypatch):
 
     class ReadingTransferSession(TransferSession):
         def run(self, script, timeout=60):
-            if "qrexec-client -d sys-agent" in script:
+            if "qrexec-client -d usr-assistant" in script:
                 self.commands.append((script, timeout))
                 # Reproduce a fast, one-path export that finishes before qrexec
                 # starts opening the FIFO. The writer must wait for this reader.
@@ -255,7 +255,7 @@ def test_transfer_exports_only_paths_missing_from_dom0(tmp_path, monkeypatch):
     assert arguments.read_text().splitlines() == ["--export", added]
     assert session.payload == b"payload"
     transfer_command, timeout = session.commands[-1]
-    assert "qrexec-client -d sys-agent" in transfer_command
+    assert "qrexec-client -d usr-assistant" in transfer_command
     assert "gzip -dc" in transfer_command
     assert "nix-store --import" in transfer_command
     assert timeout == 3600

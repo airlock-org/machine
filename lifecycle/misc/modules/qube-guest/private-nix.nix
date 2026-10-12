@@ -15,7 +15,7 @@ rec {
       esac
     done
 
-    ${lib.optionalString (builtins.elem cfg.role [ "sys-agent" "sys-ctrl" ]) ''
+    ${lib.optionalString (builtins.elem cfg.role [ "usr-assistant" "sys-ctrl" ]) ''
       [ "''${AIRLOCK_CONFIG_NIX_STORE_ROOT:-${cfg.configNixStoreRoot}}" = ${lib.escapeShellArg cfg.configNixStoreRoot} ] || {
         echo '${cfg.role} uses its pinned pool-backed store; use an explicit --store for a different store' >&2
         exit 1

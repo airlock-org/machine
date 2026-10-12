@@ -28,7 +28,7 @@ def is_mountpoint(path, mountinfo=Path("/proc/self/mountinfo")):
     return False
 
 
-def read_identity(metadata, domain="sys-agent"):
+def read_identity(metadata, domain="usr-assistant"):
     identity = json.loads((metadata / "identity.json").read_text())
     registration = (metadata / "registration").read_bytes()
     if (
@@ -136,7 +136,7 @@ def start(args):
             args.store_device,
         )
         identity, registration = read_identity(
-            pool / ".airlock-builder", getattr(args, "domain", "sys-agent")
+            pool / ".airlock-builder", getattr(args, "domain", "usr-assistant")
         )
         archive_foreign_base(state, identity)
         record_base(state, identity)
@@ -220,7 +220,7 @@ def main():
     parser.add_argument("--state", default="/rw/airlock-builder")
     parser.add_argument("--runtime", default="/run/airlock-builder")
     parser.add_argument("--user", default="user")
-    parser.add_argument("--domain", choices=("sys-agent", "sys-ctrl"), default="sys-agent")
+    parser.add_argument("--domain", choices=("usr-assistant", "sys-ctrl"), default="usr-assistant")
     parser.add_argument("--store-device", default="/dev/xvdg")
     parser.add_argument("--blob-device", default="/dev/xvdh")
     parser.add_argument("--nix-store", default="nix-store")
