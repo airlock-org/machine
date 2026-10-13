@@ -33,6 +33,87 @@ def test_controller_rejects_unversioned_request_before_import(monkeypatch):
         DEPLOY.serve()
 
 
+def test_old_assistant_cannot_submit_ordinary_requests(monkeypatch):
+    monkeypatch.setenv("QREXEC_REMOTE_DOMAIN", "sys-agent")
+    stream = io.BytesIO(json.dumps({"schema": DEPLOY.SCHEMA}).encode() + b"\n")
+    monkeypatch.setattr(DEPLOY.sys, "stdin", io.TextIOWrapper(stream))
+    monkeypatch.setattr(DEPLOY.subprocess, "run", lambda *_a, **_k: pytest.fail("import attempted"))
+    with pytest.raises(ValueError, match="ordinary candidates"):
+        DEPLOY.serve()
+
+
+def test_rename_protocol_cannot_select_an_individual_guest(monkeypatch):
+    monkeypatch.setenv("QREXEC_REMOTE_DOMAIN", "sys-agent")
+    header = {"schema": DEPLOY.RENAME_SCHEMA, "action": "apply", "target": "sys-ctrl"}
+    monkeypatch.setattr(DEPLOY.sys, "stdin", io.TextIOWrapper(io.BytesIO(json.dumps(header).encode() + b"\n")))
+    with pytest.raises(ValueError, match="whole-machine"):
+        DEPLOY.serve()
+
+
+@pytest.mark.parametrize("caller", ["sys-agent", "usr-assistant"])
+def test_rename_request_selects_migration_release_after_source_validation(tmp_path, monkeypatch, caller):
+    import tarfile
+
+    revision, lock_hash = "a" * 40, "b" * 64
+    archive = io.BytesIO()
+    with tarfile.open(fileobj=archive, mode="w:gz") as tar:
+        for name, contents in [("manifest.json", b"{}"), ("repo.bundle", b"bundle")]:
+            info = tarfile.TarInfo(name)
+            info.size = len(contents)
+            tar.addfile(info, io.BytesIO(contents))
+    payload = archive.getvalue()
+    header = {"schema": DEPLOY.RENAME_SCHEMA, "action": "machine-plan", "target": None,
+              "revision": revision, "lock_hash": lock_hash, "archive_bytes": len(payload)}
+    monkeypatch.setenv("QREXEC_REMOTE_DOMAIN", caller)
+    monkeypatch.setattr(DEPLOY.sys, "stdin", io.TextIOWrapper(io.BytesIO(json.dumps(header).encode() + b"\n" + payload)))
+    monkeypatch.setattr(DEPLOY, "STATE", tmp_path)
+    events = []
+    monkeypatch.setattr(DEPLOY.subprocess, "run", lambda *a, **k: events.append("import"))
+    monkeypatch.setattr(DEPLOY, "identity", lambda _: (revision, lock_hash))
+
+    def build(rev, lock, **options):
+        assert events == ["import"]
+        assert (rev, lock, options) == (revision, lock_hash, {"assistant_rename": True})
+        events.append("build")
+        return "/nix/store/migration"
+
+    monkeypatch.setattr(DEPLOY, "build_machine_release", build)
+    monkeypatch.setattr(DEPLOY, "send_machine_release", lambda *a, **k: events.append((a, k)))
+    DEPLOY.serve()
+    assert events[-1] == (("plan", "/nix/store/migration", revision, lock_hash), {"assistant_rename": True})
+    assert (DEPLOY.candidate_directory(revision, True) / "request.json").is_file()
+    assert not (DEPLOY.candidate_directory(revision) / "request.json").exists()
+
+
+@pytest.mark.parametrize("assistant_rename", [False, True])
+def test_submission_uses_distinct_wire_protocol_and_preserves_receiver_failure(tmp_path, monkeypatch, assistant_rename):
+    revision, lock_hash = "a" * 40, "b" * 64
+    monkeypatch.setattr(DEPLOY, "identity", lambda _: (revision, lock_hash))
+    monkeypatch.setattr(DEPLOY, "output", lambda *_: "")
+
+    def create_bundle(args, **kwargs):
+        Path(args[5]).write_bytes(b"bundle")
+
+    monkeypatch.setattr(DEPLOY.subprocess, "run", create_bundle)
+    class Input(io.BytesIO):
+        def close(self):
+            pass
+
+    class Receiver:
+        stdin = Input()
+        def wait(self):
+            return 77
+        def poll(self):
+            return 77
+
+    receiver = Receiver()
+    monkeypatch.setattr(DEPLOY.subprocess, "Popen", lambda *a, **k: receiver)
+    assert DEPLOY.request("machine-plan", None, tmp_path, assistant_rename=assistant_rename) == 77
+    header, archive = receiver.stdin.getvalue().split(b"\n", 1)
+    assert json.loads(header)["schema"] == (DEPLOY.RENAME_SCHEMA if assistant_rename else DEPLOY.SCHEMA)
+    assert archive
+
+
 @pytest.mark.nix
 def test_controller_and_dom0_policy_wiring():
     expression = f'''
@@ -41,6 +122,8 @@ def test_controller_and_dom0_policy_wiring():
           host = f.nixosConfigurations.machine.config.specialisation.usb-lab.configuration;
       in {{
         controllerService = toString ctrl.environment.etc."qubes-rpc/airlock.Ctrl.GuestDeploy".source;
+        controllerWrapper = builtins.readFile ctrl.environment.etc."qubes-rpc/airlock.Ctrl.GuestDeploy".source;
+        controllerPolicy = builtins.readFile "${{builtins.head (builtins.filter (p: p.name == "43-airlock-ctrl-guest.policy") host.virtualisation.qubes.packages)}}/etc/qubes/policy.d/43-airlock-ctrl-guest.policy";
         planService = toString host.environment.etc."qubes-rpc/airlock.Ctrl.GuestPlan".source;
         applyService = toString host.environment.etc."qubes-rpc/airlock.Ctrl.GuestApply".source;
         machinePlan = toString host.environment.etc."qubes-rpc/airlock.Ctrl.MachinePlan".source;
@@ -58,6 +141,9 @@ def test_controller_and_dom0_policy_wiring():
     assert report["admissionCaller"] == "sys-ctrl"
     assert report["bootDiagnostics"] is True
     assert "sys-ctrl" in report["builderService"]
+    assert "usr-assistant|sys-agent)" in report["controllerWrapper"]
+    assert "airlock.Ctrl.GuestDeploy * usr-assistant sys-ctrl allow" in report["controllerPolicy"]
+    assert "sys-agent sys-ctrl allow" not in report["controllerPolicy"]
     assert all(report[key].startswith("/nix/store/") for key in
                ("controllerService", "planService", "applyService", "machinePlan", "machineApply"))
 
@@ -222,3 +308,59 @@ def test_fresh_build_record_is_durable_before_return(tmp_path, monkeypatch):
     assert events == ["file", "replace", "directory"]
     saved = json.loads((DEPLOY.BUILD_RECORDS / revision / "build.json").read_text())
     assert (saved["release"], saved["revision"], saved["lock_hash"]) == (release, revision, lock_hash)
+
+
+@pytest.mark.parametrize("bad_intent", [None, "copies", "retirement"])
+def test_rename_build_is_separate_from_normal_cache_and_checks_copy_intent(tmp_path, monkeypatch, bad_intent):
+    revision, lock_hash = "a" * 40, "b" * 64
+    release = "/nix/store/" + "c" * 32 + "-rename"
+    monkeypatch.setattr(DEPLOY, "BUILD_RECORDS", tmp_path / "records")
+    monkeypatch.setattr(DEPLOY, "BUILDER_STORE", tmp_path / "store")
+    monkeypatch.setattr(DEPLOY, "identity", lambda _: (revision, lock_hash))
+    normal = DEPLOY.build_directory(revision)
+    normal.mkdir(parents=True)
+    (normal / "build.json").write_text('{"release":"/nix/store/ordinary"}')
+    physical = DEPLOY.BUILDER_STORE / release.lstrip("/")
+    physical.mkdir(parents=True)
+    manifest = {"schema": "airlock.machine-release.v1", "profile": "usb-lab",
+                "revision": revision, "lockHash": lock_hash,
+                "privateVolumeCopies": {"usr-assistant": "sys-agent"}, "retireDomains": ["sys-agent"]}
+    if bad_intent == "copies":
+        manifest["privateVolumeCopies"] = {}
+    if bad_intent == "retirement":
+        manifest["retireDomains"] = ["usr-home"]
+    (physical / "release.json").write_text(json.dumps(manifest))
+    calls = []
+    monkeypatch.setattr(DEPLOY, "output", lambda *args: calls.append(args) or release)
+    monkeypatch.setattr(DEPLOY.subprocess, "run", lambda *a, **k: None)
+    if bad_intent:
+        with pytest.raises(ValueError, match="provenance"):
+            DEPLOY.build_machine_release(revision, lock_hash, assistant_rename=True)
+        assert not (DEPLOY.build_directory(revision, True) / "build.json").exists()
+    else:
+        assert DEPLOY.build_machine_release(revision, lock_hash, assistant_rename=True) == release
+        assert (DEPLOY.build_directory(revision, True) / "build.json").is_file()
+    assert calls == [("airlock-usr-assistant-machine-build", "build", ".#airlock-machine-release-usb-lab-assistant-rename")]
+    assert json.loads((normal / "build.json").read_text())["release"] == "/nix/store/ordinary"
+
+
+@pytest.mark.parametrize("assistant_rename", [False, True])
+def test_ordinary_and_rename_apply_do_not_reuse_each_others_prepared_plan(tmp_path, monkeypatch, assistant_rename):
+    revision, lock_hash = "a" * 40, "b" * 64
+    release, transport = "/nix/store/release", "/nix/store/transport"
+    monkeypatch.setattr(DEPLOY, "BUILDER_STORE", tmp_path / "store")
+    monkeypatch.setattr(DEPLOY, "STATE", tmp_path / "state")
+    physical = DEPLOY.BUILDER_STORE / release.lstrip("/")
+    physical.mkdir(parents=True)
+    for name in ["topology.json", "root-artifacts.json"]:
+        (physical / name).write_text('{}')
+    (physical / "transport").symlink_to(transport)
+    DEPLOY.record(DEPLOY.candidate_directory(revision, not assistant_rename) / "plan.json",
+                  {"prepared": "other-plan", "source_release": transport})
+    monkeypatch.setattr(DEPLOY, "send_prepared", lambda *a, **k: pytest.fail("other plan reused"))
+    def fresh_prepare(action, *_):
+        assert action == "prepare"
+        raise RuntimeError("fresh preparation required")
+    monkeypatch.setattr(DEPLOY, "send_machine_transport", fresh_prepare)
+    with pytest.raises(RuntimeError, match="fresh preparation"):
+        DEPLOY.send_machine_release("apply", release, revision, lock_hash, assistant_rename=assistant_rename)

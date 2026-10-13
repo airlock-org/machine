@@ -55,6 +55,25 @@ def test_whole_machine_actions_delegate_to_controller_by_default(monkeypatch, ac
                       "--repo", str(DEPLOY.DEFAULT_REPO)]]
 
 
+@pytest.mark.parametrize("action", ["build", "plan", "apply"])
+def test_rename_submission_uses_frontend_from_the_verified_checkout(tmp_path, monkeypatch, action):
+    events = []
+    monkeypatch.setattr(DEPLOY, "source_identity", lambda repo: events.append(("verify", repo)))
+    monkeypatch.setattr(DEPLOY.subprocess, "call", lambda argv: events.append(argv) or 0)
+    assert DEPLOY.main([action, "--assistant-rename", "--repo", str(tmp_path)]) == 0
+    assert events == [("verify", tmp_path), [DEPLOY.sys.executable,
+        str(tmp_path / "lifecycle/runtime/tools/sys-ctrl-guest-deploy.py"),
+        "machine-" + action, "--repo", str(tmp_path), "--assistant-rename"]]
+
+
+@pytest.mark.parametrize("arguments", [["status", "--assistant-rename"], ["plan", "--assistant-rename", "--legacy-dom0"]])
+def test_rename_rejects_incompatible_actions_before_submission(monkeypatch, arguments):
+    monkeypatch.setattr(DEPLOY.subprocess, "call", lambda *_: pytest.fail("submission attempted"))
+    with pytest.raises(SystemExit) as error:
+        DEPLOY.main(arguments)
+    assert error.value.code == 2
+
+
 def test_dom0_bridge_allocates_the_terminal_required_by_qrexec(monkeypatch):
     class Process:
         stdin = BytesIO()

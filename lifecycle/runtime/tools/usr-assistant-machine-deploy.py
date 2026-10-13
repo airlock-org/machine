@@ -341,12 +341,16 @@ def main(argv=None):
     parser.add_argument("--release")
     parser.add_argument("--target")
     parser.add_argument("--legacy-dom0", action="store_true", help="use the development-only direct dom0 transport")
+    parser.add_argument("--assistant-rename", action="store_true",
+                        help="submit the one-shot sys-agent private-volume migration through sys-ctrl")
     parser.add_argument("--identity")
     parser.add_argument("--confirm")
     parser.add_argument("--retain", choices=("true", "false"))
     parser.add_argument("--allow-unexpired-trash", action="append", default=[])
     parser.add_argument("--before-expiry", action="store_true")
     args = parser.parse_args(argv)
+    if args.assistant_rename and (args.action not in {"build", "plan", "apply"} or args.legacy_dom0):
+        parser.error("assistant rename requires controller build, plan, or apply")
     if args.action in ("guest-plan", "guest-apply"):
         if not args.target:
             parser.error("--target is required for guest deployment")
@@ -357,6 +361,14 @@ def main(argv=None):
             "--repo", str(args.repo),
         ])
     if args.action in ("build", "plan", "apply") and not args.legacy_dom0:
+        if args.assistant_rename:
+            source_identity(args.repo)
+            # The installed old assistant client predates this option. Run the
+            # frontend from the same clean, committed checkout being submitted.
+            return subprocess.call([
+                sys.executable, str(args.repo / "lifecycle/runtime/tools/sys-ctrl-guest-deploy.py"),
+                "machine-" + args.action, "--repo", str(args.repo), "--assistant-rename",
+            ])
         return subprocess.call(["airlock-sys-ctrl-guest-deploy", "machine-" + args.action,
                                 "--repo", str(args.repo)])
     if (

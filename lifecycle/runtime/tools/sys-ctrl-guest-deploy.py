@@ -16,6 +16,7 @@ import tempfile
 import time
 
 SCHEMA = "airlock.sys-ctrl-guest-request.v1"
+RENAME_SCHEMA = "airlock.sys-ctrl-assistant-rename-request.v1"
 SOURCE_SCHEMA = "airlock.sys-agent-machine-source.v1"
 TARGETS = {"usr-assistant", "sys-ctrl", "sys-gui", "sys-net", "sys-firewall", "usr-home"}
 REPO = Path("/home/user/dev/airlock-machine")
@@ -23,6 +24,23 @@ MACHINE_SCHEMA = "airlock.sys-ctrl-machine-release.v2"
 STATE = Path.home() / ".local/share/airlock/controller"
 BUILDER_STORE = Path("/rw/airlock-builder/merged")
 BUILD_RECORDS = Path.home() / ".local/share/airlock/machine-deploy"
+
+
+def candidate_directory(revision, assistant_rename=False):
+    directory = STATE / "candidates" / revision
+    return directory / "assistant-rename" if assistant_rename else directory
+
+
+def build_directory(revision, assistant_rename=False):
+    directory = BUILD_RECORDS / revision
+    return directory / "assistant-rename" if assistant_rename else directory
+
+
+def rename_manifest_matches(manifest, assistant_rename):
+    return not assistant_rename or (
+        manifest.get("privateVolumeCopies") == {"usr-assistant": "sys-agent"}
+        and manifest.get("retireDomains") == ["sys-agent"]
+    )
 
 
 def record(path, value):
@@ -55,7 +73,9 @@ def identity(repo):
     ).hexdigest()
 
 
-def request(action, target, repo):
+def request(action, target, repo, *, assistant_rename=False):
+    if assistant_rename and action not in {"machine-build", "machine-plan", "machine-apply"}:
+        raise ValueError("assistant rename requires a whole-machine request")
     if action in {"plan", "apply"}:
         if target not in TARGETS:
             raise ValueError("unsupported guest deployment action or target")
@@ -84,7 +104,7 @@ def request(action, target, repo):
         with tarfile.open(archive, "w:gz") as stream:
             stream.add(bundle, arcname="repo.bundle")
             stream.add(directory / "manifest.json", arcname="manifest.json")
-        header = {"schema": SCHEMA, "action": action, "target": target,
+        header = {"schema": RENAME_SCHEMA if assistant_rename else SCHEMA, "action": action, "target": target,
                   "revision": revision, "lock_hash": lock_hash,
                   "archive_bytes": archive.stat().st_size}
         proc = subprocess.Popen(
@@ -105,14 +125,18 @@ def request(action, target, repo):
 
 
 def serve():
-    if os.environ.get("QREXEC_REMOTE_DOMAIN") != "usr-assistant":
+    caller = os.environ.get("QREXEC_REMOTE_DOMAIN")
+    if caller not in {"usr-assistant", "sys-agent"}:
         raise ValueError("only usr-assistant may submit candidates")
     line = sys.stdin.buffer.readline(4097)
     if len(line) > 4096 or not line.endswith(b"\n"):
         raise ValueError("invalid request header")
     header = json.loads(line)
-    if not isinstance(header, dict) or header.get("schema") != SCHEMA:
+    if not isinstance(header, dict) or header.get("schema") not in {SCHEMA, RENAME_SCHEMA}:
         raise ValueError("unsupported request schema")
+    assistant_rename = header["schema"] == RENAME_SCHEMA
+    if caller == "sys-agent" and not assistant_rename:
+        raise ValueError("only usr-assistant may submit ordinary candidates")
     action, target = header.get("action"), header.get("target")
     revision, lock_hash = header.get("revision"), header.get("lock_hash")
     size = header.get("archive_bytes")
@@ -122,6 +146,8 @@ def serve():
         raise ValueError("invalid deployment target")
     if action not in {"plan", "apply", "machine-build", "machine-plan", "machine-apply"}:
         raise ValueError("unsupported deployment action")
+    if assistant_rename and not action.startswith("machine-"):
+        raise ValueError("assistant rename requires a whole-machine request")
     if not isinstance(revision, str) or len(revision) != 40 or any(c not in "0123456789abcdef" for c in revision):
         raise ValueError("invalid source revision")
     if not isinstance(lock_hash, str) or len(lock_hash) != 64 or any(c not in "0123456789abcdef" for c in lock_hash):
@@ -143,7 +169,7 @@ def serve():
                     or any(not member.isfile() or member.size > 2 * 1024**3 for member in members)):
                 raise ValueError("invalid source bundle members")
         archive.seek(0)
-        candidate = STATE / "candidates" / revision
+        candidate = candidate_directory(revision, assistant_rename)
         candidate.mkdir(parents=True, exist_ok=True)
         with (candidate / "source.tar.gz.new").open("wb") as saved:
             while chunk := archive.read(1024 * 1024):
@@ -161,12 +187,13 @@ def serve():
     if identity(REPO) != (revision, lock_hash):
         raise ValueError("controller checkout differs from submitted source")
     if action.startswith("machine-"):
-        release = build_machine_release(revision, lock_hash)
+        options = {"assistant_rename": True} if assistant_rename else {}
+        release = build_machine_release(revision, lock_hash, **options)
         if action == "machine-build":
             print(json.dumps({"schema": MACHINE_SCHEMA, "release": release,
                               "revision": revision, "lock_hash": lock_hash}))
         else:
-            send_machine_release(action.removeprefix("machine-"), release, revision, lock_hash)
+            send_machine_release(action.removeprefix("machine-"), release, revision, lock_hash, **options)
         return
     configuration = "sys-gui-usb-lab" if target == "sys-gui" else target
     installable = f".#nixosConfigurations.airlock-domain-{configuration}.config.system.build.toplevel"
@@ -183,9 +210,9 @@ def serve():
     print(result.stdout, end="")
 
 
-def build_machine_release(revision, lock_hash):
+def build_machine_release(revision, lock_hash, *, assistant_rename=False):
     started = time.monotonic()
-    build_record = BUILD_RECORDS / revision / "build.json"
+    build_record = build_directory(revision, assistant_rename) / "build.json"
     if build_record.exists():
         saved = json.loads(build_record.read_text())
         release = saved.get("release", "")
@@ -198,22 +225,26 @@ def build_machine_release(revision, lock_hash):
             if (manifest.get("schema") == "airlock.machine-release.v1"
                     and manifest.get("profile") == "usb-lab"
                     and manifest.get("revision") == revision and manifest.get("lockHash") == lock_hash
-                    and identity(REPO) == (revision, lock_hash)):
+                    and identity(REPO) == (revision, lock_hash)
+                    and rename_manifest_matches(manifest, assistant_rename)):
                 saved.update(build_seconds=time.monotonic() - started, build_reused=True)
                 record(build_record, saved)
                 return release
-    release = output("airlock-usr-assistant-machine-build", "build",
-                     ".#airlock-machine-release-usb-lab")
+    installable = ".#airlock-machine-release-usb-lab"
+    if assistant_rename:
+        installable += "-assistant-rename"
+    release = output("airlock-usr-assistant-machine-build", "build", installable)
     physical = BUILDER_STORE / release.lstrip("/")
     manifest = json.loads((physical / "release.json").read_text())
     if (manifest.get("schema") != "airlock.machine-release.v1"
             or manifest.get("revision") != revision
             or manifest.get("lockHash") != lock_hash
-            or manifest.get("profile") != "usb-lab"):
+            or manifest.get("profile") != "usb-lab"
+            or not rename_manifest_matches(manifest, assistant_rename)):
         raise ValueError("built release provenance differs from submitted source")
     if identity(REPO) != (revision, lock_hash):
         raise ValueError("controller checkout changed during release build")
-    directory = BUILD_RECORDS / revision
+    directory = build_directory(revision, assistant_rename)
     directory.mkdir(parents=True, exist_ok=True)
     subprocess.run(["airlock-config-nix", "build", release,
                     "--out-link", str(directory / "release")], check=True)
@@ -236,7 +267,7 @@ def machine_response(data, stage):
     return result
 
 
-def send_prepared(release, revision, lock_hash, saved):
+def send_prepared(release, revision, lock_hash, saved, *, assistant_rename=False):
     header = {"schema": MACHINE_SCHEMA, "release": saved["source_release"],
               "revision": revision, "lock_hash": lock_hash, "profile": "usb-lab",
               "prepared": saved["prepared"]}
@@ -246,7 +277,7 @@ def send_prepared(release, revision, lock_hash, saved):
     if result.returncode:
         raise ValueError("prepared machine apply failed")
     payload["build_seconds"] = 0
-    record(STATE / "candidates" / revision / "apply.json", payload)
+    record(candidate_directory(revision, assistant_rename) / "apply.json", payload)
     print(json.dumps(payload, sort_keys=True))
 
 
@@ -275,7 +306,7 @@ def machine_metadata(topology):
     return metadata
 
 
-def admit_machine_guests(topology, roots, revision, lock_hash, metadata_file, admission):
+def admit_machine_guests(topology, roots, revision, lock_hash, metadata_file, admission, *, assistant_rename=False):
     receipts = {}
     for name, domain in sorted(topology["domains"].items()):
         backend = domain["backend"]
@@ -293,20 +324,22 @@ def admit_machine_guests(topology, roots, revision, lock_hash, metadata_file, ad
         if receipt.get("root_artifact") != roots[name]:
             raise ValueError("admitted root differs from built release")
         receipts[name] = receipt
-        record(STATE / "candidates" / revision / "admissions.json", receipts)
+        record(candidate_directory(revision, assistant_rename) / "admissions.json", receipts)
     return receipts
 
 
-def send_machine_release(action, release, revision, lock_hash):
+def send_machine_release(action, release, revision, lock_hash, *, assistant_rename=False):
     started = time.monotonic()
     physical = BUILDER_STORE / release.lstrip("/")
     topology = json.loads((physical / "topology.json").read_text())
     roots = json.loads((physical / "root-artifacts.json").read_text())
-    plan_record = STATE / "candidates" / revision / "plan.json"
+    candidate = candidate_directory(revision, assistant_rename)
+    options = {"assistant_rename": True} if assistant_rename else {}
+    plan_record = candidate / "plan.json"
     if action == "apply" and plan_record.exists():
         saved = json.loads(plan_record.read_text())
         if (saved.get("prepared") and saved.get("source_release") == os.readlink(physical / "transport")):
-            send_prepared(release, revision, lock_hash, saved)
+            send_prepared(release, revision, lock_hash, saved, **options)
             return
     transport = os.readlink(physical / "transport")
     authorization = send_machine_transport("prepare", transport, revision, lock_hash, {})
@@ -317,7 +350,7 @@ def send_machine_release(action, release, revision, lock_hash):
             or set(authorization.get("domains", [])) != expected_domains
             or not re.fullmatch(r"[0-9a-f]{64}", authorization.get("admission", ""))):
         raise ValueError("invalid candidate admission authorization")
-    record(STATE / "candidates" / revision / "admission-prepare.json", authorization)
+    record(candidate / "admission-prepare.json", authorization)
     receipts = {}
     metadata_started = time.monotonic()
     metadata = machine_metadata(topology)
@@ -327,14 +360,14 @@ def send_machine_release(action, release, revision, lock_hash):
         metadata_file = Path(metadata_dir) / "paths.json"
         metadata_file.write_text(json.dumps(metadata))
         receipts = admit_machine_guests(topology, roots, revision, lock_hash, metadata_file,
-                                       authorization["admission"])
+                                       authorization["admission"], **options)
     result = send_machine_transport(action, transport, revision, lock_hash, receipts)
     result["candidate_preparation"] = authorization
     for key in ("paths_transferred", "nar_bytes", "compressed_bytes"):
         result[key] += authorization[key]
     result["elapsed_seconds"] = time.monotonic() - started
     result.setdefault("timings", {})["machine_metadata_seconds"] = metadata_seconds
-    build_record = BUILD_RECORDS / revision / "build.json"
+    build_record = build_directory(revision, assistant_rename) / "build.json"
     result["build_seconds"] = json.loads(build_record.read_text())["build_seconds"]
     result["guest_transfer"] = {
         name: {key: receipt.get(key) for key in
@@ -349,7 +382,7 @@ def send_machine_release(action, release, revision, lock_hash):
             "allocated_bytes": receipt["root_allocated_bytes"],
         } for receipt in receipts.values()
     }
-    record(STATE / "candidates" / revision / (action + ".json"), result)
+    record(candidate / (action + ".json"), result)
     print(json.dumps(result, sort_keys=True))
 
 
@@ -422,7 +455,9 @@ def main():
         guest.add_argument("target", choices=sorted(TARGETS))
         guest.add_argument("--repo", type=Path, default=Path.home() / "airlock-machine")
     for action in ("machine-build", "machine-plan", "machine-apply"):
-        sub.add_parser(action).add_argument("--repo", type=Path, default=Path.home() / "airlock-machine")
+        machine = sub.add_parser(action)
+        machine.add_argument("--repo", type=Path, default=Path.home() / "airlock-machine")
+        machine.add_argument("--assistant-rename", action="store_true")
     sub.add_parser("serve")
     sub.add_parser("observe")
     args = parser.parse_args()
@@ -431,14 +466,17 @@ def main():
             STATE.mkdir(parents=True, exist_ok=True)
             with (STATE / "lock").open("a") as lock:
                 fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                for abandoned in (STATE / "candidates").glob("*/source.tar.gz.new"):
+                abandoned_sources = list((STATE / "candidates").glob("*/source.tar.gz.new"))
+                abandoned_sources += list((STATE / "candidates").glob("*/assistant-rename/source.tar.gz.new"))
+                for abandoned in abandoned_sources:
                     abandoned.unlink()
                 serve()
             return 0
         if args.action == "observe":
             observe()
             return 0
-        return request(args.action, getattr(args, "target", None), getattr(args, "repo", REPO))
+        options = {"assistant_rename": True} if getattr(args, "assistant_rename", False) else {}
+        return request(args.action, getattr(args, "target", None), getattr(args, "repo", REPO), **options)
     except (ValueError, OSError, subprocess.SubprocessError, json.JSONDecodeError, KeyError, IndexError, TypeError) as exc:
         print(f"airlock-sys-ctrl-guest-deploy: {exc}", file=sys.stderr)
         return 1

@@ -329,7 +329,13 @@ in
   };
   environment.etc."qubes-rpc/airlock.Ctrl.GuestDeploy" = lib.mkIf (role == "sys-ctrl") {
     source = pkgs.writeShellScript "airlock-ctrl-guest-deploy-qrexec" ''
-      [ "''${QREXEC_REMOTE_DOMAIN:-}" = usr-assistant ] || exit 1
+      # Old host policy still names sys-agent during the controller bootstrap.
+      # Python accepts that caller only for the explicit rename wire protocol;
+      # normal requests require usr-assistant. The host Qubes policy is unchanged.
+      case "''${QREXEC_REMOTE_DOMAIN:-}" in
+        usr-assistant|sys-agent) ;;
+        *) exit 1 ;;
+      esac
       exec ${ctrlDeploy}/bin/airlock-sys-ctrl-guest-deploy serve
     '';
     mode = "0555";
