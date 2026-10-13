@@ -296,6 +296,44 @@ def test_boot_install_profile_filter_does_not_modify_real_history(tmp_path):
     assert (filtered / 'system').readlink() == Path('system-2-link')
 
 
+def test_boot_install_reuses_sealed_history_without_regenerating_payloads(tmp_path):
+    from airlock_qubes_storage.host_install import copy_profiles
+    real, filtered = tmp_path / 'profiles', tmp_path / 'filtered'
+    real.mkdir()
+    old, selected, unsealed = [tmp_path / name for name in ('old', 'selected', 'unsealed')]
+    for path in (old, selected, unsealed):
+        path.mkdir()
+    for number, path in enumerate((old, selected, unsealed), 1):
+        (real / f'system-{number}-link').symlink_to(path)
+    (real / 'system').symlink_to('system-2-link')
+    recovery = real / 'system-profiles'
+    recovery.mkdir()
+    (recovery / 'recovery-1-link').symlink_to(old)
+    copy_profiles(real, filtered, sealed={str(old), str(selected)}, selected=selected)
+    assert not (filtered / 'system-1-link').exists()
+    assert not (filtered / 'system-profiles/recovery-1-link').exists()
+    assert (filtered / 'system-2-link').resolve() == selected
+    assert (filtered / 'system').resolve() == selected
+    assert (filtered / 'system-3-link').resolve() == unsealed
+    assert (real / 'system-1-link').resolve() == old
+    assert (recovery / 'recovery-1-link').resolve() == old
+
+
+def test_boot_install_refuses_corrupt_sealed_history(tmp_path, monkeypatch):
+    from airlock_qubes_storage import host_install
+    root = tmp_path / 'pool'
+    for name in ('host/boots', 'host/artifacts'):
+        (root / name).mkdir(parents=True)
+    record = {'system': '/nix/store/' + 'a' * 32 + '-system', 'generation': 1}
+    for name in ('host/boots', 'host/artifacts'):
+        (root / name / 'system.json').write_text(json.dumps(record))
+    def corrupt(*args):
+        raise ValueError('corrupt retained artifact')
+    monkeypatch.setattr(host_install.host_artifacts, 'verify', corrupt)
+    with pytest.raises(ValueError, match='corrupt retained artifact'):
+        host_install.verified_sealed_systems(root, tmp_path / 'esp')
+
+
 @pytest.mark.parametrize('failed', [False, True])
 def test_boot_installer_keeps_real_default_until_explicit_selection(tmp_path, monkeypatch, failed):
     import subprocess

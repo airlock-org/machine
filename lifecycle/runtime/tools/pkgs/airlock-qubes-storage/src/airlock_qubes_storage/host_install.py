@@ -14,20 +14,36 @@ import tempfile
 # Invoked by absolute filename in an unshared child; retain package imports.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from airlock_qubes_storage._engine import core, host  # noqa: E402
+from airlock_qubes_storage import host_artifacts  # noqa: E402
 
 
-def copy_profiles(source, target):
+def copy_profiles(source, target, *, sealed=(), selected=None):
     source, target = Path(source), Path(target)
     target.mkdir(parents=True, exist_ok=True)
     for path in source.iterdir():
         if path.is_symlink():
             if path.exists():
+                if (path.name != 'system' and str(path.resolve()) in sealed
+                        and path.resolve() != selected):
+                    continue
                 dest = target / path.name
                 dest.symlink_to(os.readlink(path))
                 st = path.lstat()
                 os.utime(dest, ns=(st.st_atime_ns, st.st_mtime_ns), follow_symlinks=False)
         elif path.is_dir() and path.name == 'system-profiles':
-            copy_profiles(path, target / path.name)
+            copy_profiles(path, target / path.name, sealed=sealed, selected=selected)
+
+
+def verified_sealed_systems(root, esp):
+    systems = set()
+    root = Path(root)
+    for path in (root / 'host/boots').glob('*.json'):
+        record = core.read_json(path)
+        if record.get('retired') or not (root / 'host/artifacts' / path.name).exists():
+            continue
+        host_artifacts.verify(root, esp, record)
+        systems.add(record['system'])
+    return systems
 
 
 def publish_loader(staged, loader):
@@ -51,11 +67,16 @@ def publish_loader(staged, loader):
     core.atomic_write(loader / 'loader.conf', '\n'.join([*choices, *lines]) + '\n')
 
 
-def install(system, profiles=Path('/nix/var/nix/profiles'), loader=Path('/boot/loader')):
+def install(system, profiles=Path('/nix/var/nix/profiles'), loader=Path('/boot/loader'),
+            pool=Path('/var/lib/airlock/closure-store')):
     core.store_entry(system)
     with tempfile.TemporaryDirectory(prefix='airlock-boot-profiles-') as directory:
         copied = Path(directory) / 'profiles'
-        copy_profiles(profiles, copied)
+        # Authenticated retained entries already boot independently from the ESP.
+        # Do not regenerate their upstream payload copies on a constrained ESP.
+        # The real profiles and retained entries remain unchanged.
+        sealed = verified_sealed_systems(pool, loader.parent)
+        copy_profiles(profiles, copied, sealed=sealed, selected=(profiles / 'system').resolve())
         if not (copied / 'system').exists():
             core.fail('selected host profile is unavailable for boot installation')
         # Upstream rewrites the default as part of installation. Keep its
