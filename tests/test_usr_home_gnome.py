@@ -274,7 +274,8 @@ def test_gnome_desktop_work_applications_are_routed_to_usr_home():
     assert "--auto --gui --pass-io --service" in report["launchHelper"]
     assert "qubes.WaitForSession" in report["launchHelper"]
     assert "supported-rpc.airlock.AppSessionReady" in report["launchHelper"]
-    assert "--foreground --signal=TERM --kill-after=5s 90s" in report["launchHelper"]
+    assert "readiness_deadline=$((SECONDS + 90))" in report["launchHelper"]
+    assert '--foreground --signal=TERM --kill-after=5s "$remaining"' in report["launchHelper"]
     assert "notify-send" in report["launchHelper"]
     assert "ding@rastersoft.com" not in report["workspaceGSettings"]
 
