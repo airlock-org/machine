@@ -1,14 +1,12 @@
-# Computer assistance from usr-assistant
+# Development workspace in usr-assistant
 
-`usr-assistant` is the user's workspace for assistance with their computer:
-inspection, configuration, maintenance, automation, and development. The
-current interface is Codex in Console. An integrated graphical assistant and
-conversational replacement for settings remain future interface work.
+`usr-assistant` is a separate development domain with a persistent machine
+checkout and command-line tools, including Codex in Console. Everyday
+applications and personal files remain in `usr-home`.
 
-The assistant uses the existing Qubes mechanisms. Sys-ctrl validates and builds
+System changes use the existing Qubes mechanisms. Sys-ctrl validates and builds
 committed source; dom0 retains policy, lifecycle, storage, and activation
-authority. Its development-specific dom0 access is explicitly configured and
-does not follow automatically from the assistant role.
+authority. Development-specific dom0 access is explicitly configured.
 
 Search GNOME for **usr-assistant: Console**. Console is the ordinary GNOME Console
 application running inside usr-assistant, with its windows forwarded through Qubes
