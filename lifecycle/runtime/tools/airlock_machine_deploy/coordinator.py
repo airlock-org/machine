@@ -704,10 +704,45 @@ class Coordinator:
         # Also verify manually started guests without requiring them next boot.
         return required | (self.running() & set(topology["domains"]))
 
+    def local_candidate(self, release):
+        """Keep boot metadata outside the store view being replaced."""
+        release = Path(release).resolve()
+        manifest, topology = load_release(release)
+        manifest = dict(manifest, sourceRelease=str(release))
+        files = {"release.json": manifest, "topology.json": topology}
+        for name in ("staged.json", "root-artifacts.json"):
+            if (release / name).is_file():
+                files[name] = read_json(release / name)
+        identity = digest(files)
+        candidate = self.state / "candidates" / identity
+        if candidate.exists():
+            if any(read_json(candidate / name) != value for name, value in files.items()):
+                raise DeploymentError("existing local candidate differs")
+            return candidate
+        candidate.parent.mkdir(parents=True, exist_ok=True)
+        temporary = candidate.parent / f".{identity}.new-{time.time_ns()}"
+        temporary.mkdir()
+        try:
+            for name, value in files.items():
+                atomic_json(temporary / name, value)
+            temporary.rename(candidate)
+            fd = os.open(candidate.parent, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(fd)
+            finally:
+                os.close(fd)
+        finally:
+            if temporary.exists():
+                shutil.rmtree(temporary)
+        return candidate
+
     def apply(self, release, recover=False, expected_state=None, administrative=False) -> DeploymentRecord:
         if administrative and (os.geteuid() != 0 or not DEV_MODE.exists()):
             raise DeploymentError("administrative repair requires dom0 root in development mode")
         release = Path(release).resolve()
+        source_release = release
+        if administrative and str(release).startswith("/nix/store/"):
+            release = self.local_candidate(release)
         self.releases.require_available_release(release)
         manifest, topology = load_release(release)
         with self.locked():
@@ -720,7 +755,7 @@ class Coordinator:
                 existing = read_json(latest)
                 if existing["phase"] in ("complete", "reboot-required") and existing[
                     "release"
-                ] == str(release):
+                ] in {str(release), str(source_release)}:
                     self.verify(topology, self.expected_running(topology, existing))
                     self.retirement.enforce_trash()
                     return existing
@@ -736,7 +771,7 @@ class Coordinator:
             interrupted = read_json(latest) if recover and latest.exists() else None
             # Resume compares against the pre-transaction topology, not the
             # selected-but-possibly-only-half-installed topology.
-            if interrupted and str(release) == interrupted["release"]:
+            if interrupted and interrupted["release"] in {str(release), str(source_release)}:
                 baseline = Path(interrupted["previous"])
             previous, old = load_release(baseline)
             profile = active_profile()
@@ -747,7 +782,7 @@ class Coordinator:
                 set(interrupted["plan"]["start"]) if interrupted else set()
             )
             rollback = (
-                interrupted is not None and str(release) != interrupted["release"]
+                interrupted is not None and interrupted["release"] not in {str(release), str(source_release)}
             )
             changes = plan(
                 old,

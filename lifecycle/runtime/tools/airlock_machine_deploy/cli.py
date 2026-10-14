@@ -138,7 +138,8 @@ def main(argv=None):
             key = "release" if args.action == "resume" else "previous"
             if key not in status:
                 raise DeploymentError("no deployment to resume or roll back")
-            result = coordinator.apply(status[key], recover=True)
+            result = coordinator.apply(status[key], recover=True,
+                                       administrative=status.get("administrative", False))
         elif args.action == "boot-setup":
             if args.gui or args.background:
                 coordinator.boot_setup(args.setup, args.args, gui=args.gui, background=args.background)

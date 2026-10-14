@@ -700,6 +700,40 @@ def test_host_repair_preserves_guests_and_rejects_stale_or_changed_baselines(
     assert result["observed"]
 
 
+def test_local_candidate_can_be_bound_without_reading_a_new_store_view(machine, tmp_path, topology):
+    from airlock_qubes_storage import host_machine
+    package = write_release(tmp_path / "package", topology)
+    candidate = machine.local_candidate(package)
+    assert candidate.is_relative_to(machine.state)
+    manifest = deploy.read_json(candidate / "release.json")
+    assert manifest["sourceRelease"] == str(package)
+    assert machine.local_candidate(package) == candidate
+    selection = {"release": str(candidate), "profile": "usb-lab", "transaction": "repair"}
+    deploy.atomic_json(machine.state / "selection.json", selection)
+    storage = tmp_path / "host-store"
+    host_machine.save(tmp_path / "pool", storage, machine.state,
+                      {"generation": 2, "system": manifest["host"]})
+    binding = deploy.read_json(storage / "generations/2/machine.json")
+    assert binding["selection"] == selection
+    # Candidate metadata is independent of an inaccessible older store view.
+    assert not (candidate / "release.json").is_symlink()
+
+
+def test_resume_preserves_the_recorded_administrative_mode(monkeypatch, capsys):
+    cli = importlib.import_module("airlock_machine_deploy.cli")
+    calls = []
+    class Coordinator:
+        def status(self):
+            return {"release": "/var/lib/airlock/machine/candidates/repair", "administrative": True}
+        def apply(self, release, **kwargs):
+            calls.append((release, kwargs))
+            return {"phase": "reboot-required"}
+    monkeypatch.setattr(cli, "Coordinator", Coordinator)
+    assert cli.main(["resume"]) == 0
+    assert calls == [("/var/lib/airlock/machine/candidates/repair", {"recover": True, "administrative": True})]
+    assert "reboot-required" in capsys.readouterr().out
+
+
 def new_release(tmp_path, topology):
     new = deepcopy(topology)
     new["domains"]["usr-home"]["backend"]["system"]["source"] += "-new"
