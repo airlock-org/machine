@@ -55,3 +55,8 @@ scope refusal, including when a VM restart interrupts the original reply.
 The physical lab still exposes development dom0 administrative access. That
 separate administrative/legacy route remains outside normal submission approval;
 this feature does not establish the full production Qubes security boundary.
+An explicit development-host `--legacy-dom0` apply uses the coordinator's
+`apply --administrative` repair route. It requires dom0 root and the installed
+development-mode marker, preserves artifact validation and deployment journaling,
+and records `administrative: true` in the transaction. Normal controller requests
+cannot select this option; the review marker and Qubes policy remain enabled.

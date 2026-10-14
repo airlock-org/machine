@@ -143,8 +143,8 @@ class Reviews:
         atomic_json(self.root / "bindings" / (key + ".json"), binding)
         return {"request_id": identity, "status": "approved", "plan": plan}
 
-    def activation(self, release, manifest, plan, recover=False):
-        if not MARKER.exists() or recover:
+    def activation(self, release, manifest, plan, recover=False, administrative=False):
+        if not MARKER.exists() or recover or administrative:
             return
         key = hashlib.sha256(str(Path(release).resolve()).encode()).hexdigest()
         path = self.root / "bindings" / (key + ".json")

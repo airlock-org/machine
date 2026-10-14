@@ -27,6 +27,8 @@ def main(argv=None):
         action_parser.add_argument("release", type=Path)
         if action == "apply":
             action_parser.add_argument("--expected-state")
+            action_parser.add_argument("--administrative", action="store_true",
+                                       help="Root-only development repair using the normal deployment journal and validation.")
     bind = sub.add_parser("machine-bind")
     bind.add_argument("release", type=Path)
     bind.add_argument("receipts")
@@ -116,7 +118,8 @@ def main(argv=None):
         elif args.action == "prepared-check":
             result = coordinator.check_prepared(args.release)
         elif args.action == "apply":
-            result = coordinator.apply(args.release, expected_state=args.expected_state)
+            result = coordinator.apply(args.release, expected_state=args.expected_state,
+                                       administrative=args.administrative)
         elif args.action in ("guest-plan", "guest-apply"):
             receipt = (
                 json.load(sys.stdin) if args.receipt == "-" else read_json(args.receipt)

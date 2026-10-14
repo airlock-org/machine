@@ -57,6 +57,7 @@ class DeploymentRecord(TypedDict):
     revision: str
     plan: DeploymentPlan
     phase: DeploymentPhase
+    administrative: NotRequired[bool]
     observed: NotRequired[dict[str, dict[str, str | None]]]
     gui_preserved: NotRequired[dict[str, dict[str, str]]]
     gui_reconnected: NotRequired[dict[str, dict[str, str]]]

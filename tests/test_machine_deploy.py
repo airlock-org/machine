@@ -625,6 +625,39 @@ def machine(tmp_path, topology, monkeypatch):
     return Machine(tmp_path / "state", baseline, topology)
 
 
+@pytest.mark.parametrize("uid, development", [(1000, False), (1000, True), (0, False)])
+def test_administrative_apply_requires_root_and_development_mode(machine, tmp_path, monkeypatch, uid, development):
+    marker = tmp_path / "dev-mode"
+    if development:
+        marker.touch()
+    monkeypatch.setattr(deploy, "DEV_MODE", marker)
+    monkeypatch.setattr(deploy.os, "geteuid", lambda: uid)
+    with pytest.raises(deploy.DeploymentError, match="requires dom0 root"):
+        machine.apply(tmp_path / "unused-release", administrative=True)
+    assert not machine.calls
+    assert not (machine.state / "latest.json").exists()
+
+
+def test_administrative_repair_is_journalled_without_disabling_normal_review(machine, tmp_path, topology, monkeypatch):
+    review = importlib.import_module("airlock_machine_deploy.review")
+    required = tmp_path / "review-required"
+    required.touch()
+    development = tmp_path / "dev-mode"
+    development.touch()
+    monkeypatch.setattr(review, "MARKER", required)
+    monkeypatch.setattr(deploy, "DEV_MODE", development)
+    monkeypatch.setattr(deploy.os, "geteuid", lambda: 0)
+    release = write_release(tmp_path / "repair", topology)
+    with pytest.raises(deploy.DeploymentError, match="human-approved"):
+        machine.apply(release)
+    record = machine.apply(release, administrative=True)
+    assert record["administrative"] is True
+    assert deploy.read_json(machine.state / "latest.json")["administrative"] is True
+    assert required.exists()
+    with pytest.raises(deploy.DeploymentError, match="human-approved"):
+        machine.apply(write_release(tmp_path / "next", topology, "next"))
+
+
 @pytest.fixture
 def readiness_clock(monkeypatch):
     clock = [0]

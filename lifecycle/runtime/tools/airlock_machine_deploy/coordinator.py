@@ -37,6 +37,7 @@ from .gui_reconnect import GUIReconnect
 
 STATE = Path("/var/lib/airlock/machine")
 IMAGE_SOURCE = Path("/run/current-system/etc/airlock/machine-source.json")
+DEV_MODE = Path("/etc/airlock/dev-mode")
 
 
 def image_source():
@@ -701,7 +702,9 @@ class Coordinator:
         # Also verify manually started guests without requiring them next boot.
         return required | (self.running() & set(topology["domains"]))
 
-    def apply(self, release, recover=False, expected_state=None) -> DeploymentRecord:
+    def apply(self, release, recover=False, expected_state=None, administrative=False) -> DeploymentRecord:
+        if administrative and (os.geteuid() != 0 or not DEV_MODE.exists()):
+            raise DeploymentError("administrative repair requires dom0 root in development mode")
         release = Path(release).resolve()
         self.releases.require_available_release(release)
         manifest, topology = load_release(release)
@@ -762,7 +765,8 @@ class Coordinator:
             from .review import Reviews
             approval_plan = dict(changes, host_reboot_required=(
                 str(Path("/run/current-system").resolve()) != manifest["host"]))
-            Reviews(self).activation(release, manifest, approval_plan, recover=recover)
+            Reviews(self).activation(release, manifest, approval_plan, recover=recover,
+                                     administrative=administrative)
             copy_plan = self.private_copies.inspect(
                 manifest.get("privateVolumeCopies", {}), old, topology)
             if copy_plan:
@@ -794,6 +798,7 @@ class Coordinator:
                 "revision": manifest["revision"],
                 "plan": changes,
                 "phase": "preflight",
+                "administrative": administrative,
                 "gui_preserved": gui_preserved,
             }
 
