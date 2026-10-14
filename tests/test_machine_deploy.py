@@ -886,6 +886,27 @@ def test_guest_candidate_updates_boot_system_and_preserves_other_options(
     machine.apply(machine.initial, recover=True)
 
 
+def test_guest_update_after_migration_does_not_repeat_retirement_or_private_copy(
+    machine, topology
+):
+    baseline_manifest = deploy.read_json(machine.initial / "release.json")
+    baseline_manifest.update(
+        retireDomains=["sys-agent"],
+        privateVolumeCopies={"usr-assistant": "sys-agent"},
+    )
+    deploy.atomic_json(machine.initial / "release.json", baseline_manifest)
+    preview = machine.inspect_guest(guest_receipt(machine, topology))
+    assert preview["plan"]["changed"] == ["usr-home"]
+    assert preview["plan"]["retire"] == []
+    assert preview["plan"].get("private_copies", []) == []
+    candidate = Path(preview["candidate"])
+    result = machine.apply(candidate)
+    assert result["plan"]["stop"] == ["usr-home"]
+    manifest, _ = deploy.load_release(candidate)
+    assert manifest["host"] == baseline_manifest["host"]
+    assert deploy.read_json(machine.initial / "release.json") == baseline_manifest
+
+
 @pytest.mark.parametrize(
     "opts", ["airlock.system=/wrong", "airlock.system=/wrong airlock.system=/wrong"]
 )

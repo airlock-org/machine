@@ -396,6 +396,10 @@ class Coordinator:
             revision=revision,
             lockHash=lock_hash,
             baseRelease=str(baseline),
+            # A guest update changes no domain identities. Migration actions
+            # belong to the transition into the baseline, not later releases.
+            retireDomains=[],
+            privateVolumeCopies={},
             stagedGenerations={**(current_release.get("stagedGenerations", {})
                                   if current_release.get("guestTransport") == "direct-pool-v1" else {}),
                                domain: generation},
