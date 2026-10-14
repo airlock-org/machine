@@ -138,7 +138,7 @@ in
     # Physical GUI startup provisions only its dependencies. The remaining
     # topology is reconciled after the guarded desktop and input are ready.
     airlock.qubes.deferredSetupConfigOnBoot.enable = lib.mkIf guardedGui (lib.mkForce true);
-    environment.etc."airlock/split-startup".text = lib.mkIf guardedGui "v1\n";
+    environment.etc."airlock/split-startup" = lib.mkIf guardedGui { text = "v1\n"; };
     environment.systemPackages = [ engine ];
     environment.etc."airlock/review-required" = lib.mkIf cfg.userReview { text = "v1\n"; };
     environment.etc."qubes-rpc/airlock.Ctrl.ReviewControl" = {
