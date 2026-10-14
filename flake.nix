@@ -3,7 +3,7 @@
 
   inputs = {
     airlock-apps = {
-      url = "git+https://github.com/airlock-org/airlock.git?dir=apps&rev=7035a500609b18eb092b087ec25be145c4899475";
+      url = "git+https://github.com/airlock-org/airlock.git?dir=apps&rev=4afc2fd42f6e824b65e68ee37ccab77fb6fd43c9";
       inputs.nixpkgs.follows = "nixpkgs";
     };
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
