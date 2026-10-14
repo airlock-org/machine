@@ -14,6 +14,25 @@ DEPLOY = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(DEPLOY)
 
 
+@pytest.mark.parametrize("action", ["plan", "apply", "machine-build", "machine-plan", "machine-apply"])
+def test_cli_submits_deployment_request(monkeypatch, tmp_path, action):
+    arguments = ["guest-deploy", action]
+    target = "usr-home" if action in {"plan", "apply"} else None
+    if target:
+        arguments.append(target)
+    arguments.extend(["--repo", str(tmp_path)])
+    monkeypatch.setattr(DEPLOY.sys, "argv", arguments)
+    calls = []
+
+    def submit(*args, **kwargs):
+        calls.append((args, kwargs))
+        return 77
+
+    monkeypatch.setattr(DEPLOY, "request", submit)
+    assert DEPLOY.main() == 77
+    assert calls == [((action, target, tmp_path), {})]
+
+
 def test_controller_rejects_unapproved_caller_before_reading_input(monkeypatch):
     monkeypatch.setenv("QREXEC_REMOTE_DOMAIN", "usr-browser")
     with pytest.raises(ValueError, match="only usr-assistant"):

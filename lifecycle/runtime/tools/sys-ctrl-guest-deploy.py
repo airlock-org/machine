@@ -508,10 +508,10 @@ def main():
             if os.environ.get("QREXEC_REMOTE_DOMAIN") != "usr-assistant":
                 raise ValueError("only usr-assistant may query review feedback")
             line = sys.stdin.buffer.readline(4097)
-            request = json.loads(line)
-            if len(line) > 4096 or set(request) != {"request_id"}:
+            status_request = json.loads(line)
+            if len(line) > 4096 or set(status_request) != {"request_id"}:
                 raise ValueError("invalid review status request")
-            print(json.dumps(review.reconcile(sys.modules[__name__], request["request_id"]), sort_keys=True))
+            print(json.dumps(review.reconcile(sys.modules[__name__], status_request["request_id"]), sort_keys=True))
             return 0
         if args.action == "review-status":
             review.job_path(STATE, args.request_id)
