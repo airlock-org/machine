@@ -39,7 +39,7 @@ The whole-machine release outputs are:
 
 They contain the host, declared VM topology, setup/coordinator programs, source
 revision, and lock hash. They do not assemble a USB disk image. The default
-hardware module describes a ThinkPad T14 Gen 3 AMD; another machine can replace
+hardware module provides the lab configuration; another machine can replace
 `hardwareModules` in `lib.mkMachineConfiguration` and add `extraModules`.
 
 ## Runtime and evidence

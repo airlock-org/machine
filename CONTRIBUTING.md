@@ -23,7 +23,7 @@ New regression tests use pytest and verify behavior and failure boundaries.
 
 For x86_64-linux Nix builds, set `AIRLOCK_DATA_ROOT` to your own storage and use
 the repository's Nix wrapper. `make test-nix` is opt-in. The existing machine
-uses a ThinkPad hardware example; `lib.mkMachineConfiguration` accepts a
+uses a lab hardware configuration; `lib.mkMachineConfiguration` accepts a
 replacement `hardwareModules` list and additional `extraModules`. See
 [the parent configuration guide](https://github.com/airlock-org/airlock/blob/main/docs/lab-configuration.md)
 or the local parent checkout's `docs/lab-configuration.md`.
