@@ -18,6 +18,10 @@ from .state import read_json
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="action", required=True)
+    sub.add_parser("review-control")
+    review_bind = sub.add_parser("review-bind")
+    review_bind.add_argument("request_id")
+    review_bind.add_argument("release", type=Path)
     for action in ("plan", "apply", "prepared-check"):
         action_parser = sub.add_parser(action)
         action_parser.add_argument("release", type=Path)
@@ -74,7 +78,18 @@ def main(argv=None):
     args = parser.parse_args(argv)
     coordinator = Coordinator()
     try:
-        if args.action == "admission-prepare":
+        if args.action in ("review-control", "review-bind"):
+            from .review import Reviews
+            with coordinator.locked():
+                reviews = Reviews(coordinator)
+                if args.action == "review-control":
+                    data = sys.stdin.buffer.readline(65537)
+                    if len(data) > 65536 or not data.endswith(b"\n"):
+                        raise DeploymentError("invalid review request")
+                    result = reviews.control(json.loads(data))
+                else:
+                    result = reviews.bind(args.request_id, args.release)
+        elif args.action == "admission-prepare":
             result = AdmissionManager(coordinator).prepare(args.release, args.caller, boot_id())
         elif args.action == "admission-receive":
             from airlock_qubes_storage._engine.artifacts import receive_incremental

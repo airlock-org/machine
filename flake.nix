@@ -2,6 +2,10 @@
   description = "Airlock: Qubes control stack on NixOS Xen dom0";
 
   inputs = {
+    airlock-apps = {
+      url = "git+https://github.com/airlock-org/airlock.git?dir=apps&rev=27f542b91975983f4da468a84f8a267899479003";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     nixpkgs-libvirt_10_5.url = "github:NixOS/nixpkgs/e0464e47880a69896f0fb1810f00e0de469f770a";
     dank-material-shell = {
@@ -192,6 +196,7 @@
       mkBootstrapDomains =
         networkDebug:
         import ./lifecycle/bootstrap/default-domains {
+          airlockCtrlSource = "${inputs.airlock-apps}";
           inherit
             lib
             mkAirlockQubeBuilders

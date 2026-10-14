@@ -325,6 +325,7 @@ def main(argv=None):
             "apply",
             "status",
             "verify",
+            "review-status",
             "resume",
             "rollback",
             "trash-list",
@@ -339,6 +340,7 @@ def main(argv=None):
     parser.add_argument("--repo", type=Path, default=DEFAULT_REPO)
     parser.add_argument("--state", type=Path, default=DEFAULT_STATE)
     parser.add_argument("--release")
+    parser.add_argument("--request-id")
     parser.add_argument("--target")
     parser.add_argument("--legacy-dom0", action="store_true", help="use the development-only direct dom0 transport")
     parser.add_argument("--assistant-rename", action="store_true",
@@ -349,6 +351,10 @@ def main(argv=None):
     parser.add_argument("--allow-unexpired-trash", action="append", default=[])
     parser.add_argument("--before-expiry", action="store_true")
     args = parser.parse_args(argv)
+    if args.action == "review-status":
+        if not args.request_id or args.legacy_dom0:
+            parser.error("review-status requires --request-id and the controller route")
+        return subprocess.call(["airlock-sys-ctrl-guest-deploy", "review-status", args.request_id])
     if args.assistant_rename and (args.action not in {"build", "plan", "apply"} or args.legacy_dom0):
         parser.error("assistant rename requires controller build, plan, or apply")
     if args.action in ("guest-plan", "guest-apply"):

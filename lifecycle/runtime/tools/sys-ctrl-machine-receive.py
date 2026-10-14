@@ -19,6 +19,24 @@ HEX = re.compile(r"[0-9a-f]+")
 MAX_HEADER = 16 * 1024 * 1024
 STATE = Path("/var/lib/airlock/machine")
 ENGINE = None
+REVIEW_REQUIRED = Path("/etc/airlock/review-required")
+
+
+def check_review(header):
+    if not REVIEW_REQUIRED.exists():
+        return
+    request = {"op": "check", "request_id": header.get("review_authorization"),
+               "revision": header["revision"], "lock_hash": header["lock_hash"]}
+    result = subprocess.run([ENGINE, "review-control"], input=json.dumps(request) + "\n",
+                            check=True, text=True, capture_output=True)
+    if json.loads(result.stdout)["binding"]["family"] != "machine":
+        raise ValueError("whole-machine operation requires whole-machine approval")
+
+
+def bind_review(header, candidate):
+    if REVIEW_REQUIRED.exists():
+        subprocess.run([ENGINE, "review-bind", header.get("review_authorization", ""), candidate],
+                       check=True, text=True, capture_output=True)
 
 
 class CountingReader:
@@ -57,6 +75,7 @@ def prepared_record(candidate, coordinator, release, revision, lock_hash):
 
 
 def apply_prepared(header):
+    check_review(header)
     token = header.get("prepared")
     if not isinstance(token, str) or not re.fullmatch(r"[0-9a-f]{64}", token):
         raise ValueError("invalid prepared candidate token")
@@ -65,15 +84,17 @@ def apply_prepared(header):
         raise ValueError("prepared candidate record checksum mismatch")
     if any(saved[key] != header[key] for key in ("release", "revision", "lock_hash")):
         raise ValueError("prepared candidate identity mismatch")
+    coordinator = ENGINE if REVIEW_REQUIRED.exists() else saved["coordinator"]
     started = time.monotonic()
     checked = json.loads(subprocess.run(
-        [saved["coordinator"], "prepared-check", saved["candidate"]],
+        [coordinator, "prepared-check", saved["candidate"]],
         check=True, text=True, capture_output=True).stdout)
     if checked != {key: saved[key] for key in ("plan", "state")}:
         raise ValueError("prepared candidate is stale; run machine-plan again")
+    bind_review(header, saved["candidate"])
     unit = "airlock-machine-deploy-" + uuid.uuid4().hex[:12]
     subprocess.run(["systemd-run", "--unit=" + unit, "--collect", "--property=Type=exec",
-                    saved["coordinator"], "apply", saved["candidate"],
+                    coordinator, "apply", saved["candidate"],
                     "--expected-state", saved["state"]], check=True, stdout=subprocess.DEVNULL)
     print(json.dumps({"schema": SCHEMA, "release": saved["candidate"],
                       "source_release": saved["release"], "plan": saved["plan"],
@@ -100,6 +121,7 @@ def receive(action):
         raise ValueError("invalid lock hash")
     if header.get("profile") != "usb-lab":
         raise ValueError("unsupported machine profile")
+    check_review(header)
     if "prepared" in header:
         if action != "apply":
             raise ValueError("prepared tokens are only accepted for apply")
@@ -179,6 +201,8 @@ def receive(action):
         STORE_PATH.pattern + r"/bin/airlock-machine-deploy", coordinator
     ):
         raise ValueError("invalid release coordinator")
+    if REVIEW_REQUIRED.exists():
+        coordinator = ENGINE
     bound = subprocess.run([coordinator, "machine-bind", release, "-"],
                            input=json.dumps(header.get("receipts")),
                            check=True, text=True, capture_output=True)
@@ -188,6 +212,7 @@ def receive(action):
     started = time.monotonic()
     plan = subprocess.run([coordinator, "plan", candidate], check=True,
                           text=True, capture_output=True)
+    bind_review(header, candidate)
     # Retain only host/transport objects. The pool owns guest retention.
     root = STATE / "roots" / ("pending-" + Path(candidate).name)
     root.parent.mkdir(parents=True, exist_ok=True)

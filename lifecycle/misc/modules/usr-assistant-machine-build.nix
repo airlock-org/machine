@@ -175,10 +175,10 @@ let
         offline_ready=true
       else
         offline_ready=false
-        if airlock-config-nix --extra-experimental-features nix-command --extra-experimental-features flakes flake metadata --offline "$repo" --json >/dev/null 2>&1; then
+        if airlock-config-nix --extra-experimental-features nix-command --extra-experimental-features flakes flake metadata --offline --no-write-lock-file "$repo" --json >/dev/null 2>&1; then
           offline_ready=true
         fi
-        airlock-config-nix --extra-experimental-features nix-command --extra-experimental-features flakes flake metadata "$repo" --json >/dev/null || fail 'locked flake inputs are unavailable from the private store or configured network access'
+        airlock-config-nix --extra-experimental-features nix-command --extra-experimental-features flakes flake metadata --no-write-lock-file "$repo" --json >/dev/null || fail 'locked flake inputs are unavailable from the private store or configured network access'
       fi
       revision="$(${pkgs.gitMinimal}/bin/git -C "$repo" rev-parse HEAD)"
       lock_hash="$(${pkgs.coreutils}/bin/sha256sum "$repo/flake.lock" | ${pkgs.gawk}/bin/awk '{print $1}')"
@@ -203,7 +203,7 @@ let
       if [ "$offline_selected" = true ]; then
         result="$(airlock-config-nix --extra-experimental-features nix-command --extra-experimental-features flakes build --offline --no-write-lock-file "''${offline_args[@]}" "$repo$installable" --no-link --json)"
       else
-        result="$(airlock-config-nix --extra-experimental-features nix-command --extra-experimental-features flakes build "$repo$installable" --no-link --json)"
+        result="$(airlock-config-nix --extra-experimental-features nix-command --extra-experimental-features flakes build --no-write-lock-file "$repo$installable" --no-link --json)"
       fi
       system="$(printf '%s\n' "$result" | ${pkgs.jq}/bin/jq -er '.[0].outputs.out')"
       printf '%s\n' "$system"
@@ -297,10 +297,13 @@ let
     runtimeInputs = [
       sourceTool buildTool configNixStore
       pkgs.coreutils pkgs.gitMinimal pkgs.gnutar pkgs.gzip pkgs.gawk pkgs.jq
-      pkgs.python3 pkgs.python3.pkgs.qubes-core-qrexec.domU
+      pkgs.python3 pkgs.systemd pkgs.python3.pkgs.qubes-core-qrexec.domU
     ];
     text = ''
-      exec ${pkgs.python3}/bin/python3 ${../../runtime/tools/sys-ctrl-guest-deploy.py} "$@"
+      exec ${pkgs.python3}/bin/python3 ${lib.fileset.toSource {
+        root = ../../runtime/tools;
+        fileset = lib.fileset.unions [ ../../runtime/tools/sys-ctrl-guest-deploy.py ../../runtime/tools/sys_ctrl_review.py ];
+      }}/sys-ctrl-guest-deploy.py "$@"
     '';
   };
 in
@@ -340,4 +343,13 @@ in
     '';
     mode = "0555";
   };
+  environment.etc."airlock/controller-review-required" = lib.mkIf (role == "sys-ctrl") { text = "v1\n"; };
+  environment.etc."qubes/rpc-config/airlock.Ctrl.GuestDeploy" = lib.mkIf (role == "sys-ctrl") { text = "force-user='${cfg.user}'\n"; };
+  environment.etc."qubes-rpc/airlock.Ctrl.ReviewStatus" = lib.mkIf (role == "sys-ctrl") {
+    source = pkgs.writeShellScript "airlock-review-status-qrexec" ''
+      exec ${ctrlDeploy}/bin/airlock-sys-ctrl-guest-deploy review-status-serve
+    '';
+    mode = "0555";
+  };
+  environment.etc."qubes/rpc-config/airlock.Ctrl.ReviewStatus" = lib.mkIf (role == "sys-ctrl") { text = "force-user='${cfg.user}'\n"; };
 }

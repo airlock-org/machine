@@ -35,6 +35,16 @@ let
   machinePrepare = machineControl "prepare";
   machinePlan = machineControl "plan";
   machineApply = machineControl "apply";
+  reviewControl = pkgs.writeShellScript "airlock-review-control" ''
+    set -eu
+    [ "$#" -eq 0 ] || exit 2
+    exec ${engine}/bin/airlock-machine-deploy review-control
+  '';
+  reviewHandler = pkgs.writeShellScript "airlock-review-control-qrexec" ''
+    set -eu
+    [ "''${QREXEC_REMOTE_DOMAIN:-}" = sys-ctrl ] || exit 1
+    exec /run/wrappers/bin/sudo -n ${reviewControl}
+  '';
   control = pkgs.writeShellScript "airlock-machine-control" ''
     set -eu
     [ "$#" -eq 0 ] || exit 2
@@ -67,6 +77,10 @@ let
     airlock.Ctrl.MachineControl * @anyvm @anyvm deny
     airlock.Ctrl.GuestDeploy * usr-assistant sys-ctrl allow
     airlock.Ctrl.GuestDeploy * @anyvm @anyvm deny
+    airlock.Ctrl.ReviewStatus + usr-assistant sys-ctrl allow
+    airlock.Ctrl.ReviewStatus * @anyvm @anyvm deny
+    airlock.Ctrl.ReviewControl + sys-ctrl dom0 allow
+    airlock.Ctrl.ReviewControl * @anyvm @anyvm deny
     airlock.Ctrl.GuestPlan * sys-ctrl dom0 allow
     airlock.Ctrl.GuestPlan * @anyvm @anyvm deny
     airlock.Ctrl.GuestApply * sys-ctrl dom0 allow
@@ -90,6 +104,11 @@ in
 {
   options.airlock.machineDeployment = {
     enable = lib.mkEnableOption "persistent repository-owned machine deployments";
+    userReview = lib.mkOption {
+      type = lib.types.bool;
+      default = true;
+      description = "Require human approval of source and permitted impact before controller builds and activation.";
+    };
     profile = lib.mkOption {
       type = lib.types.str;
       default = "default";
@@ -121,6 +140,11 @@ in
     airlock.qubes.deferredSetupConfigOnBoot.enable = lib.mkIf guardedGui (lib.mkForce true);
     environment.etc."airlock/split-startup".text = lib.mkIf guardedGui "v1\n";
     environment.systemPackages = [ engine ];
+    environment.etc."airlock/review-required" = lib.mkIf cfg.userReview { text = "v1\n"; };
+    environment.etc."qubes-rpc/airlock.Ctrl.ReviewControl" = {
+      source = reviewHandler;
+      mode = "0555";
+    };
     virtualisation.qubes.packages = [ retiredPolicy guestPolicy ];
     environment.etc."qubes-rpc/airlock.Ctrl.GuestPlan" = {
       source = guestHandler "plan" guestPlan;
@@ -153,6 +177,7 @@ in
     security.sudo.extraRules = [{
       users = [ config.airlock.dom0.user ];
       commands = [
+        { command = "${reviewControl}"; options = [ "NOPASSWD" ]; }
         { command = "${control}"; options = [ "NOPASSWD" ]; }
         { command = "${guestPlan}"; options = [ "NOPASSWD" ]; }
         { command = "${guestApply}"; options = [ "NOPASSWD" ]; }

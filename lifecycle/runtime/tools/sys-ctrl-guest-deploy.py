@@ -14,6 +14,10 @@ import sys
 import tarfile
 import tempfile
 import time
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import sys_ctrl_review as review
+
+APPROVAL = None
 
 SCHEMA = "airlock.sys-ctrl-guest-request.v1"
 RENAME_SCHEMA = "airlock.sys-ctrl-assistant-rename-request.v1"
@@ -148,6 +152,11 @@ def serve():
         raise ValueError("unsupported deployment action")
     if assistant_rename and not action.startswith("machine-"):
         raise ValueError("assistant rename requires a whole-machine request")
+    if set(header) != {"schema", "action", "target", "revision", "lock_hash", "archive_bytes"}:
+        raise ValueError("unexpected submission fields")
+    if review.REQUIRED.exists() and any(review.reconcile(sys.modules[__name__], path.parent.name).get("status") in review.ACTIVE
+            for path in (STATE / "jobs").glob("*/status.json")):
+        raise BlockingIOError("another source review or build is pending")
     if not isinstance(revision, str) or len(revision) != 40 or any(c not in "0123456789abcdef" for c in revision):
         raise ValueError("invalid source revision")
     if not isinstance(lock_hash, str) or len(lock_hash) != 64 or any(c not in "0123456789abcdef" for c in lock_hash):
@@ -186,6 +195,12 @@ def serve():
         )
     if identity(REPO) != (revision, lock_hash):
         raise ValueError("controller checkout differs from submitted source")
+    if review.REQUIRED.exists():
+        return review.enqueue(sys.modules[__name__], header)
+    execute(action, target, revision, lock_hash, assistant_rename=assistant_rename)
+
+
+def execute(action, target, revision, lock_hash, *, assistant_rename=False):
     if action.startswith("machine-"):
         options = {"assistant_rename": True} if assistant_rename else {}
         release = build_machine_release(revision, lock_hash, **options)
@@ -198,6 +213,8 @@ def serve():
     configuration = "sys-gui-usb-lab" if target == "sys-gui" else target
     installable = f".#nixosConfigurations.airlock-domain-{configuration}.config.system.build.toplevel"
     receipt = json.loads(output("airlock-usr-assistant-machine-build", "admit", target, installable))
+    if APPROVAL:
+        receipt["review_authorization"] = APPROVAL
     if receipt.get("source_revision") != revision or receipt.get("lock_hash") != lock_hash or receipt.get("domain") != target:
         raise ValueError("admission receipt differs from submitted candidate")
     result = subprocess.run(
@@ -271,6 +288,8 @@ def send_prepared(release, revision, lock_hash, saved, *, assistant_rename=False
     header = {"schema": MACHINE_SCHEMA, "release": saved["source_release"],
               "revision": revision, "lock_hash": lock_hash, "profile": "usb-lab",
               "prepared": saved["prepared"]}
+    if APPROVAL:
+        header["review_authorization"] = APPROVAL
     result = subprocess.run(["qrexec-client-vm", "dom0", "airlock.Ctrl.MachineApply"],
                             input=json.dumps(header) + "\n", text=True, capture_output=True)
     payload = machine_response(result.stdout, "prepared apply")
@@ -392,6 +411,8 @@ def send_machine_transport(action, transport, revision, lock_hash, receipts):
     header = {"schema": MACHINE_SCHEMA, "release": transport, "revision": revision,
               "lock_hash": lock_hash, "profile": "usb-lab", "receipts": receipts,
               "paths": {path: entry["narSize"] for path, entry in metadata.items()}}
+    if APPROVAL:
+        header["review_authorization"] = APPROVAL
     receiver = subprocess.Popen(
         ["qrexec-client-vm", "dom0", "airlock.Ctrl.Machine" + action.title()],
         stdin=subprocess.PIPE, stdout=subprocess.PIPE,
@@ -431,6 +452,8 @@ def send_machine_transport(action, transport, revision, lock_hash, receipts):
 
 
 def observe():
+    for path in (STATE / "jobs").glob("*/status.json"):
+        review.reconcile(sys.modules[__name__], path.parent.name)
     result = subprocess.run(
         ["qrexec-client-vm", "dom0", "airlock.Ctrl.MachineControl"],
         input=json.dumps({"schema": "airlock.machine-control.v1", "action": "status"}) + "\n",
@@ -460,6 +483,11 @@ def main():
         machine.add_argument("--assistant-rename", action="store_true")
     sub.add_parser("serve")
     sub.add_parser("observe")
+    worker = sub.add_parser("work")
+    worker.add_argument("request_id")
+    query = sub.add_parser("review-status")
+    query.add_argument("request_id")
+    sub.add_parser("review-status-serve")
     args = parser.parse_args()
     try:
         if args.action == "serve":
@@ -470,13 +498,33 @@ def main():
                 abandoned_sources += list((STATE / "candidates").glob("*/assistant-rename/source.tar.gz.new"))
                 for abandoned in abandoned_sources:
                     abandoned.unlink()
-                serve()
+                identity = serve()
+            return review.wait(sys.modules[__name__], identity) if identity else 0
+        if args.action == "work":
+            with (STATE / "lock").open("a") as lock:
+                fcntl.flock(lock, fcntl.LOCK_EX)
+                return review.work(sys.modules[__name__], args.request_id)
+        if args.action == "review-status-serve":
+            if os.environ.get("QREXEC_REMOTE_DOMAIN") != "usr-assistant":
+                raise ValueError("only usr-assistant may query review feedback")
+            line = sys.stdin.buffer.readline(4097)
+            request = json.loads(line)
+            if len(line) > 4096 or set(request) != {"request_id"}:
+                raise ValueError("invalid review status request")
+            print(json.dumps(review.reconcile(sys.modules[__name__], request["request_id"]), sort_keys=True))
             return 0
+        if args.action == "review-status":
+            review.job_path(STATE, args.request_id)
+            return subprocess.run(["qrexec-client-vm", "sys-ctrl", "airlock.Ctrl.ReviewStatus"],
+                input=json.dumps({"request_id": args.request_id}) + "\n", text=True).returncode
         if args.action == "observe":
             observe()
             return 0
         options = {"assistant_rename": True} if getattr(args, "assistant_rename", False) else {}
         return request(args.action, getattr(args, "target", None), getattr(args, "repo", REPO), **options)
+    except BlockingIOError as exc:
+        print(json.dumps({"status": "busy", "error": str(exc)}), flush=True)
+        return 24
     except (ValueError, OSError, subprocess.SubprocessError, json.JSONDecodeError, KeyError, IndexError, TypeError) as exc:
         print(f"airlock-sys-ctrl-guest-deploy: {exc}", file=sys.stderr)
         return 1

@@ -3,6 +3,7 @@
   mkAirlockQubeBuilders,
   airlockConfigInputs,
   airlockQubesVmKernelName,
+  airlockCtrlSource,
   networkDebug ? false,
 }:
 let
@@ -88,12 +89,20 @@ let
       guestRole = "sys-ctrl";
       inherit extraSpecialArgs;
       modules = [
-        ({ ... }: {
+        ({ pkgs, ... }: {
           networking.hostName = sysCtrlRoleDefaults.guestHostName;
           airlock.qubeGuest.configRepoPath = "/home/user/dev/airlock-machine";
           # Bound concurrent builds in the controller's fixed memory budget.
           nix.settings.max-jobs = 1;
+          nix.settings.sandbox = true;
+          airlock.appGui.scale = lib.mkDefault 3;
+          hardware.graphics.enable = true;
+          environment.systemPackages = [ (pkgs.callPackage "${airlockCtrlSource}/airlock-ctrl/package.nix" { }) ];
+          # Retain the pinned input in the guest's admitted closure so later
+          # controller builds can resolve it without an unpublished Git fetch.
+          environment.etc."airlock/ctrl-app-source".source = airlockCtrlSource;
         })
+        ../../misc/modules/app-gui-guest.nix
         ../../misc/modules/machine-source-seed.nix
         ../../misc/modules/usr-assistant-build-store.nix
         ../../misc/modules/usr-assistant-machine-build.nix

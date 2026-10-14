@@ -6,6 +6,7 @@ import json
 import subprocess
 import sys
 import uuid
+from pathlib import Path
 
 
 def receive(action, engine):
@@ -15,11 +16,15 @@ def receive(action, engine):
     receipt = json.loads(line)
     if not isinstance(receipt, dict):
         raise ValueError("invalid guest admission receipt")
+    approval = receipt.pop("review_authorization", None)
     prepared = subprocess.run([engine, "guest-plan", "-"], input=json.dumps(receipt),
                               text=True, capture_output=True)
     if prepared.returncode:
         raise ValueError(f"dom0 guest plan failed: {prepared.stderr.strip()[:4096]}")
     result = json.loads(prepared.stdout)
+    if Path("/etc/airlock/review-required").exists():
+        subprocess.run([engine, "review-bind", approval or "", result["candidate"]],
+                       check=True, text=True, capture_output=True)
     if action == "apply":
         unit = "airlock-machine-deploy-" + uuid.uuid4().hex[:12]
         subprocess.run(["systemd-run", "--unit=" + unit, "--collect", "--property=Type=exec",

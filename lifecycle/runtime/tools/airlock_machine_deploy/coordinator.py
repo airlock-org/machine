@@ -737,6 +737,10 @@ class Coordinator:
                     allow_unassigned=bool(interrupted),
                 )
             changes["stop"] = [name for name in changes["stop"] if name in runtime]
+            from .review import Reviews
+            approval_plan = dict(changes, host_reboot_required=(
+                str(Path("/run/current-system").resolve()) != manifest["host"]))
+            Reviews(self).activation(release, manifest, approval_plan, recover=recover)
             copy_plan = self.private_copies.inspect(
                 manifest.get("privateVolumeCopies", {}), old, topology)
             if copy_plan:
