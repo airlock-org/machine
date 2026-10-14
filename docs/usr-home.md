@@ -2,10 +2,9 @@
 
 `usr-home` follows the GNOME core application defaults from Airlock's pinned
 NixOS release through `services.gnome.core-apps.enable`. GNOME Web (Epiphany)
-remains the default browser; Firefox is also installed and can be launched from
-the application menu. Upstream desktop entries provide application discovery,
-names and icons through the existing Qubes
-application menu path. Loupe appears as **Image Viewer**.
+is the installed browser. Upstream desktop entries provide application discovery,
+names and icons through the existing Qubes application menu path. Loupe appears
+as **Image Viewer**.
 
 This role opts out of the minimal guest profile. Normal NixOS documentation,
 manual pages, Nano, shell completion and default convenience packages are

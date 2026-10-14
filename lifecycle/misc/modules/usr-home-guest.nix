@@ -31,7 +31,6 @@
   security.pam.services.qubes-gui-agent.enableGnomeKeyring = true;
 
   environment.systemPackages = with pkgs; [
-    firefox # Additional browser; GNOME Web remains the default
     glib # gio/gsettings for MIME activation and application preferences
     gtk3 # gtk-launch for standard desktop entry activation
     glycin-thumbnailer
