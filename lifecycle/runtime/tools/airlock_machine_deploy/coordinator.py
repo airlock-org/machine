@@ -411,6 +411,8 @@ class Coordinator:
                 opts,
             )
         candidate_manifest = deepcopy(current_release)
+        # Repair preconditions authorize only the earlier host transition.
+        candidate_manifest.pop("hostRepair", None)
         if os.environ.get("AIRLOCK_MACHINE_COORDINATOR"):
             candidate_manifest["coordinator"] = os.environ[
                 "AIRLOCK_MACHINE_COORDINATOR"
@@ -762,6 +764,14 @@ class Coordinator:
                     allow_unassigned=bool(interrupted),
                 )
             changes["stop"] = [name for name in changes["stop"] if name in runtime]
+            if manifest.get("hostRepair"):
+                repair = manifest["hostRepair"]
+                if (not administrative or not isinstance(repair, dict)
+                        or repair.get("baselineHost") != str(Path("/run/current-system").resolve())
+                        or repair.get("topologyHash") != digest(old)
+                        or old != topology):
+                    raise DeploymentError("host repair requires administrative access and an unchanged live baseline")
+                changes["start"] = [name for name in changes["start"] if name in runtime]
             from .review import Reviews
             approval_plan = dict(changes, host_reboot_required=(
                 str(Path("/run/current-system").resolve()) != manifest["host"]))
@@ -799,6 +809,7 @@ class Coordinator:
                 "plan": changes,
                 "phase": "preflight",
                 "administrative": administrative,
+                "host_repair": manifest.get("hostRepair"),
                 "gui_preserved": gui_preserved,
             }
 

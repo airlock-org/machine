@@ -150,6 +150,7 @@ in
     airlock.qubes.deferredSetupConfigOnBoot.enable = lib.mkIf guardedGui (lib.mkForce true);
     environment.etc."airlock/split-startup" = lib.mkIf guardedGui { text = "v1\n"; };
     environment.systemPackages = [ engine ];
+    system.build.machineDeploymentCoordinator = engine;
     environment.etc."airlock/review-required" = lib.mkIf cfg.userReview { text = "v1\n"; };
     environment.etc."airlock/machine-source.json" = lib.mkIf (cfg.initialSource != null) {
       text = builtins.toJSON ({ schema = "airlock.machine-source.v1"; } // cfg.initialSource);

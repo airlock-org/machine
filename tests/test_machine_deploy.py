@@ -668,6 +668,38 @@ def readiness_clock(monkeypatch):
     return clock
 
 
+@pytest.mark.parametrize("invalid", [None, "host", "topology", "guest", "administrative"])
+def test_host_repair_preserves_guests_and_rejects_stale_or_changed_baselines(
+    machine, tmp_path, topology, monkeypatch, invalid
+):
+    marker = tmp_path / "dev-mode"
+    marker.touch()
+    monkeypatch.setattr(deploy, "DEV_MODE", marker)
+    monkeypatch.setattr(deploy.os, "geteuid", lambda: 0)
+    desired = deepcopy(topology)
+    if invalid == "guest":
+        desired["domains"]["usr-home"]["backend"]["system"]["source"] += "-new"
+    release = write_release(tmp_path / "host-repair", desired)
+    manifest = deploy.read_json(release / "release.json")
+    repair = {"baselineHost": str(Path("/run/current-system").resolve()),
+              "topologyHash": deploy.digest(topology), "repairRevision": "a" * 40}
+    if invalid == "host":
+        repair["baselineHost"] += "-stale"
+    if invalid == "topology":
+        repair["topologyHash"] = "0" * 64
+    deploy.atomic_json(release / "release.json", {**manifest, "hostRepair": repair})
+    if invalid:
+        with pytest.raises(deploy.DeploymentError, match="host repair requires"):
+            machine.apply(release, administrative=invalid != "administrative")
+        assert not any(call[0] in {"qvm-shutdown", "qvm-start", "airlock-host-store"} for call in machine.calls)
+        return
+    result = machine.apply(release, administrative=True)
+    assert result["host_repair"] == repair
+    assert result["plan"]["changed"] == result["plan"]["stage"] == result["plan"]["stop"] == []
+    assert not any(call[0] in {"qvm-shutdown", "qvm-start"} for call in machine.calls)
+    assert result["observed"]
+
+
 def new_release(tmp_path, topology):
     new = deepcopy(topology)
     new["domains"]["usr-home"]["backend"]["system"]["source"] += "-new"
@@ -994,6 +1026,7 @@ def test_guest_update_after_migration_does_not_repeat_retirement_or_private_copy
     baseline_manifest.update(
         retireDomains=["sys-agent"],
         privateVolumeCopies={"usr-assistant": "sys-agent"},
+        hostRepair={"repairRevision": "a" * 40},
     )
     deploy.atomic_json(machine.initial / "release.json", baseline_manifest)
     preview = machine.inspect_guest(guest_receipt(machine, topology))
@@ -1005,6 +1038,7 @@ def test_guest_update_after_migration_does_not_repeat_retirement_or_private_copy
     assert result["plan"]["stop"] == ["usr-home"]
     manifest, _ = deploy.load_release(candidate)
     assert manifest["host"] == baseline_manifest["host"]
+    assert "hostRepair" not in manifest
     assert deploy.read_json(machine.initial / "release.json") == baseline_manifest
 
 
