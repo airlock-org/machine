@@ -253,13 +253,16 @@ def test_recovery_uses_xen_efi_binding_and_rejects_damaged_initramfs(tmp_path, t
     assert fields(loader.read_text())["default"] == retained.name
     assert fields(loader.read_text())["timeout"] == "10"
     # Upstream can recreate the native copy on a subsequent boot installation.
+    import shutil
+    for artifact in (esp / 'EFI/airlock').iterdir():
+        shutil.copyfile(artifact, directory / artifact.name)
     entry.write_text(native_text)
     host_artifacts.seal(root, esp)
     assert not entry.exists()
+    assert not list(directory.iterdir())
     assert retained.read_text() == sealed_text
     # Upstream regeneration can remove its own entry/files. Our retained
     # choice still has the exact kernel and initrd without mounting that host.
-    import shutil
     shutil.rmtree(directory)
     host_artifacts.seal(root, esp)
     assert host_artifacts.verify(root, esp, record) == 'airlock-' + entry.name
@@ -486,6 +489,35 @@ def boot_artifact_fixture(tmp_path, monkeypatch):
     (directory / 'kernel.efi').write_bytes(b'shared kernel')
     (directory / 'initrd.efi').write_bytes(b'shared initrd')
     return root, esp, host_artifacts, presentation
+
+
+def test_native_cleanup_preserves_active_unknown_and_changed_files(tmp_path, monkeypatch):
+    root, esp, artifacts, _ = boot_artifact_fixture(tmp_path, monkeypatch)
+    artifacts.seal(root, esp)
+    native = esp / 'EFI/nixos'
+    retained = esp / 'EFI/airlock'
+    (native / 'kernel.efi').write_bytes((retained / 'kernel.efi').read_bytes())
+    (native / 'initrd.efi').write_bytes((retained / 'initrd.efi').read_bytes())
+    (native / 'unknown.efi').write_bytes(b'not owned by sealing')
+    (esp / 'loader/entries/new-linux.conf').write_text('linux /EFI/nixos/kernel.efi\n')
+    artifacts.seal(root, esp)
+    assert (native / 'kernel.efi').exists()
+    assert (native / 'unknown.efi').exists()
+    assert not (native / 'initrd.efi').exists()
+    (native / 'initrd.efi').write_bytes(b'changed native copy')
+    artifacts.seal(root, esp)
+    assert (native / 'initrd.efi').read_bytes() == b'changed native copy'
+
+
+def test_corrupt_retained_boot_cannot_authorize_duplicate_cleanup(tmp_path, monkeypatch):
+    root, esp, artifacts, _ = boot_artifact_fixture(tmp_path, monkeypatch)
+    artifacts.seal(root, esp)
+    native = esp / 'EFI/nixos/kernel.efi'
+    native.write_bytes((esp / 'EFI/airlock/kernel.efi').read_bytes())
+    (esp / 'EFI/airlock/initrd.efi').write_bytes(b'corrupt')
+    with pytest.raises(core.EngineError, match='corrupt boot artifact'):
+        artifacts.seal(root, esp)
+    assert native.exists()
 
 
 def test_sealed_entries_preserve_boot_generation_and_source_order(tmp_path, monkeypatch):

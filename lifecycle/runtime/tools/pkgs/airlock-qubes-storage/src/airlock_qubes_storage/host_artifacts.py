@@ -66,17 +66,27 @@ def inventory(esp, system):
 def seal(root, esp, *, keep_default=False):
     root = Path(root)
     esp = Path(esp)
+    records = []
+    authenticated = {}
+    # Retire regenerated menu copies first, so their unused binary copies can
+    # make room for sealing a new generation without deleting retained boots.
     for path in (root / "host/boots").glob("*.json"):
         record = core.read_json(path)
         if record.get("retired"):
             continue
         descriptor = root / "host/artifacts" / path.name
+        records.append((record, descriptor))
         if descriptor.exists():
             # A retained entry must survive upstream menu regeneration even
             # when its system path is absent from the currently mounted view.
             selected = verify(root, esp, record)
             refresh_presentation(descriptor, esp)
             remove_native_duplicates(esp, record["system"], selected)
+            for entry in core.read_json(descriptor)["entries"]:
+                authenticated.update(entry["files"])
+    remove_verified_native_files(esp, authenticated)
+    for record, descriptor in records:
+        if descriptor.exists():
             continue
         entries = inventory(esp, record["system"])
         if entries:
@@ -124,11 +134,56 @@ def seal(root, esp, *, keep_default=False):
                               "generation": record["generation"], "entries": retained})
             selected = verify(root, esp, record)
             remove_native_duplicates(esp, record["system"], selected)
+            for entry in retained:
+                authenticated.update(entry["files"])
+            remove_verified_native_files(esp, authenticated)
 
     if not keep_default and (esp / "loader/loader.conf").exists() and any(
             presentation.identity(path.read_text()).get("airlock-role") == "normal"
             for path in (esp / "loader/entries").glob("*.conf")):
         select_entry(esp, presentation.newest_normal(esp / "loader/entries"))
+
+
+def remove_verified_native_files(esp, authenticated):
+    """Remove only unreferenced duplicates of authenticated retained bytes."""
+    esp = Path(esp)
+    native = esp / "EFI/nixos"
+    if native.is_symlink():
+        core.fail("native EFI directory must not be a symlink")
+    protected = set()
+    for entry in (esp / "loader/entries").glob("*.conf"):
+        for line in entry.read_text().splitlines():
+            parts = line.split()
+            if len(parts) != 2 or parts[0] not in ("efi", "linux", "initrd"):
+                continue
+            relative = Path(parts[1].lstrip("/"))
+            if relative.parent != Path("EFI/nixos"):
+                continue
+            protected.add(relative.name)
+            if parts[0] == "efi":
+                # Only Xen's understood configuration permits safe cleanup;
+                # unfamiliar EFI loaders may have additional dependencies.
+                try:
+                    config = xen_config(esp / relative)
+                    names = [config["kernel"].split()[0], config["ramdisk"]]
+                except (core.EngineError, KeyError, IndexError, OSError):
+                    return
+                if any(Path(name).name != name for name in names):
+                    return
+                protected.update(names)
+    removed = False
+    for relative, fingerprint in authenticated.items():
+        path = Path(relative)
+        if path.parent != Path("EFI/airlock") or path.name in protected:
+            continue
+        duplicate = native / path.name
+        if (not duplicate.is_symlink() and duplicate.is_file()
+                and duplicate.stat().st_size == fingerprint["size"]
+                and core.hash_file(duplicate) == fingerprint["sha256"]):
+            duplicate.unlink()
+            removed = True
+    if removed:
+        core.fsync_dir(native)
 
 
 def refresh_presentation(descriptor_path, esp):
