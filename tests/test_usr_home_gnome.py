@@ -74,8 +74,8 @@ def test_usr_home_uses_upstream_gnome_apps_without_installation_or_a_desktop():
     report = json.loads(result.stdout)
     assert report["stockApps"]
     assert set(report["stockApps"]) <= set(report["packages"])
-    assert {"firefox", "epiphany", "loupe", "gnome-maps", "gnome-weather", "snapshot", "simple-scan", "gnome-connections"} <= set(report["packages"])
-    assert not {"nix", "nix-info", "nixos-rebuild", "flatpak"} & set(report["packages"])
+    assert {"epiphany", "loupe", "gnome-maps", "gnome-weather", "snapshot", "simple-scan", "gnome-connections"} <= set(report["packages"])
+    assert not {"firefox", "nix", "nix-info", "nixos-rebuild", "flatpak"} & set(report["packages"])
     assert report["defaultPackages"] == report["stockDefaultPackages"]
     assert all(report["documentation"].values())
     assert report["completion"] and report["nano"]
