@@ -29,8 +29,10 @@ asking for permission; apply a deployment when the user's request authorizes it.
 ## Edit, check, and commit
 
 Work in the checkout. Keep unrelated user changes intact. The seeded checkout
-can have a detached HEAD; create a named branch before new work. If Git has no
-author identity, ask the user for their name/email before making commits.
+can have a detached HEAD; create a named branch before new work. Setup fills
+missing Git identity values with `Airlock User` and `user@airlock.invalid` in
+this repository only. Use these defaults for authorized commits unless the user
+chooses a personal identity; preserve existing local or global identity settings.
 The seeded remote can point at the external development computer; a working
 upstream remote is not required for local commits or deployment.
 

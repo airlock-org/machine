@@ -9,6 +9,82 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 INIT = ROOT / "lifecycle/misc/modules/usr-assistant/workspace-init.sh"
+IDENTITY_INIT = ROOT / "lifecycle/misc/modules/usr-assistant/git-identity-init.sh"
+
+
+@pytest.fixture
+def identity_repo(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(home / ".config"))
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(home / ".gitconfig"))
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    repo = home / "airlock-machine"
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    return repo
+
+
+def initialize_identity(repo, *, check=True):
+    return subprocess.run(
+        ["bash", str(IDENTITY_INIT), str(repo)], check=check, capture_output=True, text=True,
+    )
+
+
+def git_config(repo, key, *value, scope="--local"):
+    return subprocess.check_output(
+        ["git", "-C", str(repo), "config", scope, key, *value], text=True,
+    ).strip()
+
+
+def test_git_identity_defaults_allow_commits_and_remain_repository_local(identity_repo):
+    initialize_identity(identity_repo)
+    assert git_config(identity_repo, "user.name") == "Airlock User"
+    assert git_config(identity_repo, "user.email") == "user@airlock.invalid"
+    assert not (identity_repo.parent / ".gitconfig").exists()
+    subprocess.run([
+        "git", "-C", str(identity_repo), "commit", "--allow-empty", "-qm", "First change",
+    ], check=True)
+    assert subprocess.check_output([
+        "git", "-C", str(identity_repo), "log", "-1", "--format=%an <%ae>",
+    ], text=True).strip() == "Airlock User <user@airlock.invalid>"
+
+
+@pytest.mark.parametrize("scope", ["--local", "--global"])
+def test_git_identity_preserves_personal_settings_on_repeated_setup(identity_repo, scope):
+    git_config(identity_repo, "user.name", "Personal Name", scope=scope)
+    git_config(identity_repo, "user.email", "personal@example.com", scope=scope)
+    original = (identity_repo / ".git/config").read_bytes()
+    initialize_identity(identity_repo)
+    initialize_identity(identity_repo)
+    assert (identity_repo / ".git/config").read_bytes() == original
+    assert git_config(identity_repo, "user.name", scope=scope) == "Personal Name"
+    assert git_config(identity_repo, "user.email", scope=scope) == "personal@example.com"
+
+
+@pytest.mark.parametrize("scope", ["--local", "--global"])
+def test_git_identity_fills_only_the_missing_value(identity_repo, scope):
+    git_config(identity_repo, "user.name", "Personal Name", scope=scope)
+    initialize_identity(identity_repo)
+    assert git_config(identity_repo, "user.name", scope=scope) == "Personal Name"
+    assert git_config(identity_repo, "user.email") == "user@airlock.invalid"
+
+
+def test_git_identity_can_initialize_a_checkout_created_after_an_earlier_boot(identity_repo):
+    repo = identity_repo.parent / "later-checkout"
+    initialize_identity(repo)
+    assert not repo.exists()
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    initialize_identity(repo)
+    assert git_config(repo, "user.name") == "Airlock User"
+    assert git_config(repo, "user.email") == "user@airlock.invalid"
+
+
+def test_git_identity_refuses_to_modify_malformed_configuration(identity_repo):
+    config = identity_repo / ".git/config"
+    config.write_text("[broken\n")
+    assert initialize_identity(identity_repo, check=False).returncode != 0
+    assert config.read_text() == "[broken\n"
 
 
 def initialize(codex_state, instructions, guest_home=None, home_instructions=None):
@@ -147,6 +223,8 @@ def test_usr_assistant_console_tools_and_guidance_use_existing_management_interf
         repoPath = c.airlock.qubeGuest.configRepoPath;
         workspace = {{ inherit (c.systemd.services.airlock-usr-assistant-workspace)
           after before requires serviceConfig; }};
+        identity = {{ inherit (c.systemd.services.airlock-usr-assistant-git-identity)
+          after before requires serviceConfig; }};
         assertionsPass = builtins.all (a: a.assertion) c.assertions;
       }}
     """
@@ -177,6 +255,11 @@ def test_usr_assistant_console_tools_and_guidance_use_existing_management_interf
     assert "airlock-qubes-rw-init.service" in report["workspace"]["after"]
     assert "qubes-qrexec-agent.service" in report["workspace"]["before"]
     assert "airlock-machine-source-seed.service" in report["workspace"]["before"]
+    assert report["identity"]["serviceConfig"]["User"] == "user"
+    assert report["identity"]["serviceConfig"]["Type"] == "oneshot"
+    assert "airlock-usr-assistant-workspace.service" in report["identity"]["requires"]
+    assert {"airlock-usr-assistant-workspace.service", "airlock-machine-source-seed.service"} <= set(report["identity"]["after"])
+    assert "qubes-qrexec-agent.service" in report["identity"]["before"]
     assert report["repoPath"] == "/home/user/airlock-machine"
     assert "~/airlock-machine" in report["intro"]
     assert len(report["intro"].splitlines()) <= 12

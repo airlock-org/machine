@@ -82,6 +82,25 @@ in
       User = cfg.user;
     };
   };
+  systemd.services.airlock-usr-assistant-git-identity = {
+    description = "Initialize missing repository Git identity defaults";
+    wantedBy = [ "multi-user.target" ];
+    requires = [ "airlock-usr-assistant-workspace.service" ];
+    # Existing checkouts are relocated first; fresh images seed their checkout
+    # next. Run for both cases, before remote tools can use the repository.
+    after = [ "airlock-usr-assistant-workspace.service" "airlock-machine-source-seed.service" ];
+    before = [ "qubes-qrexec-agent.service" ];
+    path = [ pkgs.gitMinimal ];
+    script = ''
+      ${pkgs.bash}/bin/bash ${./usr-assistant/git-identity-init.sh} \
+        ${lib.escapeShellArg cfg.configRepoPath}
+    '';
+    serviceConfig = {
+      Type = "oneshot";
+      RemainAfterExit = true;
+      User = cfg.user;
+    };
+  };
   environment.etc."qubes-rpc/airlock.DevTailscaleUp" = {
     source = pkgs.writeShellScript "airlock-dev-tailscale-up" ''
       export PATH=${pkgs.lib.makeBinPath [ pkgs.coreutils pkgs.glibc.bin pkgs.iproute2 pkgs.curl pkgs.tailscale ]}:$PATH

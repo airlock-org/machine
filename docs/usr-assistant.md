@@ -59,8 +59,17 @@ override is preserved. The checkout's own `AGENTS.md` supplies project rules.
 Official setup references: [authentication](https://developers.openai.com/codex/auth/)
 and [instruction discovery](https://developers.openai.com/codex/guides/agents-md/).
 
-Before your first commit, configure your own Git name and email if they are
-missing. Create a branch when the seeded checkout is detached. Prepare pinned
+Setup fills missing Git name and email values with `Airlock User` and
+`user@airlock.invalid` in `~/airlock-machine` only. It runs after source seeding
+and on subsequent boots, preserving existing local or global identity settings.
+To use a personal identity instead:
+
+```sh
+git -C ~/airlock-machine config --local user.name 'Your Name'
+git -C ~/airlock-machine config --local user.email 'you@example.com'
+```
+
+Create a branch when the seeded checkout is detached. Prepare pinned
 Python dependencies with `uv sync --locked`, then run `make test-quick`.
 Tests use the installed Python, with automatic Python downloads disabled.
 Reports go to `$AIRLOCK_LOG_DIR` (`~/.local/state/airlock/logs`).
