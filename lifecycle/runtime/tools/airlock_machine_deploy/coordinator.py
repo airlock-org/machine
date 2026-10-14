@@ -36,6 +36,27 @@ from .boot import BootConfiguration, digest
 from .gui_reconnect import GUIReconnect
 
 STATE = Path("/var/lib/airlock/machine")
+IMAGE_SOURCE = Path("/run/current-system/etc/airlock/machine-source.json")
+
+
+def image_source():
+    if not IMAGE_SOURCE.exists():
+        # Old images remain available for rollback and legacy administration.
+        # Reviews reject this placeholder instead of trusting a guest checkout.
+        return "booted-image-baseline", None
+    try:
+        source = read_json(IMAGE_SOURCE)
+        if (not isinstance(source, dict)
+                or set(source) != {"schema", "revision", "lockHash"}
+                or source["schema"] != "airlock.machine-source.v1"
+                or not isinstance(source["revision"], str)
+                or not re.fullmatch(r"[0-9a-f]{40}", source["revision"])
+                or not isinstance(source["lockHash"], str)
+                or not re.fullmatch(r"[0-9a-f]{64}", source["lockHash"])):
+            raise ValueError("invalid source identity")
+    except (OSError, ValueError) as exc:
+        raise DeploymentError("invalid installed machine source identity") from exc
+    return source["revision"], source["lockHash"]
 
 
 def run(*args, **kwargs):
@@ -127,6 +148,7 @@ class Coordinator:
         selected = self.pointer()
         if selected:
             return Path(selected["release"])
+        revision, lock_hash = image_source()
         baseline = self.state / "baseline"
         baseline.mkdir(exist_ok=True)
         source = Path("/var/lib/airlock/system/current-topology.json")
@@ -147,8 +169,8 @@ class Coordinator:
                 "host": host,
                 "setup": setup,
                 "coordinator": coordinator,
-                "revision": "booted-image-baseline",
-                "lockHash": None,
+                "revision": revision,
+                "lockHash": lock_hash,
                 "retireDomains": [],
                 "trashRetentionDays": DEFAULT_TRASH_RETENTION_DAYS,
             },

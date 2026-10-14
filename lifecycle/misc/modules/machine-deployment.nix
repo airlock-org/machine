@@ -113,6 +113,16 @@ in
       type = lib.types.str;
       default = "default";
     };
+    initialSource = lib.mkOption {
+      type = lib.types.nullOr (lib.types.submodule {
+        options = {
+          revision = lib.mkOption { type = lib.types.strMatching "[0-9a-f]{40}"; };
+          lockHash = lib.mkOption { type = lib.types.strMatching "[0-9a-f]{64}"; };
+        };
+      });
+      default = null;
+      description = "Machine source built into the initial image, independent of the parent repository's boot label.";
+    };
     generationRetention.enable = lib.mkOption {
       type = lib.types.bool;
       default = true;
@@ -141,6 +151,9 @@ in
     environment.etc."airlock/split-startup" = lib.mkIf guardedGui { text = "v1\n"; };
     environment.systemPackages = [ engine ];
     environment.etc."airlock/review-required" = lib.mkIf cfg.userReview { text = "v1\n"; };
+    environment.etc."airlock/machine-source.json" = lib.mkIf (cfg.initialSource != null) {
+      text = builtins.toJSON ({ schema = "airlock.machine-source.v1"; } // cfg.initialSource);
+    };
     environment.etc."qubes-rpc/airlock.Ctrl.ReviewControl" = {
       source = reviewHandler;
       mode = "0555";

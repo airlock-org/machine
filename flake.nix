@@ -462,18 +462,23 @@
           airlockSourceRevision = self.rev or "dirty";
           airlockSourceTimestamp = self.lastModified or 0;
           airlockSourceLockHash = builtins.hashFile "sha256" ./flake.lock;
+          airlockMachineSource = if self ? rev then {
+            revision = self.rev;
+            lockHash = builtins.hashFile "sha256" ./flake.lock;
+          } else null;
         } // extraSpecialArgs;
         modules = [
           self.nixosModules.dom0
           ./lifecycle/image/profiles/machine-host.nix
           ./lifecycle/misc/modules/machine-deployment.nix
           ./lifecycle/misc/modules/host-store.nix
-          ({ config, lib, ... }: {
+          ({ config, lib, airlockMachineSource, ... }: {
             airlock.dom0.bootMenu.source = {
               revision = extraSpecialArgs.airlockSourceRevision or (self.rev or "dirty");
               timestamp = extraSpecialArgs.airlockSourceTimestamp or (self.lastModified or 0);
             };
             airlock.machineDeployment.enable = true;
+            airlock.machineDeployment.initialSource = airlockMachineSource;
             airlock.hostStore.enable = true;
             airlock.machineDeployment.profile = "usb-dev";
             # The image's base generation is only a console/bootstrap carrier.

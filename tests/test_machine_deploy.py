@@ -76,6 +76,74 @@ def topology():
     }
 
 
+@pytest.fixture
+def image_coordinator(tmp_path, topology, monkeypatch):
+    source = tmp_path / "machine-source.json"
+    monkeypatch.setattr(deploy, "IMAGE_SOURCE", source)
+    monkeypatch.setattr(deploy, "active_profile", lambda: "usb-lab")
+    current = tmp_path / "current-topology.json"
+    deploy.atomic_json(current, topology)
+    original_path = Path
+    monkeypatch.setattr(deploy, "Path", lambda value: current if str(value) ==
+                        "/var/lib/airlock/system/current-topology.json" else original_path(value))
+    directory = tmp_path / "state"
+    directory.mkdir()
+    coordinator = deploy.Coordinator(directory, command=lambda *_args: "")
+    return coordinator, source
+
+
+def test_fresh_image_source_supports_first_review_and_invalidates_changed_lock(image_coordinator):
+    review = importlib.import_module("airlock_machine_deploy.review")
+    coordinator, source = image_coordinator
+    identity = {"schema": "airlock.machine-source.v1", "revision": "a" * 40, "lockHash": "b" * 64}
+    deploy.atomic_json(source, identity)
+    manager = review.Reviews(coordinator)
+    pending = manager.context({"op": "context", "revision": "c" * 40, "lock_hash": "d" * 64,
+                               "family": "guest", "target": "usr-home"})
+    assert pending["baseline"] == identity["revision"]
+    manifest = deploy.read_json(coordinator.state / "baseline/release.json")
+    assert manifest["lockHash"] == identity["lockHash"]
+    with pytest.raises(deploy.DeploymentError, match="not approved"):
+        manager.require(pending["request_id"], "c" * 40, "d" * 64)
+    manager.decide({"op": "decide", "request_id": pending["request_id"], "decision": "approve",
+                    "scope": pending["scope"], "review_fingerprint": "e" * 64})
+    assert manager.require(pending["request_id"], "c" * 40, "d" * 64)["status"] == "approved"
+    deploy.atomic_json(source, {**identity, "lockHash": "f" * 64})
+    with pytest.raises(deploy.DeploymentError, match="stale_review"):
+        manager.require(pending["request_id"], "c" * 40, "d" * 64)
+
+
+def test_missing_image_source_cannot_open_a_review(image_coordinator):
+    review = importlib.import_module("airlock_machine_deploy.review")
+    coordinator, _ = image_coordinator
+    with pytest.raises(deploy.DeploymentError, match="baseline is unavailable"):
+        review.Reviews(coordinator).context({"op": "context", "revision": "c" * 40,
+                                            "lock_hash": "d" * 64, "family": "guest", "target": "usr-home"})
+    assert not (coordinator.state / "reviews").exists()
+
+
+@pytest.mark.parametrize("source", [
+    "{", "null", '{}',
+    json.dumps({"schema": "wrong", "revision": "a" * 40, "lockHash": "b" * 64}),
+    json.dumps({"schema": "airlock.machine-source.v1", "revision": "dirty", "lockHash": "b" * 64}),
+    json.dumps({"schema": "airlock.machine-source.v1", "revision": "a" * 40, "lockHash": None}),
+])
+def test_invalid_image_source_cannot_create_a_baseline(image_coordinator, source):
+    coordinator, marker = image_coordinator
+    marker.write_text(source)
+    with pytest.raises(deploy.DeploymentError, match="invalid installed machine source"):
+        coordinator.baseline()
+    assert not (coordinator.state / "baseline").exists()
+
+
+def test_selected_release_remains_the_baseline_instead_of_image_source(image_coordinator):
+    coordinator, source = image_coordinator
+    source.write_text("invalid")
+    selected = coordinator.state / "selected-release"
+    deploy.atomic_json(coordinator.state / "selection.json", {"release": str(selected)})
+    assert coordinator.baseline() == selected
+
+
 def test_dependency_order_and_affected_closure(topology):
     new = deepcopy(topology)
     new["domains"]["sys-gui"]["backend"]["system"]["source"] += "-new"

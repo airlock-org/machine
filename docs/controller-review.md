@@ -6,6 +6,14 @@ application runs in sys-ctrl and forwards its window through the existing Qubes
 GUI agent to sys-gui. App source is a pinned monorepo input, not an adjacent
 checkout or a copy edited inside the machine repository.
 
+Fresh images embed the machine Git revision and lock hash in the host
+generation's `etc/airlock/machine-source.json`. Dom0 uses that identity for
+the initial review baseline before any release has been selected. The boot
+menu's source label can identify the parent image repository and is separate.
+Missing or invalid machine provenance blocks review; a mutable guest checkout
+cannot supply the deployed baseline. Existing images without this metadata
+need a rebuilt image or a separately verified administrative upgrade.
+
 The controller validates/imports the Git bundle without evaluating Nix, obtains
 the selected source baseline from dom0 and opens the source review. The permitted
 impact names VMs that may change/start/stop/restart and whether a system reboot
