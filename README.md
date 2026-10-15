@@ -1,27 +1,30 @@
-# Airlock Machine
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/airlock-wordmark-thin-red-dark.svg">
+    <img alt="AirlockOS" src="docs/assets/airlock-wordmark-thin-red-light.svg" height="64">
+  </picture>
+</p>
+<p align="center">Machine configuration</p>
 
-Airlock Machine is the independently buildable whole-machine source for
-[Airlock](https://github.com/airlock-org/airlock). It owns NixOS dom0 and guest
-systems, bootstrap, runtime services/packages, and component tests. It preserves
-Qubes' Xen, qrexec, QubesDB, qubesd, libvirt, policy, and VM lifecycle machinery.
+This repository defines the NixOS configuration for [AirlockOS](https://github.com/airlock-org/airlock):
+dom0, system VMs, and user VMs. It contains the VM topology, bootstrap,
+runtime services and packages, and component tests, using the Qubes architecture.
 
-Airlock is experimental. Physical evidence is specific to the current lab;
-Qubes OS security equivalence and general hardware support are unproven. Image
-assembly, provisioning, external development orchestration, and cross-repository
-tests belong to the parent repository, which pins this one as a Git submodule.
+The parent [airlock repository](https://github.com/airlock-org/airlock) handles
+image assembly, provisioning, deployment from an external computer, and
+integration tests. It pins this repository as a Git submodule.
 
-## Local development
+## Build and checks
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for prerequisites. Prepare dependencies
-explicitly before running checks; no Xen host or application login is needed:
+and run the quick checks:
 
 ```sh
 uv sync --locked
 make test-quick
 ```
 
-For Nix builds on x86_64-linux, choose an isolated development-store location
-when the example lab mount is absent and use the repository Nix wrapper:
+For Nix builds on x86_64-linux, choose an isolated development-store location:
 
 ```sh
 export AIRLOCK_DATA_ROOT=/path/to/airlock-data
@@ -37,29 +40,19 @@ The whole-machine release outputs are:
 .#airlock-machine-release-usb-gui-lab
 ```
 
-They contain the host, declared VM topology, setup/coordinator programs, source
-revision, and lock hash. They do not assemble a USB disk image. The default
-hardware module provides the lab configuration; another machine can replace
-`hardwareModules` in `lib.mkMachineConfiguration` and add `extraModules`.
+They contain the dom0 system, VM topology, setup and deployment programs, source
+revision, and lock hash. USB disk image assembly lives in the parent repository.
 
-## Runtime and evidence
+## Documentation
 
-The personal VM [usr-home](docs/usr-home.md) owns normal applications and files.
-[usr-assistant](docs/usr-assistant.md) is the development/management workspace, and
-sys-ctrl prepares committed deployment candidates. Tailscale enrollment remains
-interactive, with persistent private state. Codex remains installed as an
-application; credential importing and vault management are removed.
+- [Personal applications and files in usr-home](docs/usr-home.md).
+- [System workspace in usr-assistant](docs/usr-assistant.md): configuration, administration, and deployment from the installed machine.
+- [Component testing](docs/testing.md).
+- [Machine configuration](https://github.com/airlock-org/airlock/blob/main/docs/lab-configuration.md): configuration modules and hardware settings.
+- [Deployment and rollback](https://github.com/airlock-org/airlock/blob/main/docs/machine-deployment.md): deployment from an external computer and recovery procedures.
 
-Use the parent `docs/README.md` and `docs/status.md` for current lab runbooks and
-acceptance boundaries. Older component notes describe their named profiles and
-are not independent authorities for the physical lab. Updating source locally
-is not live deployment verification.
+AirlockOS is under active development. Qubes OS security equivalence has not
+been established. See [SECURITY.md](SECURITY.md) for limitations and reporting.
 
-VM removal uses recoverable retirement before permanent deletion. Purge requires
-safe pruning of retained releases and bootable profiles referencing that VM;
-the running host and immediate rollback release stay protected. Rollback does
-not promise reversal of application data migrations.
-
-Original Airlock code is [MIT licensed](LICENSE); see [THIRD_PARTY.md](THIRD_PARTY.md)
-for upstream terms and the outstanding vendored-source licensing question.
-See [SECURITY.md](SECURITY.md) for reporting sensitive issues.
+Original code is [MIT licensed](LICENSE). Dependencies retain their own terms;
+see [third-party notices](THIRD_PARTY.md).
