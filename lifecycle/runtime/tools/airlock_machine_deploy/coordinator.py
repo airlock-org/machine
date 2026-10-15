@@ -400,8 +400,7 @@ class Coordinator:
             # belong to the transition into the baseline, not later releases.
             retireDomains=[],
             privateVolumeCopies={},
-            stagedGenerations={**(current_release.get("stagedGenerations", {})
-                                  if current_release.get("guestTransport") == "direct-pool-v1" else {}),
+            stagedGenerations={**current_release.get("stagedGenerations", {}),
                                domain: generation},
             guestRootArtifacts={**current_release.get("guestRootArtifacts", {}),
                                 domain: info["root_artifact"]},
@@ -485,12 +484,19 @@ class Coordinator:
             if set(preferred) != expected:
                 raise DeploymentError("direct release is missing admitted generations")
             names = sorted(set(names) | expected)
-        unexpected = set(preferred) - set(names)
+        unexpected = set(preferred) - {
+            name for name, domain in topology["domains"].items()
+            if domain["backend"]["type"] == "nix-closure"
+        }
         if unexpected:
             raise DeploymentError(
                 "staged generation is not part of this plan: "
                 + ", ".join(sorted(unexpected))
             )
+        # Setup reconciles every domain, including unchanged guests whose
+        # original build directories may no longer exist. Validate and pass
+        # their retained generations without adding them to the restart plan.
+        names = sorted(set(names) | set(preferred))
         staged = {}
         for name in names:
             backend = topology["domains"][name]["backend"]
