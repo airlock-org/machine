@@ -27,11 +27,14 @@ older deployable work instead of combining it with the new request.
 
 The controller validates/imports the Git bundle without evaluating Nix, obtains
 the selected source baseline from dom0 and opens the source review. The permitted
-impact names VMs that may change/start/stop/restart and whether a system reboot
-is permitted. Reboot permission defaults to false. The exact deployment plan is
-unknown until building completes. Approve authorizes evaluation, building and
-deployment of that revision and lock hash within the displayed scope; Reject or
-closing the window returns feedback without building. No second routine approval
+impact names VMs that may change/start/stop/restart. Reboot is informational, with
+no separate permission control: Approve covers changes that require a reboot.
+The exact deployment plan is unknown until building completes, so the review
+warns that a reboot may be required. The final plan confirms the requirement;
+activation leaves a required reboot pending until the user restarts the machine.
+Approve authorizes evaluation, building and deployment of that revision and lock
+hash within the displayed VM scope; Reject or closing the window returns feedback
+without building. No second routine approval
 is required when a plan is followed by apply for the same source and baseline.
 
 Dom0 retains the authorization in protected machine state. Submissions cannot
@@ -40,8 +43,9 @@ controller rechecks source identity after approval, preserves the lock file and
 uses Nix sandboxing. Dom0 binds independently validated artifacts to the grant,
 checks the final plan against the scope, then checks again under the activation
 lock. Changed source, lock hash, selected baseline or boot invalidates the grant.
-Unpermitted VM impacts or host reboot requirements stop deployment. The normal
-review route uses the installed coordinator, not a candidate-provided executable.
+Unpermitted VM impacts stop deployment. Existing approvals with an explicit
+reboot restriction retain that restriction; they are not silently broadened.
+The normal review route uses the installed coordinator, not a candidate-provided executable.
 Existing typed resume/rollback can recover already selected generations when
 sys-ctrl is stopped.
 

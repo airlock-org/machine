@@ -87,7 +87,6 @@ def test_negative_decision_is_durable_and_cannot_be_replayed(manager, decision, 
 
 @pytest.mark.parametrize("change", [
     {"stop": ["unapproved"]}, {"start": ["new-vm"]}, {"retire": ["unknown"]},
-    {"host_reboot_required": True}, {"host_reboot_required": None},
     {"private_copies": [{"source": {"domain": "unknown"}, "target_name": "usr-home"}]},
 ])
 def test_final_plan_must_stay_within_scope(manager, change):
@@ -97,6 +96,27 @@ def test_final_plan_must_stay_within_scope(manager, change):
         manager.bind(approved["request_id"], "candidate")
     assert not (manager.root / "bindings").exists()
     assert pending(manager)["status"] == "scope_exceeded"
+
+
+@pytest.mark.parametrize("reboot_required", [False, True])
+def test_single_approval_covers_reboot_and_reports_final_requirement(manager, reboot_required):
+    approved = approve(manager)
+    manager.plan["host_reboot_required"] = reboot_required
+    bound = manager.bind(approved["request_id"], "candidate")
+    assert bound["status"] == "approved"
+    assert bound["plan"]["host_reboot_required"] is reboot_required
+    manager.activation("candidate", manager.candidate, manager.plan)
+
+
+@pytest.mark.parametrize("reboot_required", [True, None])
+def test_existing_reboot_restriction_is_not_silently_broadened(manager, reboot_required):
+    request = pending(manager)
+    manager.decide({"op": "decide", "request_id": request["request_id"], "decision": "approve",
+                    "scope": {**request["scope"], "allow_reboot": False}, "review_fingerprint": "e" * 64})
+    manager.plan["host_reboot_required"] = reboot_required
+    with pytest.raises(review.DeploymentError, match="system reboot was not permitted"):
+        manager.bind(request["request_id"], "candidate")
+    assert not (manager.root / "bindings").exists()
 
 
 def test_guard_rechecks_plan_at_activation_and_preserves_existing_recovery(manager):

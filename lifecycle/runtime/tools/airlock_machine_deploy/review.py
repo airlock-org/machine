@@ -90,7 +90,7 @@ class Reviews:
                 return saved
         identity = uuid.uuid4().hex + uuid.uuid4().hex
         record = {"request_id": identity, "binding": binding, "baseline": baseline,
-                  "baseline_state": state, "scope": {"allowed_vms": names, "allow_reboot": False},
+                  "baseline_state": state, "scope": {"allowed_vms": names, "allow_reboot": True},
                   "status": "awaiting_approval", "created_at": time.time()}
         atomic_json(self.path(identity), record)
         return record
