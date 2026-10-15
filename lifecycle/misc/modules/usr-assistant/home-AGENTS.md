@@ -11,3 +11,6 @@ Full VM, testing, deployment and recovery guidance is in
 routine package-list additions/removals skip repository tests; implementation
 changes need relevant tests. Commit changes, inspect the deployment plan, and
 verify the running generations and requested package state after apply.
+Routine installs/removals do not need documentation edits unless they change
+documented behavior, instructions or supported capabilities. Keep package selections
+in Nix.

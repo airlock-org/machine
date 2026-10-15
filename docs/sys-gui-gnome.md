@@ -1,7 +1,8 @@
-The default personal desktop runs GNOME Web, files and terminal applications in
-connected `usr-home`, using `sys-firewall` for internet access. The separate
-`usr-browser` VM is no longer part of the default topology. Firefox is not
-installed by default; no browser data is imported from the retired VM.
+Personal applications run in connected `usr-home`, using `sys-firewall` for
+internet access. Their selection belongs to the
+[guest configuration](../lifecycle/misc/modules/usr-home-guest.nix).
+The separate `usr-browser` VM is no longer part of the default topology;
+no browser data is imported from the retired VM.
 
 # GNOME sys-gui milestone
 

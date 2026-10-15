@@ -18,13 +18,14 @@ cd ~/airlock-machine
 codex
 ```
 
-Codex, Console, Git, ripgrep, Make, Python, uv, and Zellij are installed through
-Nix. The checkout, login credentials, session history, and Python dependency
+Workspace software is declared in the
+[guest module](../lifecycle/misc/modules/usr-assistant-guest.nix) and its imports.
+The checkout, login credentials, session history, and Python dependency
 cache live on usr-assistant's private volume and survive root-generation updates.
 The existing upstream remote is not needed to commit and deploy locally.
 
-On x86_64 Linux, Codex is pinned to the complete upstream `0.162.1` release
-package by `lifecycle/misc/overlays/codex-release.nix`. Its CLI, code-mode host,
+On x86_64 Linux, the complete upstream Codex release is pinned by
+`lifecycle/misc/overlays/codex-release.nix`. Its CLI, code-mode host,
 sandbox tools and other package-relative runtimes are installed together;
 glibc-linked runtime helpers are adapted to Nix during the build. Update the
 version and archive hash in `lifecycle/runtime/tools/pkgs/codex-release/default.nix`,
@@ -38,7 +39,7 @@ network hardware; usr-assistant reaches the internet through sys-firewall.
 
 Codex needs your own login. For a ChatGPT account with device login enabled,
 run `codex login --device-auth` in usr-assistant, then complete the displayed code
-using GNOME Web in usr-home. API-key login is also available. Credentials remain
+using a browser in usr-home. API-key login is also available. Credentials remain
 inside usr-assistant; the system does not import another VM's browser profile or
 embed authentication in the machine configuration.
 
@@ -75,6 +76,11 @@ enabled. Changes to implementation, services, policy or deployment need relevant
 tests; use `make test-quick` when shared behavior could be affected. Do not add
 tests that merely repeat the configured package list. Documentation changes need
 diff and formatting review rather than executable tests.
+
+Routine package-list edits do not require documentation updates unless they
+change documented behavior, instructions or supported capabilities. Keep package
+selections in Nix and link to the configuration instead of maintaining inventories
+or installation/removal logs. Git and deployment records provide the history.
 
 When testing is needed, prepare pinned Python dependencies with `uv sync --locked`.
 Tests use the installed Python, with automatic Python downloads disabled. Reports

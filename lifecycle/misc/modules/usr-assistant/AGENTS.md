@@ -48,6 +48,12 @@ Match verification to the change, following the checkout's `AGENTS.md`:
 - For documentation changes, review the diff and check formatting; executable
   tests are unnecessary.
 
+Routine package-list additions/removals do not require documentation updates
+unless they change documented behavior, instructions or supported capabilities.
+Keep package selections in Nix and link to that configuration instead of keeping
+package inventories or installation/removal logs in docs. Git and deployment
+records provide the change history. Preserve dated validation evidence.
+
 When testing is needed, `uv sync --locked` prepares the pinned Python dependencies.
 The usr-assistant login environment sets `AIRLOCK_LOG_DIR` to
 `/home/user/.local/state/airlock/logs`; keep the test reports and logs there.
