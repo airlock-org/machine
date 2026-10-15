@@ -223,7 +223,8 @@ class RetirementManager:
     ) -> TrashRecord:
         if confirmation != identity:
             raise DeploymentError("trash purge confirmation does not match record id")
-        with self.machine.locked():
+        with self.machine.locked("VM trash purge", "Permanently remove an explicitly confirmed retired VM",
+                                 "trash-purge", operation_id=identity):
             self.machine.releases.require_no_pruning()
             latest = self.machine.state / "latest.json"
             if latest.exists() and read_json(latest)["phase"] not in (

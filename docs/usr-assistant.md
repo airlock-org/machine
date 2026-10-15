@@ -33,6 +33,12 @@ uncommitted changes. A clean Git tree does not mean its configuration is running
 Resolve older undeployed changes, incomplete deployments, required reboots, or an
 unknown source baseline before preparing another update. Recheck before
 submission if the checkout or deployment state changes.
+Status reports a held machine lock's named owner and reason, with elapsed time
+and operation details. Automatic cleanup can temporarily block changes; inspect
+that owner rather than treating every busy response as a deployment in progress.
+Status and review-status remain available during cleanup. A status response with
+`observation_error` is a recorded snapshot with an unsuccessful root-side refresh;
+do not interpret it as fresh verification.
 
 Deployment uses a clean, committed checkout. Edit the Nix configuration and
 commit the changes, then request a plan:

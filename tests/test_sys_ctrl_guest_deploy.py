@@ -52,6 +52,23 @@ def test_controller_rejects_unversioned_request_before_import(monkeypatch):
         DEPLOY.serve()
 
 
+def test_submission_does_not_refresh_terminal_history(tmp_path, monkeypatch):
+    monkeypatch.setenv("QREXEC_REMOTE_DOMAIN", "usr-assistant")
+    monkeypatch.setattr(DEPLOY, "STATE", tmp_path)
+    marker = tmp_path / "review-required"
+    marker.touch()
+    monkeypatch.setattr(DEPLOY.review, "REQUIRED", marker)
+    DEPLOY.record(DEPLOY.review.job_path(tmp_path, "a" * 32),
+                  {"status": "deployment_started", "authorization_id": "b" * 64})
+    monkeypatch.setattr(DEPLOY.review, "status", lambda *_: pytest.fail("historical job refreshed"))
+    header = {"schema": DEPLOY.SCHEMA, "action": "apply", "target": "usr-home",
+              "revision": "c" * 40, "lock_hash": "d" * 64, "archive_bytes": 0}
+    monkeypatch.setattr(DEPLOY.sys, "stdin", io.TextIOWrapper(io.BytesIO(json.dumps(header).encode() + b"\n")))
+    # This reaches archive validation without querying or rewriting the old job.
+    with pytest.raises(ValueError, match="invalid source archive size"):
+        DEPLOY.serve()
+
+
 def test_old_assistant_cannot_submit_ordinary_requests(monkeypatch):
     monkeypatch.setenv("QREXEC_REMOTE_DOMAIN", "sys-agent")
     stream = io.BytesIO(json.dumps({"schema": DEPLOY.SCHEMA}).encode() + b"\n")

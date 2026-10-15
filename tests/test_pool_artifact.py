@@ -544,8 +544,8 @@ def test_candidate_probe_cannot_bypass_next_inventory_check(artifact_input):
     assert not list((artifact_input["pool"] / "domains").glob("*/generations/*/manifest.json"))
 
 
-@pytest.mark.parametrize("substitute", [False, True])
-def test_installed_candidate_cli_returns_one_pool_protocol_message(artifact_input, monkeypatch, substitute):
+@pytest.mark.parametrize("substitute,blocked", [(False, False), (True, False), (False, True)])
+def test_installed_candidate_cli_returns_one_pool_protocol_message(artifact_input, monkeypatch, substitute, blocked):
     sys.path.insert(0, str(ROOT / "lifecycle/runtime/tools"))
     from airlock_machine_deploy import cli
     from airlock_machine_deploy.admission import AdmissionManager
@@ -560,7 +560,11 @@ def test_installed_candidate_cli_returns_one_pool_protocol_message(artifact_inpu
     output = io.BytesIO()
     outgoing = io.TextIOWrapper(output)
     @contextmanager
-    def locked():
+    def locked(*_args, **_kwargs):
+        if blocked:
+            from airlock_machine_deploy.common import DeploymentBusy
+            from airlock_state import LockBusy
+            raise DeploymentBusy(LockBusy({"owner": "Automatic maintenance", "reason": "Collect unused artifacts"}))
         yield
     monkeypatch.setattr(cli, "Coordinator", lambda: SimpleNamespace(locked=locked))
     monkeypatch.setattr(cli, "boot_id", lambda: "boot")
@@ -578,7 +582,11 @@ def test_installed_candidate_cli_returns_one_pool_protocol_message(artifact_inpu
     wire = io.BytesIO(output.getvalue())
     response = artifacts.read_message(wire)
     assert wire.read() == b""
-    if substitute:
+    if blocked:
+        assert status == 1
+        assert response["schema"] == artifacts.SCHEMA_ERROR
+        assert "Automatic maintenance" in response["error"]
+    elif substitute:
         assert status == 1
         assert response["schema"] == artifacts.SCHEMA_ERROR
         assert "prepared candidate" in response["error"]

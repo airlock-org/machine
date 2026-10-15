@@ -7,7 +7,6 @@ Qubes remains responsible for VM lifecycle, devices, policy and storage.
 
 from copy import deepcopy
 import contextlib
-import fcntl
 import hashlib
 import json
 import os
@@ -17,12 +16,15 @@ import shutil
 import subprocess
 import time
 
+from airlock_state import LockBusy, NamedLock, lock_status
+
 from .common import (
     SCHEMA,
     GENERATION_INFO_SCHEMA,
     DEFAULT_TRASH_RETENTION_DAYS,
     RETIRED_POLICY,
     DeploymentError,
+    DeploymentBusy,
 )
 from .planning import plan
 from .diagnostics import DeploymentDiagnostics
@@ -117,14 +119,14 @@ class Coordinator:
         }
 
     @contextlib.contextmanager
-    def locked(self):
-        self.state.mkdir(parents=True, exist_ok=True, mode=0o700)
-        with (self.state / "lock").open("a") as lock:
-            try:
-                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except BlockingIOError as exc:
-                raise DeploymentError("another machine deployment is running") from exc
-            yield lock
+    def locked(self, owner="Machine coordinator", reason="Serialize machine configuration changes",
+               operation="machine-operation", **context):
+        try:
+            with NamedLock(self.state / "lock", owner=owner, reason=reason,
+                           operation=operation, **context) as lock:
+                yield lock
+        except LockBusy as exc:
+            raise DeploymentBusy(exc) from exc
 
     def pointer(self) -> Selection | None:
         path = self.state / "selection.json"
@@ -229,7 +231,8 @@ class Coordinator:
         return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
 
     def check_prepared(self, release):
-        with self.locked():
+        with self.locked("Candidate validation", "Validate the prepared release before activation",
+                         "prepared-check", operation_id=str(release)):
             self.releases.require_no_pruning()
             self.releases.require_available_release(release)
             manifest, topology = load_release(release)
@@ -261,7 +264,8 @@ class Coordinator:
 
     def machine_candidate(self, release, receipts):
         """Bind a controller release to exact, independently checked pool generations."""
-        with self.locked():
+        with self.locked("Candidate preparation", "Bind guest receipts to the machine release",
+                         "machine-bind", operation_id=str(release)):
             manifest, topology = load_release(release)
             if manifest.get("guestTransport") != "direct-pool-v1":
                 raise DeploymentError("release does not use direct pool admission")
@@ -751,7 +755,9 @@ class Coordinator:
             release = self.local_candidate(release)
         self.releases.require_available_release(release)
         manifest, topology = load_release(release)
-        with self.locked():
+        with self.locked("Deployment", "Activate approved machine configuration",
+                         "recover" if recover else "apply", operation_id=str(release),
+                         revision=manifest["revision"]) as operation:
             self.releases.require_no_pruning()
             self.releases.require_available_release(release)
             if expected_state is not None and self.preparation_state() != expected_state:
@@ -839,6 +845,7 @@ class Coordinator:
                 interrupted.get("gui_preserved", {}) if interrupted and not rollback else None,
             )
             transaction = str(time.time_ns())
+            operation.update(operation_id=transaction, release=str(release))
             directory = self.state / "transactions" / transaction
             directory.mkdir(parents=True)
             record: DeploymentRecord = {
@@ -865,6 +872,7 @@ class Coordinator:
 
             def phase(value: DeploymentPhase, **extra) -> None:
                 record.update(phase=value, **extra)
+                operation.update(phase=value)
                 atomic_json(directory / "status.json", record)
                 atomic_json(latest, record)
                 if value == "complete":
@@ -1025,6 +1033,7 @@ class Coordinator:
         path = self.state / "latest.json"
         result = read_json(path) if path.exists() else {"phase": "image-baseline"}
         result["selection"] = self.pointer()
+        result["lock"] = lock_status(self.state / "lock")
         result["host_running_now"] = str(Path("/run/current-system").resolve())
         result["host_matches_selection"] = (
             result.get("host_selected") == result["host_running_now"]
@@ -1049,7 +1058,7 @@ class Coordinator:
             atomic_json(self.state / "latest.json", record)
 
     def verify_selected(self) -> DeploymentRecord:
-        with self.locked():
+        with self.locked("Deployment verification", "Verify selected and running generations", "verify"):
             selected = self.pointer()
             if not selected:
                 raise DeploymentError("no selected deployment")
@@ -1102,7 +1111,7 @@ class Coordinator:
 
     def boot_start(self, default_topology, require_running=()):
         """Start declared autostart guests only after boot setup/GPU guards."""
-        with self.locked():
+        with self.locked("Machine startup", "Start the declared autostart VMs", "boot-start"):
             selected = self.pointer()
             if selected:
                 if selected["profile"] != active_profile():
@@ -1170,7 +1179,7 @@ class Coordinator:
             }
 
     def boot_setup(self, default_setup, args, *, gui=False, background=False):
-        with self.locked() as lock:
+        with self.locked("Machine startup", "Configure VMs from the selected boot generation", "boot-setup") as lock:
             if gui or background:
                 if gui and background:
                     raise DeploymentError("choose either GUI or background setup")

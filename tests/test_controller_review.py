@@ -306,3 +306,57 @@ def test_status_query_cannot_overwrite_worker_progress(worker, monkeypatch):
     monkeypatch.setattr(jobs.subprocess, "run", lambda *_a, **_k: SimpleNamespace(returncode=0))
     assert jobs.status(deploy.STATE, identity)["status"] == "building"
     assert json.loads(path.read_text())["result"] == {"unit": "detached-worker"}
+
+
+@pytest.mark.parametrize("stdout,stderr,code", [
+    ("", "", 1),
+    ("", "policy refused", 126),
+    (json.dumps({"schema": "airlock.review-control-error.v1", "status": "busy",
+                 "error": "Automatic maintenance holds the lock", "lock": {"owner": "Maintenance"}}), "", 1),
+    ("invalid response", "", 0),
+    ("{}", "", 0),
+])
+def test_control_failures_preserve_context_and_transport_diagnostics(monkeypatch, stdout, stderr, code):
+    monkeypatch.setattr(jobs.subprocess, "run", lambda *_a, **_k:
+                        SimpleNamespace(returncode=code, stdout=stdout, stderr=stderr))
+    with pytest.raises(jobs.ControlError) as error:
+        jobs.control({"op": "status", "request_id": "d" * 64})
+    assert error.value.details["exit_code"] == code
+    assert error.value.details["operation"] == "status"
+    assert error.value.details["request_id"] == "d" * 64
+    assert error.value.details["stdout"] == stdout
+    assert error.value.details["stderr"] == stderr
+    assert f"exit {code}" in str(error.value)
+    if "Automatic maintenance" in stdout:
+        assert "Automatic maintenance" in str(error.value)
+        assert error.value.details["response"]["lock"]["owner"] == "Maintenance"
+
+
+def test_approval_feedback_survives_status_transport_failure(worker, monkeypatch, capsys):
+    deploy, identity = worker
+    path = jobs.job_path(deploy.STATE, identity)
+    deploy.record(path, {"request_id": identity, "status": "building", "decision": "approved",
+                         "authorization_id": "d" * 64})
+    original = path.read_bytes()
+    def unavailable(request):
+        raise jobs.ControlError(request, SimpleNamespace(returncode=1, stdout="", stderr=""),
+                                "No diagnostic output received")
+    monkeypatch.setattr(jobs, "control", unavailable)
+    assert jobs.wait(deploy, identity) == 0
+    reply = json.loads(capsys.readouterr().out)
+    assert reply["status"] == "approved"
+    assert reply["job_status"] == "building"
+    assert reply["control_error"]["exit_code"] == 1
+    assert "No diagnostic output" in reply["observation_error"]
+    assert path.read_bytes() == original
+
+
+def test_worker_finishing_during_liveness_check_is_not_reported_as_interrupted(worker, monkeypatch):
+    deploy, identity = worker
+    path = jobs.job_path(deploy.STATE, identity)
+    deploy.record(path, {"status": "building", "updated_at": 0})
+    def finished(*_a, **_k):
+        deploy.record(path, {"status": "planned", "result": {"plan": "complete"}})
+        return SimpleNamespace(returncode=3)
+    monkeypatch.setattr(jobs.subprocess, "run", finished)
+    assert jobs.status(deploy.STATE, identity)["status"] == "planned"

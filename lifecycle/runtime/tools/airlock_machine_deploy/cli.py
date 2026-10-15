@@ -4,6 +4,7 @@ Transport and configuration evaluation deliberately live outside this module.
 Qubes remains responsible for VM lifecycle, devices, policy and storage."""
 
 import argparse
+import contextlib
 import json
 from pathlib import Path
 import subprocess
@@ -13,6 +14,7 @@ from .common import DeploymentError, TRASH_SCHEMA
 from .coordinator import Coordinator, boot_id
 from .admission import AdmissionManager
 from .state import read_json
+from airlock_state import lock_status
 
 
 def main(argv=None):
@@ -82,13 +84,24 @@ def main(argv=None):
     try:
         if args.action in ("review-control", "review-bind"):
             from .review import Reviews
-            with coordinator.locked():
+            request = None
+            if args.action == "review-control":
+                data = sys.stdin.buffer.readline(65537)
+                if len(data) > 65536 or not data.endswith(b"\n"):
+                    raise DeploymentError("invalid review request")
+                request = json.loads(data)
+                if not isinstance(request, dict):
+                    raise DeploymentError("invalid review request")
+            read_only = request is not None and request.get("op") == "status"
+            guard = contextlib.nullcontext() if read_only else coordinator.locked(
+                "Source approval", "Validate or update a source review authorization",
+                args.action, operation_id=request.get("request_id") if request is not None else args.request_id)
+            with guard:
                 reviews = Reviews(coordinator)
                 if args.action == "review-control":
-                    data = sys.stdin.buffer.readline(65537)
-                    if len(data) > 65536 or not data.endswith(b"\n"):
-                        raise DeploymentError("invalid review request")
-                    result = reviews.control(json.loads(data))
+                    result = reviews.control(request)
+                    if read_only:
+                        result = {**result, "lock": lock_status(coordinator.state / "lock")}
                 else:
                     result = reviews.bind(args.request_id, args.release)
         elif args.action == "admission-prepare":
@@ -101,7 +114,8 @@ def main(argv=None):
                 raise DeploymentError("candidate admission requires token and domain")
             # Match apply's lock order: machine, then pool. The candidate cannot
             # become stale halfway through publication of an inactive generation.
-            with coordinator.locked():
+            with coordinator.locked("Artifact admission", "Receive candidate-bound guest artifacts",
+                                    "admission-receive", operation_id=args.argument):
                 identity = AdmissionManager(coordinator).identity(token, domain, args.caller, boot_id())
                 try:
                     result = receive_incremental(sys.stdin.buffer, sys.stdout.buffer,
@@ -164,7 +178,8 @@ def main(argv=None):
             result = coordinator.releases.list_releases()
         elif args.action == "generation-retention-plan":
             from .generation_retention import GenerationRetention
-            with coordinator.locked():
+            with coordinator.locked("Retention planning", "Inspect generation retention policy",
+                                    "generation-retention-plan"):
                 result = GenerationRetention(coordinator).plan()
         elif args.action == "generation-maintenance":
             from .generation_retention import GenerationRetention
@@ -181,6 +196,14 @@ def main(argv=None):
         print(json.dumps(result, sort_keys=True, indent=None if args.action == "admission-receive" else 2))
         return 0
     except (DeploymentError, OSError, subprocess.SubprocessError, ValueError, KeyError, TypeError) as exc:
+        if args.action != "admission-receive" and (
+                args.action in ("review-control", "review-bind") or hasattr(exc, "holder")):
+            schema = "airlock.review-control-error.v1" if args.action in ("review-control", "review-bind") else "airlock.machine-error.v1"
+            error = {"schema": schema, "error": str(exc),
+                     "status": "busy" if hasattr(exc, "holder") else "failed"}
+            if hasattr(exc, "holder"):
+                error["lock"] = exc.holder
+            print(json.dumps(error), flush=True)
         if args.action == "admission-receive":
             from airlock_qubes_storage._engine.artifacts import SCHEMA_ERROR, write_message
             try:

@@ -1293,6 +1293,24 @@ def test_lock_prevents_two_writers(machine):
                 pass
 
 
+def test_deployment_lock_identifies_transaction_and_current_phase(machine, tmp_path, topology):
+    from airlock_state import lock_status
+
+    observed = []
+    original = machine.command
+    def command(*args, **kwargs):
+        if args[:2] == ("airlock-host-store", "protect-boot"):
+            observed.append(lock_status(machine.state / "lock"))
+        return original(*args, **kwargs)
+    machine.command = command
+    result = machine.apply(new_release(tmp_path, topology))
+    assert observed[0]["owner"] == "Deployment"
+    assert observed[0]["reason"] == "Activate approved machine configuration"
+    assert observed[0]["operation_id"] == result["id"]
+    assert observed[0]["phase"] == "host-boot-preparation"
+    assert lock_status(machine.state / "lock") is None
+
+
 @pytest.mark.parametrize("operation", ["apply", "purge", "prune"])
 def test_deployment_and_lifecycle_managers_share_the_lock(machine, operation):
     actions = {

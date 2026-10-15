@@ -28,7 +28,8 @@ class AdmissionManager:
     def prepare(self, release, caller, boot_id):
         if caller != "sys-ctrl":
             raise DeploymentError("candidate admission requires sys-ctrl")
-        with self.machine.locked():
+        with self.machine.locked("Artifact admission", "Validate a release before importing artifacts",
+                                 "admission-prepare", operation_id=str(release)):
             self.machine.releases.require_no_pruning()
             self.machine.releases.require_available_release(release)
             state = self.state()

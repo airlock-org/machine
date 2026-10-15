@@ -104,7 +104,7 @@ def test_shared_or_manual_storage_retains_are_preserved(tmp_path, monkeypatch, m
 
 def test_failed_gc_preserves_pending_request_for_retry(tmp_path, monkeypatch):
     owner = machine(tmp_path)
-    owner.locked = contextlib.nullcontext
+    owner.locked = lambda *_a, **_k: contextlib.nullcontext(SimpleNamespace(update=lambda **_k: None))
     owner.pointer = lambda: {"transaction": "1", "release": "/candidate"}
     owner.command = lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("GC failed"))
     manager = retention.GenerationRetention(owner)

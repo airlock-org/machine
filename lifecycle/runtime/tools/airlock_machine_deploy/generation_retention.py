@@ -186,7 +186,9 @@ class GenerationRetention:
 
     def run(self):
         """Serialize policy, existing resumable pruning and pool GC with deployment."""
-        with self.machine.locked():
+        with self.machine.locked("Automatic generation maintenance",
+                                 "Remove unused generations and collect unused pool artifacts",
+                                 "generation-maintenance", unit="airlock-generation-maintenance.service") as operation:
             if not self.enabled():
                 raise DeploymentError("machine generation retention is disabled")
             pending = self.directory / "pending.json"
@@ -196,6 +198,7 @@ class GenerationRetention:
             selected = self.machine.pointer()
             if not selected:
                 raise DeploymentError("no selected machine generation")
+            operation.update(operation_id=selected["transaction"], phase="planning")
             status = read_json(self.machine.state / "transactions" / selected["transaction"] / "status.json")
             manifest, topology = load_release(selected["release"])
             if (status.get("phase") != "complete"
@@ -213,6 +216,7 @@ class GenerationRetention:
                     target = previous["pruning"]
                     self.machine.releases._prune_release_locked(target, target)
                 result["plan"] = self.plan()
+                operation.update(phase="pruning-generations")
                 # A crash may occur after pruning a canonical candidate but
                 # before its duplicate transport roots. Resume that journalled
                 # scope even if the candidate no longer enters verified history.
@@ -237,6 +241,7 @@ class GenerationRetention:
                     atomic_json(journal, result)
                 result["storage_released"] = self.release_storage_retention(result["storage_candidates"])
                 atomic_json(journal, result)
+                operation.update(phase="collecting-pool")
                 result["gc"] = json.loads(self.machine.command(
                     "airlock-closure-store", "gc", "--pool-root", str(POOL),
                     "--keep-generations", "2", timeout=3600,

@@ -2,7 +2,6 @@
 """Submit a committed guest candidate from usr-assistant to sys-ctrl."""
 
 import argparse
-import fcntl
 import gzip
 import hashlib
 import json
@@ -16,7 +15,7 @@ import tempfile
 import time
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import sys_ctrl_review as review
-from airlock_state import atomic_json as record
+from airlock_state import LockBusy, NamedLock, atomic_json as record
 
 APPROVAL = None
 
@@ -139,10 +138,14 @@ def serve():
         raise ValueError("assistant rename requires a whole-machine request")
     if set(header) != {"schema", "action", "target", "revision", "lock_hash", "archive_bytes"}:
         raise ValueError("unexpected submission fields")
-    if review.REQUIRED.exists() and any(review.status(STATE, path.parent.name).get("status") in review.ACTIVE
-            for path in (STATE / "jobs").glob("*/status.json")
-            if json.loads(path.read_text()).get("status") in review.ACTIVE):
-        raise BlockingIOError("another source review or build is pending")
+    if review.REQUIRED.exists():
+        for path in (STATE / "jobs").glob("*/status.json"):
+            if json.loads(path.read_text()).get("status") not in review.ACTIVE:
+                continue
+            pending = review.status(STATE, path.parent.name)
+            if pending["status"] in review.ACTIVE:
+                raise BlockingIOError(f"Controller request {path.parent.name} is {pending['status']}; "
+                                      "finish that operation before submitting another")
     if not isinstance(revision, str) or len(revision) != 40 or any(c not in "0123456789abcdef" for c in revision):
         raise ValueError("invalid source revision")
     if not isinstance(lock_hash, str) or len(lock_hash) != 64 or any(c not in "0123456789abcdef" for c in lock_hash):
@@ -478,8 +481,9 @@ def main():
     try:
         if args.action == "serve":
             STATE.mkdir(parents=True, exist_ok=True)
-            with (STATE / "lock").open("a") as lock:
-                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            with NamedLock(STATE / "lock", owner="Source submission",
+                           reason="Validate and import proposed machine configuration",
+                           operation="source-submit"):
                 abandoned_sources = list((STATE / "candidates").glob("*/source.tar.gz.new"))
                 abandoned_sources += list((STATE / "candidates").glob("*/assistant-rename/source.tar.gz.new"))
                 for abandoned in abandoned_sources:
@@ -487,9 +491,12 @@ def main():
                 identity = serve()
             return review.wait(sys.modules[__name__], identity) if identity else 0
         if args.action == "work":
-            with (STATE / "lock").open("a") as lock:
-                fcntl.flock(lock, fcntl.LOCK_EX)
-                return review.work(sys.modules[__name__], args.request_id)
+            with NamedLock(STATE / "lock", owner="Controller review",
+                           reason="Review and build a submitted configuration",
+                           operation="controller-review", operation_id=args.request_id,
+                           unit="airlock-review-" + args.request_id + ".service",
+                           blocking=True) as lock:
+                return review.work(sys.modules[__name__], args.request_id, operation=lock)
         if args.action == "review-status-serve":
             if os.environ.get("QREXEC_REMOTE_DOMAIN") != "usr-assistant":
                 raise ValueError("only usr-assistant may query review feedback")
@@ -509,7 +516,8 @@ def main():
         options = {"assistant_rename": True} if getattr(args, "assistant_rename", False) else {}
         return request(args.action, getattr(args, "target", None), getattr(args, "repo", REPO), **options)
     except BlockingIOError as exc:
-        print(json.dumps({"status": "busy", "error": str(exc)}), flush=True)
+        print(json.dumps({"status": "busy", "error": str(exc),
+                          **({"lock": exc.holder} if isinstance(exc, LockBusy) else {})}), flush=True)
         return 24
     except (ValueError, OSError, subprocess.SubprocessError, json.JSONDecodeError, KeyError, IndexError, TypeError) as exc:
         print(f"airlock-sys-ctrl-guest-deploy: {exc}", file=sys.stderr)

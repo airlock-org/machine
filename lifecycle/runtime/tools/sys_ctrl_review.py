@@ -10,6 +10,8 @@ import sys
 import time
 import uuid
 
+from airlock_state import lock_status
+
 REQUIRED = Path("/etc/airlock/controller-review-required")
 ACTIVE = {"queued", "awaiting_approval", "building"}
 EXITS = {"rejected": 20, "cancelled": 21, "scope_exceeded": 22, "stale_review": 23, "failed": 1}
@@ -19,6 +21,15 @@ class Stopped(Exception):
         super().__init__(status)
         self.status = status
 
+
+class ControlError(ValueError):
+    def __init__(self, request, result, message, response=None):
+        self.details = {"operation": request.get("op"), "request_id": request.get("request_id"),
+                        "exit_code": result.returncode, "stdout": result.stdout[-4096:],
+                        "stderr": result.stderr[-4096:], "response": response}
+        super().__init__(f"ReviewControl {request.get('op')} request {request.get('request_id', '(new)')} "
+                         f"failed (exit {result.returncode}): {message}")
+
 def user_env():
     env = dict(os.environ, XDG_RUNTIME_DIR="/run/user/" + str(os.getuid()))
     env["DBUS_SESSION_BUS_ADDRESS"] = "unix:path=" + env["XDG_RUNTIME_DIR"] + "/bus"
@@ -27,9 +38,17 @@ def user_env():
 def control(request):
     result = subprocess.run(["qrexec-client-vm", "dom0", "airlock.Ctrl.ReviewControl"],
         input=json.dumps(request) + "\n", text=True, capture_output=True)
-    if result.returncode:
-        raise ValueError((result.stderr or result.stdout or "review control failed")[-4096:])
-    return json.loads(result.stdout)
+    try:
+        response = json.loads(result.stdout)
+    except ValueError:
+        response = None
+    if (result.returncode or not isinstance(response, dict)
+            or not isinstance(response.get("status"), str)
+            or response.get("schema") == "airlock.review-control-error.v1"):
+        message = response.get("error") if isinstance(response, dict) else None
+        raise ControlError(request, result, str(message or result.stderr or result.stdout or
+                           "No diagnostic output received")[-4096:], response)
+    return response
 
 def job_path(state, identity):
     if not isinstance(identity, str) or not re.fullmatch(r"[0-9a-f]{32}", identity):
@@ -37,14 +56,25 @@ def job_path(state, identity):
     return state / "jobs" / identity / "status.json"
 
 def status(state, identity):
-    value = json.loads(job_path(state, identity).read_text())
+    path = job_path(state, identity)
+    snapshot = path.read_bytes()
+    value = json.loads(snapshot)
+    value["controller_lock"] = lock_status(state / "lock")
     if value["status"] in {"building", "deployment_started"} and value.get("authorization_id"):
-        latest = control({"op": "status", "request_id": value["authorization_id"]})
-        if latest["status"] in {"scope_exceeded", "deployment_started"}:
-            value.update(status=latest["status"], plan=latest.get("plan"), release=latest.get("release"))
+        try:
+            latest = control({"op": "status", "request_id": value["authorization_id"]})
+        except ControlError as exc:
+            value.update(observation_error=str(exc), control_error=exc.details)
+        else:
+            value["lock"] = latest.get("lock")
+            if latest["status"] in {"scope_exceeded", "deployment_started"}:
+                value.update(status=latest["status"], plan=latest.get("plan"), release=latest.get("release"))
     if value["status"] in ACTIVE and time.time() - value.get("updated_at", value.get("created_at", time.time())) > 10:
         running = subprocess.run(["systemctl", "--user", "is-active", "--quiet", "airlock-review-" + identity], env=user_env())
         if running.returncode:
+            current = path.read_bytes()
+            if current != snapshot:
+                return {**json.loads(current), "controller_lock": lock_status(state / "lock")}
             value.update(status="cancelled" if value["status"] == "awaiting_approval" else "failed",
                          error="Controller job was interrupted; no new approval was granted by reconnecting.")
     return value
@@ -121,11 +151,15 @@ def authorize(deploy, header, update):
     control({"op": "check", "request_id": identity, "revision": header["revision"], "lock_hash": header["lock_hash"]})
     return identity
 
-def work(deploy, identity):
+def work(deploy, identity, operation=None):
     path = job_path(deploy.STATE, identity)
     value = status(deploy.STATE, identity)
     header = value["request"]
     def update(phase, **extra):
+        if operation:
+            reason = {"awaiting_approval": "Wait for the user's source-review decision",
+                      "building": "Build approved source and submit the requested operation"}
+            operation.update(phase=phase, reason=reason.get(phase, "Record the controller job outcome"))
         value.update(status=phase, updated_at=time.time(), **extra)
         deploy.record(path, value)
     try:
@@ -149,5 +183,5 @@ def work(deploy, identity):
     except Exception as exc:
         detail = str(exc)[-4096:]
         phase = next((name for name in ("scope_exceeded", "stale_review") if name in detail), "failed")
-        update(phase, error=detail)
+        update(phase, error=detail, **({"control_error": exc.details} if isinstance(exc, ControlError) else {}))
         return EXITS[phase]

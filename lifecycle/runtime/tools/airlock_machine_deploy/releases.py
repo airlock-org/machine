@@ -209,7 +209,8 @@ class ReleaseManager:
         }
 
     def prune_plan(self, release, early_purge_trash=()) -> PrunePlan | PruneRecord:
-        with self.machine.locked():
+        with self.machine.locked("Retention planning", "Inspect whether a release can be removed",
+                                 "release-prune-plan", operation_id=str(release)):
             path = self.prune_record_path(release)
             if path.exists():
                 record = self.read_prune_record(path)
@@ -224,7 +225,7 @@ class ReleaseManager:
             return self._prune_plan(release, early_purge_trash=early_purge_trash)
 
     def list_releases(self):
-        with self.machine.locked():
+        with self.machine.locked("Release inventory", "Inspect recorded machine releases", "release-list"):
             records = []
             for release in sorted(self.release_inventory()):
                 path = self.prune_record_path(release)
@@ -239,7 +240,8 @@ class ReleaseManager:
             }
 
     def retain_release(self, release, retain):
-        with self.machine.locked():
+        with self.machine.locked("Release retention", "Update explicit retention of a machine release",
+                                 "release-retain", operation_id=str(release)):
             self.require_no_pruning()
             self.require_available_release(release)
             release = str(Path(release).resolve())
@@ -260,7 +262,8 @@ class ReleaseManager:
             raise DeploymentError(
                 "release pruning confirmation must match the full release path"
             )
-        with self.machine.locked():
+        with self.machine.locked("Release pruning", "Remove an explicitly confirmed obsolete release",
+                                 "release-prune", operation_id=str(release)):
             return self._prune_release_locked(release, confirmation, early_purge_trash)
 
     def _prune_release_locked(self, release, confirmation, early_purge_trash=()):

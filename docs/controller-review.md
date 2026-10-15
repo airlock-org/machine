@@ -95,6 +95,36 @@ Queries reconcile the returned snapshot without rewriting the job record; the
 controller worker owns its updates. JSON publication uses a unique temporary
 file per write so concurrent publications cannot collide on a shared filename.
 
+ReviewControl status reads also remain available while deployment or generation
+maintenance holds the machine lock. Transport/service failures include the
+operation, request ID, exit code and bounded output. Dom0 sends structured errors
+on stdout as well as logging them, since qrexec can route service stderr to its
+local log instead of back to the caller. If a status observation fails, the
+controller returns its recorded job state with `observation_error` and
+`control_error`; that warning does not turn an accepted approval into a rejection.
+
+## Lock ownership
+
+The controller and dom0 associate exclusive work with a named owner and reason.
+For example, `Automatic generation maintenance` holds the machine lock to
+`Remove unused generations and collect unused pool artifacts`. Deployment locks
+identify their transaction and current phase; controller review locks identify
+the submission and whether it is awaiting approval or building.
+
+`airlock machine status` includes the current machine `lock`, or null when free.
+Review-status snapshots include `controller_lock` and, when observing an
+authorization, the machine `lock`. Busy errors include the same owner details:
+reason, operation, operation ID where available, PID, acquisition time, elapsed
+seconds, and phase/service unit where available. Inspection does not require
+acquiring the exclusive lock. Mutations and approval validation retain their
+existing exclusion and authorization checks.
+
+Kernel `flock` remains authoritative. Owner metadata is diagnostic and cannot
+grant authority or make a free lock busy. Missing or stale owner details are
+reported as unknown while a real lock is held; never delete a lock file or its
+metadata to force an operation through. A crashed process releases its kernel
+lock, and the next owner replaces any leftover metadata.
+
 ## Development administration
 
 The development configuration permits dom0 administrative access. This separate

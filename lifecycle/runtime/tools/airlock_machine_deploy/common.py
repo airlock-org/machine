@@ -10,3 +10,9 @@ RETIRED_POLICY = "/var/lib/airlock/qubes-policy.d/05-airlock-retired.policy"
 
 class DeploymentError(RuntimeError):
     pass
+
+
+class DeploymentBusy(DeploymentError):
+    def __init__(self, error):
+        self.holder = error.holder
+        super().__init__("another machine operation is running: " + str(error))
