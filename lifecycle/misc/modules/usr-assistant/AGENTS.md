@@ -26,6 +26,32 @@ asking for permission; apply a deployment when the user's request authorizes it.
 - Commit successful fixes in the checkout; temporary live edits, `/run`
   changes, or overlays do not constitute a deployed fix.
 
+## Check for older undeployed changes
+
+Before editing deployable system configuration for a live target, use read-only
+`airlock-usr-assistant-machine-deploy status` and `verify` and inspect the recorded
+deployed-source provenance. Compare the deployed source tree with the checkout,
+including committed and uncommitted changes. Record the baseline identity and
+starting checkout revision. A clean working tree or successful build is not proof
+that committed changes are deployed. A selected release awaiting activation or
+reboot is still pending; a single-guest update does not prove that the entire
+checkout is active on the host and every VM.
+
+If older deployable changes or an unfinished/failed current deployment remain,
+stop before making new system changes. Report the pending commits/files, affected
+components and deployment state, then ask whether the user wants to deploy,
+discard or isolate that older work first. Do not automatically deploy, revert,
+reset, cherry-pick or combine it with the new request. If the deployed baseline
+cannot be established, report that and stop rather than assume a match.
+Explicitly requested work to resolve the backlog may proceed.
+
+Documentation/instruction-only changes do not require a deployment; inspect
+mixed commits by content. Immediately before submission, repeat the comparison
+against the recorded starting state and the user's authorized change. If the
+baseline, deployment state or checkout changed outside that scope, stop and
+report it. Do not evaluate/build a candidate to perform this check, or bypass
+source approval.
+
 ## Edit, check, and commit
 
 Work in the checkout. Keep unrelated user changes intact. The seeded checkout

@@ -88,8 +88,35 @@ go to `$AIRLOCK_LOG_DIR` (`~/.local/state/airlock/logs`).
 
 ## Change the running machine
 
-Edit this checkout, verify according to the change, commit, then inspect the
-normal plan:
+Before editing deployable system configuration, inspect the target using the
+read-only commands:
+
+```sh
+airlock-usr-assistant-machine-deploy status
+airlock-usr-assistant-machine-deploy verify
+```
+
+Establish the recorded deployed-source baseline and compare its tree with the
+checkout, including committed and uncommitted changes. Record that identity and
+the starting checkout revision. A clean Git tree or successful build does not
+prove deployment. Check host and guest state: a single-guest update does not
+establish that the whole checkout is active, and an uncompleted activation or
+required reboot remains pending.
+
+If older deployable changes, an unfinished/failed current deployment or an unknown
+baseline remain, stop new system edits. Report the pending commits/files and
+deployment state, then let the user choose whether to deploy, discard or isolate
+the older work. Do not resolve it automatically or combine it with the new request.
+Explicitly requested backlog resolution may proceed. Documentation/instruction-only
+changes do not require deployment; inspect mixed commits by content.
+
+Repeat the check immediately before submission. If the baseline, deployment state
+or checkout changed beyond the recorded starting state and the user's authorized
+change, stop and report it. Use read-only state and source comparisons for these
+checks, without candidate evaluation/build or bypassing approval.
+
+Once the check is clear, edit this checkout, verify according to the change,
+commit, recheck, then inspect the normal plan:
 
 ```sh
 airlock-usr-assistant-machine-deploy plan

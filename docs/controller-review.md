@@ -14,6 +14,12 @@ Missing or invalid machine provenance blocks review; a mutable guest checkout
 cannot supply the deployed baseline. Existing images without this metadata
 need a rebuilt image or a separately verified administrative upgrade.
 
+Source review compares the submitted source with that deployed baseline. Earlier
+committed but undeployed system changes can therefore appear alongside a new
+package request. Before editing and again before submission, follow the
+[pending-change check](usr-assistant.md#change-the-running-machine); stop for
+older deployable work instead of combining it with the new request.
+
 The controller validates/imports the Git bundle without evaluating Nix, obtains
 the selected source baseline from dom0 and opens the source review. The permitted
 impact names VMs that may change/start/stop/restart and whether a system reboot
