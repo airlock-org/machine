@@ -96,12 +96,23 @@ policy, run these commands from usr-assistant:
 
 ```sh
 airlock machine plan
+# Use its returned request ID; wait for planned and inspect the plan before apply.
+airlock machine review-status --request-id PLAN_REQUEST_ID
 airlock machine apply
+airlock machine review-status --request-id APPLY_REQUEST_ID
 airlock machine status
 airlock machine verify
 ```
 
-`plan` builds and validates without activation. Inspect its changed/affected
+Submission commands wait for the human decision, then exit so you can resume
+reasoning. `approved` acknowledges the decision only; sys-ctrl continues work in
+the background. Use the returned request ID with `review-status` to follow the
+job. A fast worker's outcome can already appear in `job_status`; inspect it.
+On rejection or cancellation, discuss the result rather than automatically
+resubmitting. Report failures and resolve them before new system changes.
+
+`plan` builds and validates without activation. Wait for the job's `planned`
+state before apply. Inspect its changed/affected
 VMs, stop/start list, retirement actions, and reboot requirement before apply.
 `apply` submits a detached dom0 worker. Submission or a successful build alone
 does not establish deployment success: wait for the worker outcome and verify
@@ -111,7 +122,10 @@ For a guest-package/module change with no topology or host-policy change:
 
 ```sh
 airlock machine guest-plan --target usr-home
+airlock machine review-status --request-id PLAN_REQUEST_ID
+# Wait for planned and inspect the plan before submitting guest-apply.
 airlock machine guest-apply --target usr-home
+airlock machine review-status --request-id APPLY_REQUEST_ID
 airlock machine status
 airlock machine verify
 ```

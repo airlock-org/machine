@@ -12,6 +12,11 @@
   From the installed usr-assistant workspace, read `docs/usr-assistant.md` and use
   `airlock machine` directly from this clean committed checkout;
   a parent checkout is not required. A successful build is not a live deployment.
+- Controller submissions return after the human review decision. An approved
+  reply is not deployment success: follow the returned request ID with
+  `airlock machine review-status --request-id REQUEST_ID`. Wait for the plan
+  before apply and verify the deployment outcome before further system changes.
+  Discuss rejection or cancellation instead of automatically resubmitting.
 - Keep development observation separate from production behavior. Observation
   tools should report state without expanding Qubes control authority.
 - Before editing deployable system configuration for a live target, inspect its

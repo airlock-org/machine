@@ -52,22 +52,42 @@ The normal review route uses the installed coordinator, not a candidate-provided
 Existing typed resume/rollback can recover already selected generations when
 sys-ctrl is stopped.
 
-## Interrupted submissions
+## Decision feedback and background work
 
-Submissions wait while a detached user-systemd job carries out review and build.
-The qrexec response streams JSON state changes with a persistent request ID.
+Submissions wait for the review decision, then exit so the calling agent can
+resume reasoning. A detached user-systemd job continues approved builds and
+deployment independently. The qrexec response streams pending JSON states with
+a persistent request ID, followed by the decision. Approval exits with code 0:
+
+```json
+{"status":"approved","decision":"approved","request_id":"…","job_status":"building","continuing":true,"status_command":"airlock machine review-status --request-id …"}
+```
+
+`status` describes the submission's decision; `job_status` is the worker's state
+at that moment. `continuing` says whether controller work is still active, not
+whether deployment succeeded. The decision is retained even if a fast worker
+finishes or fails before the submitter's next poll; check `job_status` and query
+the job for its outcome. Approval is never a deployment-success acknowledgement.
+
+Reject, cancellation and failures before approval return their corresponding
+status and a nonzero exit code. Resume reasoning from that result; do not
+automatically resubmit a rejected candidate.
+
 Disconnecting the submitter does not grant approval or cancel the detached job.
-After interruption, query:
+After approval or interruption, query:
 
 ```sh
 airlock machine review-status --request-id REQUEST_ID
 ```
 
-States include queued, awaiting_approval, building, planned, built,
+Job states include queued, awaiting_approval, building, planned, built,
 deployment_started, rejected, cancelled, scope_exceeded, stale_review and failed.
-Negative decisions have distinct nonzero exit codes (20–23); concurrent submission
-returns busy (24). Do not automatically resubmit a rejected candidate. Scope or
-source failures need a revised proposal. Use normal status/verify for actual
+`review-status` reports the current job state and retains `decision: approved`
+after approval. Wait for `planned` before inspecting a plan and submitting apply;
+do not submit another change while work is pending. Rejection is exit 20,
+cancellation 21, scope refusal 22, stale review 23, and failure 1; concurrent
+submission returns busy (24). Scope or source failures need a revised proposal.
+Use normal status/verify for actual
 deployment completion; deployment_started only acknowledges the detached dom0
 worker. Status reconciliation detects controller interruption and root-side
 scope refusal, including when a VM restart interrupts the original reply.

@@ -73,6 +73,12 @@ def wait(deploy, identity):
     previous = None
     while True:
         value = status(deploy.STATE, identity)
+        if value.get("decision") == "approved":
+            # The worker can advance through several phases between polls. Keep
+            # its durable decision separate from its current work status.
+            value = {**value, "status": "approved", "job_status": value["status"],
+                     "continuing": value["status"] in ACTIVE,
+                     "status_command": "airlock machine review-status --request-id " + identity}
         if value["status"] != previous:
             print(json.dumps(value, sort_keys=True), flush=True)
             previous = value["status"]
@@ -133,7 +139,7 @@ def work(deploy, identity):
         deploy.APPROVAL = authorize(deploy, header, update)
         if deploy.identity(deploy.REPO) != (header["revision"], header["lock_hash"]):
             raise ValueError("controller source changed during review")
-        update("building")
+        update("building", decision="approved")
         result = io.StringIO()
         with contextlib.redirect_stdout(result):
             deploy.execute(header["action"], header["target"], header["revision"], header["lock_hash"],

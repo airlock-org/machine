@@ -1,6 +1,7 @@
 """Human authorization must precede builds and bound the eventual activation."""
 import importlib
 import json
+import multiprocessing
 from pathlib import Path
 import sys
 from types import SimpleNamespace
@@ -197,12 +198,75 @@ def test_approved_job_reports_submission_not_deployment_completion(worker, monke
     assert jobs.status(deploy.STATE, identity)["status"] == "deployment_started"
 
 
-def test_wait_streams_pending_and_negative_feedback(monkeypatch, capsys):
-    values = iter({"status": status} for status in ("queued", "awaiting_approval", "rejected"))
+def _run_approved_worker(directory, identity, building, finish):
+    header = json.loads(jobs.job_path(directory, identity).read_text())["request"]
+    def execute(*_a, **_k):
+        building.set()
+        if not finish.wait(5):
+            raise TimeoutError("test did not release the build")
+        print(json.dumps({"unit": "detached-dom0-worker"}))
+
+    deploy = SimpleNamespace(STATE=directory, REPO=directory, RENAME_SCHEMA="rename",
+                             record=state.atomic_json, execute=execute,
+                             identity=lambda _: (header["revision"], header["lock_hash"]))
+    jobs.authorize = lambda *_: "d" * 64
+    raise SystemExit(jobs.work(deploy, identity))
+
+
+def test_submitter_returns_approval_while_worker_keeps_building(worker, monkeypatch, capsys):
+    deploy, identity = worker
+    context = multiprocessing.get_context("spawn")
+    building, finish = context.Event(), context.Event()
+    monkeypatch.setattr(jobs, "control", lambda _: {"status": "approved"})
+    process = context.Process(target=_run_approved_worker,
+                              args=(deploy.STATE, identity, building, finish))
+    process.start()
+    try:
+        assert building.wait(5), "worker never reached the build"
+        monkeypatch.setattr(jobs.time, "sleep", lambda _: pytest.fail("wait continued after approval"))
+        assert jobs.wait(deploy, identity) == 0
+        reply = json.loads(capsys.readouterr().out)
+        assert reply["status"] == reply["decision"] == "approved"
+        assert reply["request_id"] == identity
+        assert reply["job_status"] == "building"
+        assert reply["continuing"] is True
+        assert reply["status_command"] == "airlock machine review-status --request-id " + identity
+        assert process.is_alive(), "submission waited for the worker to finish"
+        finish.set()
+        process.join(5)
+        assert process.exitcode == 0
+        outcome = jobs.status(deploy.STATE, identity)
+        assert outcome["decision"] == "approved"
+        assert outcome["status"] == "deployment_started"
+    finally:
+        finish.set()
+        if process.is_alive():
+            process.terminate()
+        process.join(5)
+        process.close()
+
+
+@pytest.mark.parametrize("phase", ["deployment_started", "planned", "built", "failed", "scope_exceeded"])
+def test_fast_worker_preserves_approval_and_reports_current_outcome(worker, monkeypatch, capsys, phase):
+    deploy, identity = worker
+    deploy.record(jobs.job_path(deploy.STATE, identity),
+                  {"request_id": identity, "status": phase, "decision": "approved"})
+    assert jobs.wait(deploy, identity) == 0
+    reply = json.loads(capsys.readouterr().out)
+    assert reply["status"] == "approved"
+    assert reply["job_status"] == phase
+    assert reply["continuing"] is False
+    # Querying the job still returns its work outcome, not the submission reply.
+    assert jobs.status(deploy.STATE, identity)["status"] == phase
+
+
+@pytest.mark.parametrize("phase", ["rejected", "cancelled", "failed", "stale_review", "scope_exceeded"])
+def test_wait_streams_pending_and_negative_feedback(monkeypatch, capsys, phase):
+    values = iter({"status": status} for status in ("queued", "awaiting_approval", phase))
     monkeypatch.setattr(jobs, "status", lambda *_: next(values))
     monkeypatch.setattr(jobs.time, "sleep", lambda _: None)
-    assert jobs.wait(SimpleNamespace(STATE=None), "id") == 20
-    assert [json.loads(line)["status"] for line in capsys.readouterr().out.splitlines()] == ["queued", "awaiting_approval", "rejected"]
+    assert jobs.wait(SimpleNamespace(STATE=None), "id") == jobs.EXITS[phase]
+    assert [json.loads(line)["status"] for line in capsys.readouterr().out.splitlines()] == ["queued", "awaiting_approval", phase]
 
 
 @pytest.mark.parametrize("phase", ["scope_exceeded", "deployment_started"])

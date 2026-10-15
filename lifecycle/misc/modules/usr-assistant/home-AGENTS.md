@@ -20,3 +20,10 @@ verify the running generations and requested package state after apply.
 Routine installs/removals do not need documentation edits unless they change
 documented behavior, instructions or supported capabilities. Keep package selections
 in Nix.
+
+Deployment submissions return after the human review decision. An `approved`
+reply lets you resume reasoning while sys-ctrl continues work; it does not prove
+deployment success. Follow the returned request ID with
+`airlock machine review-status --request-id REQUEST_ID`, wait for a plan before
+apply, and verify the deployment outcome before making further system changes.
+Discuss rejection or cancellation instead of automatically resubmitting.

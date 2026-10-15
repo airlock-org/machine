@@ -44,10 +44,21 @@ airlock machine plan
 Normal submissions open Airlock Control for
 [source approval](controller-review.md) before evaluation and building. Approval
 covers the committed source and permitted VM scope. Review the resulting plan,
-including affected VMs and any restart or reboot requirement, before applying:
+including affected VMs and any restart or reboot requirement, before applying.
+The command returns as soon as the decision is available, allowing the calling
+agent to resume reasoning. `approved` authorizes background work; it does not
+confirm that the plan or deployment is complete. Use the returned request ID:
+
+```sh
+airlock machine review-status --request-id REQUEST_ID
+```
+
+Wait for `planned`, then inspect the plan before applying:
 
 ```sh
 airlock machine apply
+# Check the new request ID until deployment_started, then inspect dom0's outcome.
+airlock machine review-status --request-id APPLY_REQUEST_ID
 airlock machine status
 airlock machine verify
 ```
@@ -55,6 +66,8 @@ airlock machine verify
 A successful build or accepted submission does not confirm deployment. Check the
 worker outcome and running generations. If dom0 requires a reboot, verify again
 after the machine restarts.
+On rejection or cancellation, discuss the result with the user instead of
+automatically retrying. Resolve failures before submitting further changes.
 
 For changes limited to an existing VM, use `airlock machine guest-plan --target VM`
 and `airlock machine guest-apply --target VM`. Use the whole-machine route for
