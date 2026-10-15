@@ -139,6 +139,7 @@
             nixos-qubes.overlays.default
             airlockQubesGuiWindowStateOverlay
             (import ./lifecycle/misc/overlays/codex-release.nix)
+            (import ./lifecycle/misc/overlays/qubes-memory-accounting.nix)
             airlockImageBuildToolsOverlay
           ];
           config.allowUnfreePredicate =
@@ -169,7 +170,8 @@
               rel = lib.removePrefix "${root}/" (toString path);
               keepTree = name: rel == name || lib.hasPrefix "${name}/" rel;
             in
-            rel == "flake.nix" || rel == "flake.lock" || keepTree "lifecycle" || rel == "tests";
+            rel == "flake.nix" || rel == "flake.lock" || keepTree "lifecycle"
+            || rel == "tests" || rel == "tests/test_memory_accounting.py";
         in
         lib.cleanSourceWith {
           name = "airlock-support-config-input-source";
@@ -645,6 +647,7 @@
           airlock = pkgs.callPackage ./lifecycle/runtime/tools/pkgs/airlock-cli { };
           codex = pkgs.codex;
           zellij = pkgs.zellij;
+          qubes-linux-utils = pkgs.qubes-linux-utils;
           airlock-nix-domain-storage =
             pkgs.callPackage ./lifecycle/runtime/tools/pkgs/airlock-nix-domain-storage
               { };
@@ -735,6 +738,7 @@
         config-control-package = self.packages.${system}.airlock-config-control;
         codex-package = self.packages.${system}.codex;
         zellij-package = self.packages.${system}.zellij;
+        qubes-memory-accounting = self.packages.${system}.qubes-linux-utils;
         config-inputs-import-package = self.packages.${system}.airlock-config-inputs-import;
         config-status-package = self.packages.${system}.airlock-config-status;
         airlock-cli-package = self.packages.${system}.airlock-cli;
