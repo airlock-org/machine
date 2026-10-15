@@ -13,14 +13,14 @@ airlock.amdVbios = {
 };
 ```
 
-The AMD USB lab enables it. The default hybrid profile does not. Device
+The physical GPU profiles enable it. The hybrid display profile does not. Device
 reservation, assignment, and the decision about isolation/reset safety remain
 separate: the lab still reserves its reviewed GPU through its hardware boot
 configuration. Another machine must supply its own reservation and input
 selection. This feature does not discover which GPU the user wants to assign.
-The lab now connects that choice to boot using
+The GPU module connects that choice to boot using
 [declarative sys-gui assignment](gui-gpu-assignment.md); firmware preparation
-itself still does not assign devices. Fresh-image validation remains pending.
+itself still does not assign devices.
 
 ## Startup behavior
 
@@ -92,70 +92,12 @@ see [the original VFCT investigation](amd-gpu-vbios.md).
   managed-save resume, or reset-safety certification.
 
 Other vendors, missing VFCT, unsupported table layouts, absent devices, and
-conflicting VM layouts produce an error through Qubes. GPU discovery is not
-general AMD hardware certification; a second physical machine remains untested.
+conflicting VM layouts produce an error through Qubes. Firmware validation does
+not establish device reset safety.
 
-## Laptop validation — 2026-09-14
+## Implementation checks
 
-Host boot `80202319-c266-4f62-acdc-f0e0f2be2074` was the AMD lab following a
-host reboot. sys-gui was halted throughout implementation and the negative
-checks. The built extension, generated Nix config/template, and patched
-libvirt were staged on the running host without a full image rebuild.
-
-Observed results:
-
-- No assignment: ordinary `qvm-start` failed with the explicit required-PCI
-  error, leaving the guest halted.
-- With the reviewed assignment and the old libvirt daemon: preparation
-  succeeded but startup stopped before domain creation because conversion
-  discarded the guest slot. No GPU guest start occurred.
-- Patched libvirt: 14 read-only pytest conversion checks passed, covering
-  slots 8/16/18/31, native roundtrips, unchanged automatic placement, and
-  invalid addresses/slots.
-- One ordinary `qvm-start sys-gui` then succeeded. The extension read the host
-  VFCT automatically and generated it for `0000:00:10.0`. The guest enumerated
-  the GPU at precisely that address, reported `Fetched VBIOS from VFCT`, bound
-  `amdgpu`, and created `card0` and `renderD128`.
-- Guest VFCT hash matched the generated table:
-  `c53b20cfb087f59a036e9dc9b8b99f2f0a6cf3adc45b953e7c013c49e69fae12`.
-  This differs from the old manually prepared table for slot 5. The old
-  provisioned `/var/lib/airlock/amd-lab/sys-gui.vfct` was not used.
-- The persistent experimental PCI assignment was removed after startup;
-  the running GPU remains attached. Dom0 retains pciback for that function and
-  its normal drivers for the sibling functions. Display manager/input were
-  intentionally not started: this test concerns firmware automation.
-
-Raw evidence: `.airlock-logs/amd-vbios-auto/auto-80202319/` on the workstation
-and `/var/lib/airlock/amd-lab/auto-80202319/` on the laptop. The manifest and
-kernel log record the firmware and PCI identities; firmware bytes are not in Git.
-
-The final pre-event guard ordering was hardened after this GPU start and
-checked separately against the actual Qubes event dispatcher. This did not
-require another GPU start/reset. A freshly rebuilt image exercising the entire
-workflow without runtime staging remains the next reproducibility check.
-
-Final verification: 58 focused pytest checks passed (43 synthetic firmware,
-discovery and XML checks; 14 real libvirt conversions; one real Qubes event
-ordering check). Both packages and the AMD lab's generated `/etc` built;
-Nix assertions passed and the default hybrid profile retained automation disabled.
-
-## Build and checks
-
-```sh
-make test-quick PYTEST_DEFAULT_TARGETS= \
-  PYTEST_SELECTED='tests/test_amd_vbios.py tests/test_amd_vbios_runtime.py'
-AIRLOCK_VBIOS_LIBVIRT_SSH=root@HOST \
-  uv run pytest tests/test_amd_vbios_libvirt.py
-make usb-dev-image
-make usb-dev-provision USB_SERIAL=YOUR_SERIAL
-```
-
-The libvirt checks only convert synthetic configurations; they do not define
-or start a domain. Without the explicit SSH environment variable they skip.
-The normal provisioning command no longer copies workstation VBIOS artifacts.
-The offline `airlock/lifecycle/image/tools/amd-vbios.py` command is retained for inspection
-and historical experiments, using the same validator as the startup extension.
-
-The running laptop uses temporary systemd overrides under `/run`; a reboot
-returns to the flashed image's binaries. Rebuild/reflash to make this version
-the bootable baseline. The staged test made no permanent boot-order change.
+Firmware validation and runtime tests are in `tests/test_amd_vbios.py` and
+`tests/test_amd_vbios_runtime.py`. Follow [contributor setup](../CONTRIBUTING.md)
+for local checks. Physical results and the original staged procedure are retained
+in the [firmware investigation record](history/amd-vbios-automatic-2026-10-15.md).

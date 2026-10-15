@@ -1,5 +1,9 @@
 # Hyprland and Quickshell milestone
 
+Historical investigation record. Commands, versions, boot entries, and results
+apply to the revisions described below. See [current documentation](README.md)
+for installed-machine configuration and operation.
+
 Status: image configuration added; no physical Hyprland boot verified yet.
 The preceding XFCE milestone verified AMD hardware-accelerated OpenGL in
 sys-gui. That is a prerequisite, not evidence that Wayland or cross-VM windows

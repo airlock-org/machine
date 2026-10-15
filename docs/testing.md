@@ -2,19 +2,15 @@
 
 `airlock-machine` owns the runtime component tests.
 
-Choose verification according to the change. Routine package-list additions and
-removals do not need repository tests: review and commit the exact diff, obtain
-required source approval before evaluation/build, then apply and verify the
-requested package state. Keep normal Nix build checks enabled. Implementation,
-service, policy and deployment changes need relevant tests; run `make test-quick`
-when shared behavior could be affected. Documentation changes need diff and
-formatting review rather than executable tests.
+[CONTRIBUTING.md](../CONTRIBUTING.md#local-checks) describes which checks apply
+to a change and how to prepare dependencies. This guide covers test selection,
+coverage, and reporting.
 
 Run tests from this checkout:
 
 ```bash
 make test-quick
-make test-quick TESTS="host-capabilities topology-schema"
+make test-quick TESTS=setup-config-idempotent
 make test-quick PYTEST_ARGS="-k rollback"
 make test-quick PYTEST_ARGS="-n 4 --dist loadgroup"
 ```
@@ -22,9 +18,15 @@ make test-quick PYTEST_ARGS="-n 4 --dist loadgroup"
 The suite collects `tests/`, including deployment and recovery contracts,
 bootstrap/setup/apply helpers, storage, guest configuration and firmware.
 `make test-quick` excludes Nix-marked cases; use `make test-nix` for package and
-module evaluations or builds. `tests/test_machine_local.py` retains the named local
-checks; their implementations live in the focused modules under `tests/local_checks/`. These checks
-use this repository's source files and flake, without requiring a parent checkout.
+module evaluations or builds. `tests/test_machine_local.py` retains the named
+local checks; their implementations live under `tests/local_checks/` and use
+this repository's source files and flake, without requiring a parent checkout.
+
+Nix-marked checks are selected explicitly, for example:
+
+```bash
+make test-nix TESTS=topology-schema
+```
 
 Tests should check observable behavior and failure handling. Optional application
 and development-tool selections belong in Nix; do not duplicate them as package
@@ -57,11 +59,13 @@ tools. Run its required tool checks locally from a clean committed checkout:
 support are missing. Ordinary quick runs retain optional skips for these tools;
 they never build or provision them.
 
-Tests use the guarded external Airlock store and write reports under
-`AIRLOCK_LOG_DIR`. The default store is
-`/run/media/user/data/airlock/nix-root`; do not use the host store for routine
-component development. Tests with physical or Qubes runtime requirements retain
-their explicit opt-in environment variables.
+Reports are written under `AIRLOCK_LOG_DIR`. For Nix checks on an external
+development computer, set `AIRLOCK_DATA_ROOT` for the isolated store; the existing
+`/run/media/user/data/airlock/nix-root` path is a development mount default.
+Inside usr-assistant, use the installed builder wrapper described in the
+[workspace guide](usr-assistant.md#stores-and-source-locations).
+Tests with physical or Qubes runtime requirements retain their explicit opt-in
+environment variables.
 
 For a subset without Nix-marked or Qubes-marked cases:
 
@@ -70,8 +74,9 @@ AIRLOCK_PYTEST_WARM_STORE=0 make test-quick PYTEST_ARGS="-m 'not nix and not qub
 ```
 
 The parent `airlock` repository runs these same component tests directly from
-its pinned `airlock-machine/` submodule, alongside its own USB assembly and
+its pinned `airlock-machine/` submodule, alongside its image assembly and
 transport tests. Nested-VM orchestration, `make test-warm`, `make test-slow`,
 and the physical deployment workflow belong to that parent repository; see its
-`docs/testing.md` for those commands. Component tests do not prove a successful
+[testing guide](https://github.com/airlock-org/airlock/blob/main/docs/testing.md)
+for those commands. Component tests do not prove a successful
 live deployment.

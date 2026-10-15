@@ -24,11 +24,10 @@ source in this repository.
 
 The inspected `nixos-qubes` snapshot has no LICENSE/COPYING file or explicit
 source-license grant in its README. Upstream's license endpoint returned HTTP 404
-on 2026-10-11; no license grant was established. Do not assume its repository source is covered by either
-Airlock's MIT license or the licenses of the packages it builds. Clarify the
-vendored modules/packaging terms with upstream before public redistribution;
+on 2026-10-11; no license grant was established. Do not assume its repository
+source is covered by Airlock's MIT license or the licenses of the packages it
+builds. Clarify the vendored modules/packaging terms with upstream before public
+redistribution;
 retain provenance and do not add an invented license to that directory.
 
-This licensing question is a remaining publication prerequisite, not resolved
-by adding MIT for original Airlock code. See the local readiness report in the
-parent repository. No public release or artifact upload was performed.
+This licensing question is not resolved by adding MIT for original Airlock code.

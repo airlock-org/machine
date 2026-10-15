@@ -1,5 +1,9 @@
 # AMD laptop VBIOS delivery experiment
 
+Historical investigation record. Commands, versions, boot entries, and results
+apply to the revisions described below. See [current documentation](README.md)
+for installed-machine configuration and operation.
+
 This page records the original manual experiment. The current implementation
 is [automatic AMD VFCT preparation](amd-vbios-automatic.md): it discovers the
 assigned device at startup and explicitly places it at the guest address used

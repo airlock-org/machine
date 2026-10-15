@@ -1,40 +1,24 @@
-# Image Layer
+# Image configuration
 
-Builds bootable Airlock OS artifacts.
+`profiles/` contains physical-machine and nested-VM image profiles. `hardware/`
+contains machine-specific device configuration. The machine flake composes
+these with dom0 and VM modules; deployment updates those systems from committed
+configuration.
 
-Image profiles live in `profiles/`. They should describe what goes into a
-bootable test or VM image, not the ongoing runtime configuration edited after
-the system is running.
+## Image building
 
-## Image Mode
+Bootable disk assembly, provisioning, and nested-VM launch commands belong to
+the parent airlock repository. Its
+[image guide](https://github.com/airlock-org/airlock/blob/main/docs/usb-dev.md)
+and [testing guide](https://github.com/airlock-org/airlock/blob/main/docs/testing.md)
+describe those workflows. The component's [build instructions](../../CONTRIBUTING.md#nix-builds)
+cover independently buildable machine releases.
 
-Airlock VM image outputs are split into explicit development and release flavors.
-Development mode is a build-time image profile flag, not a runtime switch.
+Nested configurations have explicit development and release variants, including
+`airlock-vm-gui-config-dev-image` and `airlock-vm-gui-config-release-image`.
+Development profiles enable test access and diagnostics; release variants omit
+those conveniences. These nested profiles are separate from the physical
+machine's hardware and boot configuration.
 
-Development images enable dom0 conveniences for nested work: the
-`/etc/airlock/dev-mode` marker, extra dom0 tools, test/observation commands,
-and a loopback HTTP(S) proxy that forwards through sys-firewall. Release images
-leave those dom0 conveniences disabled. The sys-net topology is the same in
-both modes.
-
-Build with Make:
-
-```bash
-make vm-gui-config-image
-make vm-gui-config-image VM_IMAGE_MODE=release
-```
-
-Build explicit flake outputs:
-
-```bash
-nix build .#airlock-vm-gui-config-dev-image
-nix build .#airlock-vm-gui-config-release-image
-```
-
-Use the explicit `-dev` or `-release` flake output names.
-
-See [sys-gui desktop and login](../../docs/sys-gui.md) for the guest login
-credentials, the remaining dom0 display relay, and desktop-management permissions.
-
-Image-only helper packages or scripts belong in `tools/`. Cross-stage helpers
-belong in `../misc/tools/`.
+Image-only tools live in `tools/`; helpers shared with bootstrap or runtime live
+in `../misc/tools/`.

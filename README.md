@@ -38,7 +38,8 @@ to GitHub.
 - [lifecycle/bootstrap/default-domains/](lifecycle/bootstrap/default-domains/): default VM topology and settings.
 
 See the [configuration guide](https://github.com/airlock-org/airlock/blob/main/docs/lab-configuration.md)
-for module composition and hardware settings.
+for module composition and hardware settings. Further guides are listed in
+[machine documentation](docs/README.md).
 
 ## Contributing
 

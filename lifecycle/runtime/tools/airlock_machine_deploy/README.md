@@ -1,6 +1,7 @@
 # Machine deployment implementation
 
-`../machine-deploy.py` remains the command-line entry point. Its Nix package
+This is the dom0 coordinator used by the installed `airlock machine` client.
+`../machine-deploy.py` is its command-line entry point. Its Nix package
 includes this directory alongside the entry point; importing it must not depend
 on the checkout or a development `PYTHONPATH`.
 
@@ -32,8 +33,7 @@ payload inventory must match the candidate; a reused generation retains its
 original verified provenance. The receiver emits the same single-line pool
 protocol as ordinary admission. Host activation remains deferred to reboot.
 
-The existing CLI, journal fields, schema identifiers, and recovery behavior are
-preserved. Tests in `tests/test_machine_deploy.py` exercise those contracts,
+Tests in `tests/test_machine_deploy.py` exercise the coordinator contracts,
 including interruption, rollback, shared locking, and installed-package imports.
 
 Boot and deployment verification both wait up to 180 seconds per required guest
@@ -56,7 +56,7 @@ use a full index build. Rebuilds bound appended metadata growth.
 Generation metadata binds the index checksum and logical blob layout. Existing
 pool admission, physical-range checks, retention pins, boot checksums and
 journalled publication still apply. Compaction may move physical ranges while
-preserving logical addresses. Host publication timing output now separates
+preserving logical addresses. Dom0 publication timing output separates
 object verification/admission, view preparation and index construction, and
 reports the number of inherited and newly indexed objects for host/controller
 views. This allows changes in preparation cost to be measured separately from
