@@ -4,7 +4,7 @@ See [usr-assistant](usr-assistant.md).
 
 ## First use
 
-See [first use](usr-assistant.md#first-use).
+See [opening the workspace](usr-assistant.md#open-the-workspace).
 
 ## Change the running machine
 
