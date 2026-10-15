@@ -60,11 +60,14 @@ class Reviews:
     def baseline(self):
         manifest, topology = load_release(self.coordinator.baseline())
         revision = manifest["revision"]
-        if not isinstance(revision, str) or not re.fullmatch(r"[0-9a-f]{40}", revision):
+        lock_hash = manifest.get("lockHash")
+        if (not isinstance(revision, str) or not re.fullmatch(r"[0-9a-f]{40}", revision)
+                or not isinstance(lock_hash, str) or not TOKEN.fullmatch(lock_hash)):
             raise DeploymentError("deployed source baseline is unavailable for review")
         from .coordinator import boot_id
         state = {"selection": self.coordinator.pointer(), "boot_id": boot_id(),
-                 "host": str(Path("/run/current-system").resolve()), "revision": revision}
+                 "host": str(Path("/run/current-system").resolve()), "revision": revision,
+                 "lock_hash": lock_hash}
         fingerprint = hashlib.sha256(json.dumps(state, sort_keys=True).encode()).hexdigest()
         return revision, fingerprint, sorted(topology["domains"])
 
