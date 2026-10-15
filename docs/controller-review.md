@@ -91,6 +91,9 @@ Use normal status/verify for actual
 deployment completion; deployment_started only acknowledges the detached dom0
 worker. Status reconciliation detects controller interruption and root-side
 scope refusal, including when a VM restart interrupts the original reply.
+Queries reconcile the returned snapshot without rewriting the job record; the
+controller worker owns its updates. JSON publication uses a unique temporary
+file per write so concurrent publications cannot collide on a shared filename.
 
 ## Development administration
 

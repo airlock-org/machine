@@ -19,6 +19,7 @@ let
     root = ../..;
     fileset = lib.fileset.unions [
       ../../machine-deploy.py
+      ../../airlock_state.py
       (lib.fileset.fileFilter (file: file.hasExt "py") ../../airlock_machine_deploy)
     ];
   };

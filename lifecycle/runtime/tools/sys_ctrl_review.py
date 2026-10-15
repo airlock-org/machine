@@ -49,11 +49,6 @@ def status(state, identity):
                          error="Controller job was interrupted; no new approval was granted by reconnecting.")
     return value
 
-def reconcile(deploy, identity):
-    value = status(deploy.STATE, identity)
-    deploy.record(job_path(deploy.STATE, identity), value)
-    return value
-
 def enqueue(deploy, header):
     identity = uuid.uuid4().hex
     path = job_path(deploy.STATE, identity)

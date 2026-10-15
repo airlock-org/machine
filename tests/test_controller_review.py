@@ -277,8 +277,8 @@ def test_status_recovers_dom0_outcome_after_controller_restart(worker, monkeypat
                          "updated_at": 0})
     monkeypatch.setattr(jobs, "control", lambda _: {"status": phase, "release": "candidate"})
     monkeypatch.setattr(jobs.subprocess, "run", lambda *_a, **_k: pytest.fail("terminal root outcome was lost"))
-    assert jobs.reconcile(deploy, identity)["status"] == phase
-    assert json.loads(path.read_text())["status"] == phase
+    assert jobs.status(deploy.STATE, identity)["status"] == phase
+    assert json.loads(path.read_text())["status"] == "building"
 
 
 def test_interrupted_review_is_cancelled_without_reopening_or_building(worker, monkeypatch):
@@ -286,4 +286,23 @@ def test_interrupted_review_is_cancelled_without_reopening_or_building(worker, m
     deploy.record(jobs.job_path(deploy.STATE, identity),
                   {"request_id": identity, "status": "awaiting_approval", "updated_at": 0})
     monkeypatch.setattr(jobs.subprocess, "run", lambda *_a, **_k: SimpleNamespace(returncode=3))
-    assert jobs.reconcile(deploy, identity)["status"] == "cancelled"
+    assert jobs.status(deploy.STATE, identity)["status"] == "cancelled"
+    assert json.loads(jobs.job_path(deploy.STATE, identity).read_text())["status"] == "awaiting_approval"
+
+
+def test_status_query_cannot_overwrite_worker_progress(worker, monkeypatch):
+    deploy, identity = worker
+    path = jobs.job_path(deploy.STATE, identity)
+    deploy.record(path, {"status": "building", "authorization_id": "d" * 64,
+                         "updated_at": 0})
+
+    def root_status(_):
+        # The worker finishes after the query reads its original snapshot.
+        deploy.record(path, {"status": "deployment_started", "decision": "approved",
+                             "result": {"unit": "detached-worker"}})
+        return {"status": "approved"}
+
+    monkeypatch.setattr(jobs, "control", root_status)
+    monkeypatch.setattr(jobs.subprocess, "run", lambda *_a, **_k: SimpleNamespace(returncode=0))
+    assert jobs.status(deploy.STATE, identity)["status"] == "building"
+    assert json.loads(path.read_text())["result"] == {"unit": "detached-worker"}

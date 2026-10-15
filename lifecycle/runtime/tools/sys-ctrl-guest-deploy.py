@@ -16,6 +16,7 @@ import tempfile
 import time
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import sys_ctrl_review as review
+from airlock_state import atomic_json as record
 
 APPROVAL = None
 
@@ -45,22 +46,6 @@ def rename_manifest_matches(manifest, assistant_rename):
         manifest.get("privateVolumeCopies") == {"usr-assistant": "sys-agent"}
         and manifest.get("retireDomains") == ["sys-agent"]
     )
-
-
-def record(path, value):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(".new")
-    with temporary.open("w") as stream:
-        json.dump(value, stream, sort_keys=True)
-        stream.write("\n")
-        stream.flush()
-        os.fsync(stream.fileno())
-    temporary.replace(path)
-    fd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
-    try:
-        os.fsync(fd)
-    finally:
-        os.close(fd)
 
 
 def output(*args):
@@ -154,8 +139,9 @@ def serve():
         raise ValueError("assistant rename requires a whole-machine request")
     if set(header) != {"schema", "action", "target", "revision", "lock_hash", "archive_bytes"}:
         raise ValueError("unexpected submission fields")
-    if review.REQUIRED.exists() and any(review.reconcile(sys.modules[__name__], path.parent.name).get("status") in review.ACTIVE
-            for path in (STATE / "jobs").glob("*/status.json")):
+    if review.REQUIRED.exists() and any(review.status(STATE, path.parent.name).get("status") in review.ACTIVE
+            for path in (STATE / "jobs").glob("*/status.json")
+            if json.loads(path.read_text()).get("status") in review.ACTIVE):
         raise BlockingIOError("another source review or build is pending")
     if not isinstance(revision, str) or len(revision) != 40 or any(c not in "0123456789abcdef" for c in revision):
         raise ValueError("invalid source revision")
@@ -511,7 +497,7 @@ def main():
             status_request = json.loads(line)
             if len(line) > 4096 or set(status_request) != {"request_id"}:
                 raise ValueError("invalid review status request")
-            print(json.dumps(review.reconcile(sys.modules[__name__], status_request["request_id"]), sort_keys=True))
+            print(json.dumps(review.status(STATE, status_request["request_id"]), sort_keys=True))
             return 0
         if args.action == "review-status":
             review.job_path(STATE, args.request_id)

@@ -290,7 +290,11 @@ let
     text = ''
       exec ${pkgs.python3}/bin/python3 ${lib.fileset.toSource {
         root = ../../runtime/tools;
-        fileset = lib.fileset.unions [ ../../runtime/tools/sys-ctrl-guest-deploy.py ../../runtime/tools/sys_ctrl_review.py ];
+        fileset = lib.fileset.unions [
+          ../../runtime/tools/sys-ctrl-guest-deploy.py
+          ../../runtime/tools/sys_ctrl_review.py
+          ../../runtime/tools/airlock_state.py
+        ];
       }}/sys-ctrl-guest-deploy.py "$@"
     '';
   };
