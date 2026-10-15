@@ -25,11 +25,18 @@ let
   '';
   guestPlan = guestControl "plan";
   guestApply = guestControl "apply";
+  machineReceiverSource = lib.fileset.toSource {
+    root = ../../runtime/tools;
+    fileset = lib.fileset.unions [
+      ../../runtime/tools/sys-ctrl-machine-receive.py
+      ../../runtime/tools/airlock_state.py
+    ];
+  };
   machineControl = action: pkgs.writeShellScript "airlock-ctrl-machine-${action}" ''
     set -eu
     [ "$#" -eq 0 ] || exit 2
     export PATH=${lib.makeBinPath [ pkgs.nix pkgs.systemd ]}:"$PATH"
-    exec ${pkgs.python3}/bin/python3 ${../../runtime/tools/sys-ctrl-machine-receive.py} ${action} \
+    exec ${pkgs.python3}/bin/python3 ${machineReceiverSource}/sys-ctrl-machine-receive.py ${action} \
       --engine ${engine}/bin/airlock-machine-deploy
   '';
   machinePrepare = machineControl "prepare";

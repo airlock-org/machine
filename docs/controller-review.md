@@ -94,6 +94,9 @@ scope refusal, including when a VM restart interrupts the original reply.
 Queries reconcile the returned snapshot without rewriting the job record; the
 controller worker owns its updates. JSON publication uses a unique temporary
 file per write so concurrent publications cannot collide on a shared filename.
+Prepared-plan records use the same writer. Replacements preserve existing file
+modes unless the caller explicitly chooses a mode; new private records use
+0600, while shared boot/status files explicitly use 0644.
 
 ReviewControl status reads also remain available while deployment or generation
 maintenance holds the machine lock. Transport/service failures include the
@@ -102,6 +105,9 @@ on stdout as well as logging them, since qrexec can route service stderr to its
 local log instead of back to the caller. If a status observation fails, the
 controller returns its recorded job state with `observation_error` and
 `control_error`; that warning does not turn an accepted approval into a rejection.
+ReviewControl calls time out after ten seconds. Submission feedback returns a
+recorded approval before requesting any remote status refresh; use review-status
+for a later observation of the background job.
 
 ## Lock ownership
 
@@ -124,6 +130,9 @@ grant authority or make a free lock busy. Missing or stale owner details are
 reported as unknown while a real lock is held; never delete a lock file or its
 metadata to force an operation through. A crashed process releases its kernel
 lock, and the next owner replaces any leftover metadata.
+Metadata publication, process-identity lookup and metadata cleanup failures are
+logged as warnings. They cannot abort the protected operation or replace its
+original error; kernel exclusion and durable deployment journals remain required.
 
 ## Development administration
 

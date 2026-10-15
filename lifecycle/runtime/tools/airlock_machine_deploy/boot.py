@@ -431,7 +431,7 @@ class BootConfiguration:
         reused = self.cached(identity, topology, names)
         result = {}
         if gui:
-            atomic_json(self.runtime / "topology.json", topology)
+            atomic_json(self.runtime / "topology.json", topology, mode=0o644)
             device = os.environ.get("AIRLOCK_SETUP_CONFIG_STATUS_DEVICE")
             if reused and device:
                 try:
@@ -468,7 +468,7 @@ class BootConfiguration:
             path = self.runtime / (
                 "gui-topology.json" if gui else "background-topology.json"
             )
-            atomic_json(path, scoped)
+            atomic_json(path, scoped, mode=0o644)
             self.coordinator.command(setup, "--apply", "--topology", str(path), env=env)
             result = read_json(log_dir / "setup-config.json")
             if (
@@ -482,7 +482,7 @@ class BootConfiguration:
                 )
             self.record(identity, topology, names)
         if gui:
-            atomic_json(self.runtime / "gui-setup-result.json", result)
+            atomic_json(self.runtime / "gui-setup-result.json", result, mode=0o644)
             for name in gui_names:
                 if name != "sys-gui":
                     self.coordinator.command(
@@ -495,7 +495,7 @@ class BootConfiguration:
             # Both scopes are now complete. Never persist a partial topology as
             # the image baseline used by deployment and rollback.
             self.record(identity, topology, list(topology["domains"]))
-            atomic_json(self.system / "current-topology.json", topology)
+            atomic_json(self.system / "current-topology.json", topology, mode=0o644)
         report = {
             "schema": "airlock.boot-configuration-result.v1",
             "status": "passed",
@@ -504,7 +504,7 @@ class BootConfiguration:
             "domains": names,
             "elapsed_seconds": time.monotonic() - started,
         }
-        atomic_json(log_dir / "boot-configuration.json", report)
+        atomic_json(log_dir / "boot-configuration.json", report, mode=0o644)
         if not gui:
             gui_result = read_json(self.runtime / "gui-setup-result.json")
             counts = {
@@ -538,5 +538,6 @@ class BootConfiguration:
                     "restart_required": False,
                     **counts,
                 },
+                mode=0o644,
             )
         print(json.dumps(report), flush=True)

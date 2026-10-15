@@ -509,7 +509,7 @@ def main():
         if args.action == "review-status":
             review.job_path(STATE, args.request_id)
             return subprocess.run(["qrexec-client-vm", "sys-ctrl", "airlock.Ctrl.ReviewStatus"],
-                input=json.dumps({"request_id": args.request_id}) + "\n", text=True).returncode
+                input=json.dumps({"request_id": args.request_id}) + "\n", text=True, timeout=30).returncode
         if args.action == "observe":
             observe()
             return 0

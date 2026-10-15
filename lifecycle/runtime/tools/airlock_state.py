@@ -2,19 +2,29 @@
 
 import json
 import fcntl
+import logging
 import os
 from pathlib import Path
+import stat
 import tempfile
 import time
 
+LOGGER = logging.getLogger(__name__)
 
-def atomic_json(path, value):
+
+def atomic_json(path, value, *, mode=None):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
+    if mode is None:
+        try:
+            mode = stat.S_IMODE(path.stat().st_mode)
+        except FileNotFoundError:
+            mode = 0o600
     descriptor, name = tempfile.mkstemp(prefix="." + path.name + ".", dir=path.parent)
     temporary = Path(name)
     try:
         with os.fdopen(descriptor, "w") as stream:
+            os.fchmod(stream.fileno(), mode)
             json.dump(value, stream, sort_keys=True, indent=2)
             stream.write("\n")
             stream.flush()
@@ -97,9 +107,13 @@ class NamedLock:
                 fcntl.flock(self.stream, fcntl.LOCK_EX | (0 if self.blocking else fcntl.LOCK_NB))
             except BlockingIOError as exc:
                 raise LockBusy(lock_status(self.path)) from exc
-            self.metadata.unlink(missing_ok=True)
+            self._remove_metadata()
             self.info.update(pid=os.getpid(), acquired_at=time.time(),
-                             acquired_monotonic=time.monotonic(), **_process_identity(os.getpid()))
+                             acquired_monotonic=time.monotonic())
+            try:
+                self.info.update(_process_identity(os.getpid()))
+            except (OSError, ValueError, IndexError) as exc:
+                LOGGER.warning("Cannot identify lock owner for %s: %s", self.path, exc)
             self.update()
             return self
         except BaseException:
@@ -108,13 +122,22 @@ class NamedLock:
 
     def update(self, **context):
         self.info.update(context)
-        atomic_json(self.metadata, self.info)
+        try:
+            atomic_json(self.metadata, self.info, mode=0o600)
+        except (OSError, ValueError, TypeError) as exc:
+            LOGGER.warning("Cannot publish lock owner metadata for %s: %s", self.path, exc)
+
+    def _remove_metadata(self):
+        try:
+            self.metadata.unlink(missing_ok=True)
+        except OSError as exc:
+            LOGGER.warning("Cannot remove lock owner metadata for %s: %s", self.path, exc)
 
     def fileno(self):
         return self.stream.fileno()
 
     def __exit__(self, *_):
         try:
-            self.metadata.unlink(missing_ok=True)
+            self._remove_metadata()
         finally:
             self.stream.close()

@@ -263,7 +263,7 @@ def test_fast_worker_preserves_approval_and_reports_current_outcome(worker, monk
 @pytest.mark.parametrize("phase", ["rejected", "cancelled", "failed", "stale_review", "scope_exceeded"])
 def test_wait_streams_pending_and_negative_feedback(monkeypatch, capsys, phase):
     values = iter({"status": status} for status in ("queued", "awaiting_approval", phase))
-    monkeypatch.setattr(jobs, "status", lambda *_: next(values))
+    monkeypatch.setattr(jobs, "status", lambda *_a, **_k: next(values))
     monkeypatch.setattr(jobs.time, "sleep", lambda _: None)
     assert jobs.wait(SimpleNamespace(STATE=None), "id") == jobs.EXITS[phase]
     assert [json.loads(line)["status"] for line in capsys.readouterr().out.splitlines()] == ["queued", "awaiting_approval", phase]
@@ -346,8 +346,6 @@ def test_approval_feedback_survives_status_transport_failure(worker, monkeypatch
     reply = json.loads(capsys.readouterr().out)
     assert reply["status"] == "approved"
     assert reply["job_status"] == "building"
-    assert reply["control_error"]["exit_code"] == 1
-    assert "No diagnostic output" in reply["observation_error"]
     assert path.read_bytes() == original
 
 

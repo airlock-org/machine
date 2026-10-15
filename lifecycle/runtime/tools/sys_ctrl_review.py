@@ -15,6 +15,7 @@ from airlock_state import lock_status
 REQUIRED = Path("/etc/airlock/controller-review-required")
 ACTIVE = {"queued", "awaiting_approval", "building"}
 EXITS = {"rejected": 20, "cancelled": 21, "scope_exceeded": 22, "stale_review": 23, "failed": 1}
+CONTROL_TIMEOUT = 10
 
 class Stopped(Exception):
     def __init__(self, status):
@@ -27,8 +28,9 @@ class ControlError(ValueError):
         self.details = {"operation": request.get("op"), "request_id": request.get("request_id"),
                         "exit_code": result.returncode, "stdout": result.stdout[-4096:],
                         "stderr": result.stderr[-4096:], "response": response}
+        outcome = f"exit {result.returncode}" if result.returncode is not None else "no exit code"
         super().__init__(f"ReviewControl {request.get('op')} request {request.get('request_id', '(new)')} "
-                         f"failed (exit {result.returncode}): {message}")
+                         f"failed ({outcome}): {message}")
 
 def user_env():
     env = dict(os.environ, XDG_RUNTIME_DIR="/run/user/" + str(os.getuid()))
@@ -36,8 +38,20 @@ def user_env():
     return env
 
 def control(request):
-    result = subprocess.run(["qrexec-client-vm", "dom0", "airlock.Ctrl.ReviewControl"],
-        input=json.dumps(request) + "\n", text=True, capture_output=True)
+    command = ["qrexec-client-vm", "dom0", "airlock.Ctrl.ReviewControl"]
+    try:
+        result = subprocess.run(command, input=json.dumps(request) + "\n",
+                                text=True, capture_output=True, timeout=CONTROL_TIMEOUT)
+    except subprocess.TimeoutExpired as exc:
+        def captured(value):
+            return value.decode(errors="replace") if isinstance(value, bytes) else value or ""
+        result = subprocess.CompletedProcess(command, None, captured(exc.stdout), captured(exc.stderr))
+        error = ControlError(request, result, f"Timed out after {CONTROL_TIMEOUT} seconds")
+        error.details["timeout_seconds"] = CONTROL_TIMEOUT
+        raise error from exc
+    except OSError as exc:
+        result = subprocess.CompletedProcess(command, None, "", str(exc))
+        raise ControlError(request, result, "Could not start ReviewControl: " + str(exc)) from exc
     try:
         response = json.loads(result.stdout)
     except ValueError:
@@ -55,10 +69,12 @@ def job_path(state, identity):
         raise ValueError("invalid request ID")
     return state / "jobs" / identity / "status.json"
 
-def status(state, identity):
+def status(state, identity, *, refresh=True):
     path = job_path(state, identity)
     snapshot = path.read_bytes()
     value = json.loads(snapshot)
+    if not refresh and value.get("decision") == "approved":
+        return value
     value["controller_lock"] = lock_status(state / "lock")
     if value["status"] in {"building", "deployment_started"} and value.get("authorization_id"):
         try:
@@ -70,7 +86,12 @@ def status(state, identity):
             if latest["status"] in {"scope_exceeded", "deployment_started"}:
                 value.update(status=latest["status"], plan=latest.get("plan"), release=latest.get("release"))
     if value["status"] in ACTIVE and time.time() - value.get("updated_at", value.get("created_at", time.time())) > 10:
-        running = subprocess.run(["systemctl", "--user", "is-active", "--quiet", "airlock-review-" + identity], env=user_env())
+        try:
+            running = subprocess.run(["systemctl", "--user", "is-active", "--quiet", "airlock-review-" + identity],
+                                     env=user_env(), timeout=5)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            value["observation_error"] = "Could not inspect controller worker: " + str(exc)
+            return value
         if running.returncode:
             current = path.read_bytes()
             if current != snapshot:
@@ -97,7 +118,7 @@ def enqueue(deploy, header):
 def wait(deploy, identity):
     previous = None
     while True:
-        value = status(deploy.STATE, identity)
+        value = status(deploy.STATE, identity, refresh=False)
         if value.get("decision") == "approved":
             # The worker can advance through several phases between polls. Keep
             # its durable decision separate from its current work status.

@@ -13,6 +13,9 @@ import sys
 import time
 import uuid
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from airlock_state import atomic_json
+
 SCHEMA = "airlock.sys-ctrl-machine-release.v2"
 STORE_PATH = re.compile(r"/nix/store/[0-9a-df-np-sv-z]{32}-[A-Za-z0-9+._?=-]+")
 HEX = re.compile(r"[0-9a-f]+")
@@ -58,19 +61,8 @@ def prepared_record(candidate, coordinator, release, revision, lock_hash):
                "revision": revision, "lock_hash": lock_hash, **result}
     token = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
     directory = STATE / "prepared"
-    directory.mkdir(parents=True, exist_ok=True)
     target = directory / (token + ".json")
-    temporary = directory / (token + ".new")
-    with temporary.open("w") as stream:
-        json.dump(payload, stream, sort_keys=True)
-        stream.flush()
-        os.fsync(stream.fileno())
-    temporary.replace(target)
-    fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
-    try:
-        os.fsync(fd)
-    finally:
-        os.close(fd)
+    atomic_json(target, payload, mode=0o600)
     return token, payload
 
 
