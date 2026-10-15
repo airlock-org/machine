@@ -1,5 +1,9 @@
 # Laptop GPU: first assignment experiment
 
+Historical investigation record. Commands, versions, boot entries, and results
+apply to the revisions described below. See [current documentation](README.md)
+for installed-machine configuration and operation.
+
 Subsequent result: [validated VBIOS delivery resolved the driver failure](amd-gpu-vbios.md).
 This report preserves the first attempt's observations.
 

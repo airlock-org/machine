@@ -1,5 +1,9 @@
 # sys-gpu experiments and hardware direction
 
+Historical investigation record. Commands, versions, boot entries, and results
+apply to the revisions described below. See [current documentation](README.md)
+for installed-machine configuration and operation.
+
 ## Agreed hardware split
 
 `sys-gui` is the standard desktop domain and gets the only GPU on a single-GPU

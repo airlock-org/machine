@@ -1,8 +1,9 @@
-# Runtime Tools
+# Runtime tools
 
-Runtime-only operational commands for the running system.
+- `airlock.py`: installed machine-management CLI.
+- `machine-deploy.py` and `airlock_machine_deploy/`: dom0 deployment coordinator.
+- `sys-ctrl-*.py`: committed-source submission, review, build, and typed control.
+- `pkgs/`: Nix packaging for these tools and storage helpers.
 
-Keep packages and scripts here only when they are used at runtime by dom0 or
-runtime config VMs. Move bootstrap-only tools to `../../bootstrap/tools/`,
-image-only tools to `../../image/tools/`, and cross-stage or development/test
-helpers to `../../misc/tools/`.
+Bootstrap-only and image-only tooling lives in the corresponding lifecycle
+layers. Cross-stage helpers and development tools live in `../../misc/tools/`.

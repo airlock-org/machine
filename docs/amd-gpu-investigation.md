@@ -1,5 +1,9 @@
 # AMD GPU ownership investigation
 
+Historical investigation record. Commands, versions, boot entries, and results
+apply to the revisions described below. See [current documentation](README.md)
+for installed-machine configuration and operation.
+
 Establish whether this laptop can give its internal GPU to `sys-gui` and run
 a usable physical desktop through the existing Xen/Qubes architecture.
 Progress is measured by evidence and completed gates, not elapsed time.

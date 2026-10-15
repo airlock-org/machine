@@ -1,5 +1,9 @@
 # Upstream Notes
 
+Historical investigation record. Commands, versions, boot entries, and results
+apply to the revisions described below. See [current documentation](README.md)
+for installed-machine configuration and operation.
+
 Observed on 2026-09-05.
 
 ## NixOS Xen Support

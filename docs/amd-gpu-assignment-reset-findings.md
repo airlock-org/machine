@@ -1,5 +1,9 @@
 # Laptop GPU assignment/reset findings
 
+Historical investigation record. Commands, versions, boot entries, and results
+apply to the revisions described below. See [current documentation](README.md)
+for installed-machine configuration and operation.
+
 Subsequent hardware result: [first assignment experiment](amd-gpu-first-assignment.md).
 The account below preserves the preceding read-only review and its limits.
 

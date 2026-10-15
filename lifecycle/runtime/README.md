@@ -1,7 +1,9 @@
-# Runtime Layer
+# Runtime
 
-Holds code used after bootstrap to operate the running system.
+`tools/airlock.py` implements the installed `airlock machine` CLI.
+`tools/airlock_machine_deploy/` implements the dom0 coordinator; controller
+clients, artifact handling, storage, and recovery helpers live alongside it.
+See the [coordinator guide](tools/airlock_machine_deploy/README.md) and
+[workspace guide](../../docs/usr-assistant.md).
 
-`tools/` contains runtime-only packages and scripts that apply, archive,
-inspect, and control the running system. Shared Nix schemas/modules and
-cross-stage helpers live under `../misc/`.
+Shared Nix modules, schemas, and helpers live under `../misc/`.

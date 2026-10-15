@@ -1,17 +1,15 @@
-# Bootstrap Layer
+# Bootstrap
 
-Defines bootstrap: the first-boot bridge between an image and a ready-to-use
-Airlock desktop. Bootstrap creates the initial Qubes topology, including the
-`sys-config-*` authority domains, establishes the starting runtime
-configuration, and applies initial desktop defaults before handing over to the
-first `sys-gui` login.
+Bootstrap modules define initial Qubes topology, VM defaults, and setup behavior.
+[default-domains/](default-domains/) supplies the system and user VM declarations.
+The machine flake and image profiles select which declarations to materialize.
 
-This layer owns the generated config-domain defaults and the starter runtime
-configuration bundled into the image.
+The installed usr-assistant checkout is seeded by
+[machine-source-seed.nix](../misc/modules/machine-source-seed.nix), which preserves
+an existing checkout. Runtime updates use sys-ctrl and the dom0 deployment
+coordinator; see [machine configuration](../../docs/config-system.md).
 
-On first boot, `sys-config-vault` turns `initial-runtime-config/` into the first
-authoritative current config. `sys-config-staging` later imports that current config
-from vault when it needs an editable workspace.
-
-Bootstrap-only helper packages or scripts belong in `tools/`. Cross-stage
-helpers belong in `../misc/tools/`.
+`initial-runtime-config/` and the configuration-vault helpers belong to the
+earlier staged configuration prototype. Supplied bootstrap profiles disable
+that prototype's control policy. Bootstrap-only tools live in `tools/`; shared
+helpers live in `../misc/tools/`.

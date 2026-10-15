@@ -1,6 +1,6 @@
 # Controller source approval
 
-Normal submissions from usr-assistant now require one human approval before
+Normal submissions from usr-assistant require one human approval before
 sys-ctrl evaluates or builds the committed source. The installed Airlock Control
 application runs in sys-ctrl and forwards its window through the existing Qubes
 GUI agent to sys-gui. App source is a pinned monorepo input, not an adjacent
@@ -11,7 +11,7 @@ Airlock Control window once, after checking its Qubes VM origin and application
 class. Reviews that arrive while the desktop is locked wait until unlock.
 Routine refreshes and extension reloads do not reactivate an existing window.
 
-Fresh images embed the machine Git revision and lock hash in the host
+Images embed the machine Git revision and lock hash in the host
 generation's `etc/airlock/machine-source.json`. Dom0 uses that identity for
 the initial review baseline before any release has been selected. The boot
 menu's source label can identify the parent image repository and is separate.
@@ -25,6 +25,8 @@ package request. Before editing and again before submission, follow the
 [pending-change check](usr-assistant.md#change-the-running-machine); stop for
 older deployable work instead of combining it with the new request.
 
+## Approval and scope
+
 The controller validates/imports the Git bundle without evaluating Nix, obtains
 the selected source baseline from dom0 and opens the source review. The permitted
 impact names VMs that may change/start/stop/restart. Reboot is informational, with
@@ -34,8 +36,9 @@ warns that a reboot may be required. The final plan confirms the requirement;
 activation leaves a required reboot pending until the user restarts the machine.
 Approve authorizes evaluation, building and deployment of that revision and lock
 hash within the displayed VM scope; Reject or closing the window returns feedback
-without building. No second routine approval
-is required when a plan is followed by apply for the same source and baseline.
+without building. No second routine approval is required when a plan is followed by apply for the same source and baseline.
+
+## Enforcement
 
 Dom0 retains the authorization in protected machine state. Submissions cannot
 provide an approval, and ordinary local GUI receipts grant no authority. The
@@ -48,6 +51,8 @@ reboot restriction retain that restriction; they are not silently broadened.
 The normal review route uses the installed coordinator, not a candidate-provided executable.
 Existing typed resume/rollback can recover already selected generations when
 sys-ctrl is stopped.
+
+## Interrupted submissions
 
 Submissions wait while a detached user-systemd job carries out review and build.
 The qrexec response streams JSON state changes with a persistent request ID.
@@ -67,8 +72,10 @@ deployment completion; deployment_started only acknowledges the detached dom0
 worker. Status reconciliation detects controller interruption and root-side
 scope refusal, including when a VM restart interrupts the original reply.
 
-The physical lab still exposes development dom0 administrative access. That
-separate administrative/legacy route remains outside normal submission approval;
+## Development administration
+
+The development configuration permits dom0 administrative access. This separate
+administrative/legacy route remains outside normal submission approval;
 this feature does not establish the full production Qubes security boundary.
 An explicit development-host `--legacy-dom0` apply uses the coordinator's
 `apply --administrative` repair route. It requires dom0 root and the installed
