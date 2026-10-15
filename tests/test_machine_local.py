@@ -7,53 +7,85 @@ from typing import Callable
 
 import pytest
 
-from machine_pychecks import (
-    check_closure_volume_filtered_device,
-    check_closure_store_linux_storage,
-    check_closure_store_engine,
-    check_closure_store_failure_recovery,
-    check_config_candidate_nix_native,
-    check_config_candidate_flake,
-    check_config_control,
-    check_config_apply_domain_references,
-    check_config_apply_nix_domain_materialization,
-    check_config_apply_template_build_ref,
-    check_config_archive_domain_references,
-    check_config_system_apply_boot,
-    check_config_status,
+from local_checks.observation import (
     check_config_repo_status,
-    check_config_system_apply,
-    check_config_topology_eval,
-    check_cmd_role,
-    check_host_capabilities,
-    check_config_boot_verify,
     check_gc_airlock_store,
-    check_nix_domain_storage_helper_shared,
-    check_nix_closure_domain_volume_list,
-    check_nix_closure_root_image,
-    check_personal_domains,
-    check_airlock_minimal_closure,
-    check_airlock_minimal_guest,
-    check_airlock_cli,
+    check_host_capabilities,
+)
+from local_checks.qrexec import (
     check_qrexec_policy_path,
     check_qube_guest_policy_probe,
+)
+from local_checks.boot_artifacts import (
+    check_nix_closure_domain_volume_list,
+    check_nix_closure_root_image,
     check_qubes_libvirt_hvm_pirq_patch,
     check_qubes_vm_kernel_stubdomain_boot,
+)
+from local_checks.system_schema import (
+    check_system_schema,
+)
+from local_checks.topology_schema import (
+    check_topology_schema,
+)
+from local_checks.guest_roles import (
+    check_airlock_minimal_closure,
+    check_airlock_minimal_guest,
+    check_cmd_role,
+    check_personal_domains,
+)
+from local_checks.candidate_schema import (
+    check_config_candidate_flake,
+    check_config_candidate_nix_native,
+    check_config_topology_eval,
+)
+from local_checks.setup_basic import (
     check_setup_config_empty_global_pref,
-    check_setup_config_auto_sys_net_pci,
     check_setup_config_external_netvm,
     check_setup_config_idempotent,
-    check_setup_config_nix_native,
-    check_setup_config_nix_native_running_storage,
     check_setup_config_pref_order,
-    check_setup_config_qrexec_policy,
-    check_setup_config_restart_actions,
-    check_setup_config_runtime_path,
     check_setup_config_static,
+)
+from local_checks.setup_network import (
+    check_setup_config_auto_sys_net_pci,
     check_setup_config_sys_net_order,
     check_start_network_providers,
-    check_system_schema,
-    check_topology_schema,
+)
+from local_checks.setup_policy import (
+    check_setup_config_qrexec_policy,
+    check_setup_config_restart_actions,
+)
+from local_checks.setup_storage import (
+    check_setup_config_nix_native,
+    check_setup_config_nix_native_running_storage,
+    check_setup_config_runtime_path,
+)
+from local_checks.config_activation import (
+    check_config_boot_verify,
+    check_config_system_apply,
+    check_config_system_apply_boot,
+)
+from local_checks.config_materialization import (
+    check_config_apply_nix_domain_materialization,
+    check_config_apply_template_build_ref,
+)
+from local_checks.config_cli import (
+    check_airlock_cli,
+    check_config_control,
+    check_config_status,
+)
+from local_checks.domain_references import (
+    check_config_apply_domain_references,
+    check_config_archive_domain_references,
+)
+from local_checks.storage_engine import (
+    check_closure_store_engine,
+    check_closure_store_failure_recovery,
+)
+from local_checks.storage_volumes import (
+    check_closure_store_linux_storage,
+    check_closure_volume_filtered_device,
+    check_nix_domain_storage_helper_shared,
 )
 from local_harness import run_local_command
 

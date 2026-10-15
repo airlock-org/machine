@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
     ],
 )
 def test_bootstrap_network_pci_selection(tmp_path, domain, route, exclusions, expected):
-    from machine_pychecks import check_setup_config_auto_sys_net_pci
+    from local_checks.setup_network import check_setup_config_auto_sys_net_pci
 
     check_setup_config_auto_sys_net_pci(
         ROOT,
