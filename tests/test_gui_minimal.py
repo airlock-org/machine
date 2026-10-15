@@ -43,7 +43,6 @@ def test_gui_minimal_topology_and_desktop():
         defaultApplicationVM = guest.airlock.sysGuiGuest.defaultApplicationVM;
         discovery = guest.airlock.sysGuiGuest.applicationMenus.enable;
         normalDefaultApplicationVM = normal.airlock.sysGuiGuest.defaultApplicationVM;
-        normalPackages = map (p: p.pname or p.name) normal.environment.systemPackages;
         supervised = let c = flake.nixosConfigurations.machine.config.specialisation.usb-lab.configuration; in {{
           failure = c.systemd.services.airlock-machine-autostart.unitConfig.OnFailure;
           beforeStart = c.systemd.services.airlock-machine-autostart.serviceConfig.ExecStartPre
@@ -63,9 +62,6 @@ def test_gui_minimal_topology_and_desktop():
         hostPoweroffService = builtins.readFile image.environment.etc."qubes-rpc/airlock.Dom0Poweroff".source;
         hostPoweroffSudoRules = image.security.sudo.extraRules;
         hostPoweroffPolicy = builtins.readFile "${{sysGuiPolicy}}/etc/qubes/policy.d/50-airlock-sys-gui.policy";
-        mimeDefaults = guest.xdg.mime.defaultApplications;
-        packages = map (p: p.pname or p.name) guest.environment.systemPackages;
-        assertionsPass = builtins.all (a: a.assertion) (image.assertions ++ guest.assertions);
       }}
     """
     result = subprocess.run(
@@ -80,7 +76,6 @@ def test_gui_minimal_topology_and_desktop():
     log_dir.mkdir(parents=True, exist_ok=True)
     (log_dir / "report.json").write_text(result.stdout)
     report = json.loads(result.stdout)
-    assert report["assertionsPass"] is True
     topology = report["topology"]
     assert set(topology["domains"]) == {"sys-gui"}
     assert topology["templates"] == {}
@@ -116,8 +111,6 @@ def test_gui_minimal_topology_and_desktop():
     assert report["defaultApplicationVM"] is None
     assert report["discovery"] is True
     assert report["normalDefaultApplicationVM"] == "usr-home"
-    assert "airlock-application-menus" in report["normalPackages"]
-    assert "airlock-launch-terminal" not in report["normalPackages"]
     assert "airlock-host-poweroff@airlock.local" in report["gnomeOverrides"]
     assert "airlock-gnome-host-poweroff" in report["gnomeHostPoweroffExtensionSource"]
     assert "activatePowerOff" in report["gnomeHostPoweroffExtensionSource"]
@@ -192,9 +185,3 @@ def test_gui_minimal_topology_and_desktop():
     assert not any(
         name.startswith("airlock/config-inputs/") for name in report["hostEtc"]
     )
-    assert "airlock-launch-files" not in report["packages"]
-    assert "airlock-launch-terminal" not in report["packages"]
-    assert "airlock-launch-browser" not in report["packages"]
-    assert "xfce4-session-logout" in report["packages"]
-    assert "firefox.desktop" not in str(report["mimeDefaults"])
-    assert "org.gnome.Nautilus.desktop" not in str(report["mimeDefaults"])

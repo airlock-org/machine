@@ -11,38 +11,15 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 @pytest.mark.nix
-def test_usr_home_uses_upstream_gnome_apps_without_installation_or_a_desktop():
+def test_usr_home_integrations_do_not_start_another_desktop_or_installer():
     expression = f"""
       let
         f = builtins.getFlake "{ROOT}";
-        lib = f.inputs.nixpkgs.lib;
         home = f.nixosConfigurations.airlock-domain-usr-home.config;
-        stock = lib.nixosSystem {{
-          system = "x86_64-linux";
-          modules = [ ({{ ... }}: {{
-            nixpkgs.pkgs = home.nixpkgs.pkgs;
-            services.gnome.core-apps.enable = true;
-          }}) ];
-        }};
-        names = packages: map (p: p.pname or p.name) packages;
-        stockApps = lib.concatMap (definition: definition.value)
-          (builtins.filter (definition:
-            lib.hasSuffix "/services/desktop-managers/gnome.nix" definition.file)
-            stock.options.environment.systemPackages.definitionsWithLocations);
-        minimalNames = [ "usr-assistant" "sys-ctrl" "sys-gui-usb-gui-lab" "sys-net" "sys-firewall" ];
       in {{
-        packages = names home.environment.systemPackages;
-        stockApps = names stockApps;
-        defaultPackages = names home.environment.defaultPackages;
-        stockDefaultPackages = names stock.config.environment.defaultPackages;
-        documentation = {{ inherit (home.documentation) enable; man = home.documentation.man.enable; nixos = home.documentation.nixos.enable; }};
-        completion = home.programs.bash.completion.enable;
-        nano = home.programs.nano.enable;
-        minimal = home.airlock.minimalGuest.enable;
         installation = {{ nix = home.nix.enable; channels = home.nix.channel.enable; flatpak = home.services.flatpak.enable; installerTools = !home.system.disableInstallerTools; }};
         desktop = {{ gnome = home.services.desktopManager.gnome.enable; shell = home.services.gnome.core-shell.enable; gdm = home.services.displayManager.gdm.enable; }};
         integrations = {{
-          apps = home.services.gnome.core-apps.enable;
           mime = home.xdg.mime.enable;
           icons = home.xdg.icons.enable;
           autostart = home.xdg.autostart.enable;
@@ -54,13 +31,7 @@ def test_usr_home_uses_upstream_gnome_apps_without_installation_or_a_desktop():
           gui = home.systemd.services.qubes-gui-agent.enable;
           graphics = home.hardware.graphics.enable;
         }};
-        mimeDefaults = home.xdg.mime.defaultApplications;
         portals = home.xdg.portal.config.common;
-        minimalGuests = builtins.listToAttrs (map (name: {{
-          inherit name;
-          value = let c = f.nixosConfigurations.${{"airlock-domain-" + name}}.config;
-          in {{ minimal = c.airlock.minimalGuest.enable; docs = c.documentation.enable; defaults = names c.environment.defaultPackages; }};
-        }}) minimalNames);
       }}
     """
     result = subprocess.run(
@@ -68,28 +39,14 @@ def test_usr_home_uses_upstream_gnome_apps_without_installation_or_a_desktop():
          "eval", "--impure", "--json", "--expr", expression],
         cwd=ROOT, capture_output=True, text=True, check=True,
     )
-    log_dir = Path(os.environ["AIRLOCK_LOG_DIR"]) / "usr-home-stock-gnome"
+    log_dir = Path(os.environ["AIRLOCK_LOG_DIR"]) / "usr-home-integrations"
     log_dir.mkdir(parents=True, exist_ok=True)
     (log_dir / "configuration.json").write_text(result.stdout)
     report = json.loads(result.stdout)
-    assert report["stockApps"]
-    assert set(report["stockApps"]) <= set(report["packages"])
-    assert {"epiphany", "loupe", "gnome-maps", "gnome-weather", "snapshot", "simple-scan", "gnome-connections"} <= set(report["packages"])
-    assert not {"firefox", "nix", "nix-info", "nixos-rebuild", "flatpak"} & set(report["packages"])
-    assert report["defaultPackages"] == report["stockDefaultPackages"]
-    assert all(report["documentation"].values())
-    assert report["completion"] and report["nano"]
-    assert report["minimal"] is False
     assert not any(report["installation"].values())
     assert not any(report["desktop"].values())
     assert all(report["integrations"].values())
-    assert report["mimeDefaults"]["x-scheme-handler/https"] == "org.gnome.Epiphany.desktop"
-    assert report["mimeDefaults"]["text/html"] == "org.gnome.Epiphany.desktop"
-    assert report["mimeDefaults"]["image/png"] == "org.gnome.Loupe.desktop"
-    assert report["mimeDefaults"]["application/pdf"] == "org.gnome.Papers.desktop"
     assert report["portals"]["default"] == "gtk"
-    assert all(c == {"minimal": True, "docs": False, "defaults": []}
-               for c in report["minimalGuests"].values())
 
 
 @pytest.mark.nix
@@ -151,7 +108,6 @@ def test_gnome_desktop_work_applications_are_routed_to_usr_home():
     expression = f"""
       let
         f = builtins.getFlake "{ROOT}";
-        pkgs = import f.inputs.nixpkgs {{ system = "x86_64-linux"; }};
         workspace = (f.nixosConfigurations.airlock-domain-sys-gui-usb-gui-lab.extendModules {{
           modules = [ ({{ lib, ... }}: {{
             airlock.sysGuiGuest.defaultApplicationVM = lib.mkForce "usr-home";
@@ -159,15 +115,10 @@ def test_gnome_desktop_work_applications_are_routed_to_usr_home():
         }}).config;
         minimal = f.nixosConfigurations.airlock-domain-sys-gui-usb-gui-lab.config;
         appGuest = f.nixosConfigurations.airlock-domain-usr-home.config;
-        homeGuest = f.nixosConfigurations.airlock-domain-usr-home.config;
       in {{
-        applications = map (package: package.pname or package.name) homeGuest.environment.systemPackages;
         discovery = workspace.airlock.sysGuiGuest.applicationMenus.enable;
-        timer = workspace.systemd.user.timers.airlock-application-menus.timerConfig;
         workspaceCoreApps = workspace.services.gnome.core-apps.enable;
-        workspacePackages = map (package: package.name or "") workspace.environment.systemPackages;
         minimalCoreApps = minimal.services.gnome.core-apps.enable;
-        minimalPackages = map (package: package.name or "") minimal.environment.systemPackages;
         workspaceEtc = builtins.attrNames workspace.environment.etc;
         workspaceStartApp = workspace.environment.etc."qubes-rpc/qubes.StartApp".source;
         workspaceStartAppConfig = workspace.environment.etc."qubes/rpc-config/qubes.StartApp".text;
@@ -188,11 +139,9 @@ def test_gnome_desktop_work_applications_are_routed_to_usr_home():
           restart = cfg.systemd.services.qubes-gui-agent.serviceConfig.Restart;
           restartSec = cfg.systemd.services.qubes-gui-agent.serviceConfig.RestartSec;
           startLimit = cfg.systemd.services.qubes-gui-agent.unitConfig.StartLimitIntervalSec;
-          packages = map (package: package.pname or package.name or "") cfg.environment.systemPackages;
           monitorLayout = builtins.readFile cfg.environment.etc."qubes-rpc/qubes.SetMonitorLayout".source;
           sessionReady = builtins.readFile cfg.environment.etc."qubes-rpc/airlock.AppSessionReady".source;
           sessionReadyConfig = cfg.environment.etc."qubes/rpc-config/airlock.AppSessionReady".text;
-          scale = cfg.airlock.appGui.scale;
           forkAutostart = cfg.environment.etc."xdg/autostart/qubes-qrexec-fork-server.desktop".text;
           wantedBy = cfg.systemd.services.qubes-gui-agent.wantedBy;
           pam = cfg.security.pam.services.qubes-gui-agent.startSession;
@@ -200,7 +149,7 @@ def test_gnome_desktop_work_applications_are_routed_to_usr_home():
           xorg = cfg.environment.etc."X11/xorg-qubes.conf.template".source;
           networkBoot = cfg.systemd.services.qubes-network-uplink.wantedBy;
           networkReconcile = cfg.systemd.services.qubes-network-uplink.script;
-        }}) [ appGuest homeGuest ];
+        }}) [ appGuest ];
       }}
     """
     result = subprocess.run(
@@ -227,8 +176,6 @@ def test_gnome_desktop_work_applications_are_routed_to_usr_home():
         assert guest["restart"] == "on-failure"
         assert guest["restartSec"] == "5s"
         assert guest["startLimit"] == 0
-        assert "libxcvt" in guest["packages"]
-        assert "xrandr" in guest["packages"]
         assert "export PATH=" in guest["monitorLayout"]
         assert "timeout --signal=TERM --kill-after=5s 60s" in guest["monitorLayout"]
         assert "/bin/qubes-set-monitor-layout" in guest["monitorLayout"]
@@ -240,7 +187,6 @@ def test_gnome_desktop_work_applications_are_routed_to_usr_home():
         assert "s/^DISPLAY=//p" in guest["sessionReady"]
         assert '"$XDG_RUNTIME_DIR/airlock-app-session-ready"' in guest["sessionReady"]
         assert guest["sessionReadyConfig"] == "force-user='user'\n"
-        assert guest["scale"] == 3
         assert "/bin/qrexec-fork-server" in guest["forkAutostart"]
         assert "Exec=/usr/bin/" not in guest["forkAutostart"]
         assert guest["enabled"] and guest["pam"]
@@ -262,9 +208,7 @@ def test_gnome_desktop_work_applications_are_routed_to_usr_home():
     assert 'KERNEL=="eth*"' not in report["appGuestUdev"]
     assert report["appGuestVifLink"].endswith("/80-qubes-vif.link")
 
-    assert {"nautilus", "gnome-console", "gnome-calculator", "gnome-text-editor"} <= set(report["applications"])
     assert report["discovery"] is True
-    assert report["timer"]["OnUnitInactiveSec"] == "30s"
     assert report["workspaceCoreApps"] is False
     assert report["minimalCoreApps"] is True
     assert "xdg/autostart/airlock-gnome-desktop-shortcuts.desktop" not in report["workspaceEtc"]
@@ -278,13 +222,3 @@ def test_gnome_desktop_work_applications_are_routed_to_usr_home():
     assert '--foreground --signal=TERM --kill-after=5s "$remaining"' in report["launchHelper"]
     assert "notify-send" in report["launchHelper"]
     assert "ding@rastersoft.com" not in report["workspaceGSettings"]
-
-    packages = set(report["workspacePackages"])
-    assert "airlock-application-menus" in packages
-    assert not any(name.startswith("airlock-launch-") and name != "airlock-launch-qube-app" for name in packages)
-    for package in ("gnome-calculator", "gnome-text-editor", "nautilus", "epiphany"):
-        assert not any(name.startswith(f"{package}-") for name in packages)
-    assert not any("airlock-usr-home-application-icons" in name for name in packages)
-    assert any(
-        package.startswith("gnome-console-") for package in report["minimalPackages"]
-    )

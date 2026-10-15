@@ -9,11 +9,20 @@ make test-quick PYTEST_ARGS="-k rollback"
 make test-quick PYTEST_ARGS="-n 4 --dist loadgroup"
 ```
 
-The quick suite collects `tests/`, including deployment and recovery contracts,
-bootstrap/setup/apply helpers, storage, guest configuration, firmware, and Nix
-package/module checks. `tests/test_machine_local.py` retains the named local
+The suite collects `tests/`, including deployment and recovery contracts,
+bootstrap/setup/apply helpers, storage, guest configuration and firmware.
+`make test-quick` excludes Nix-marked cases; use `make test-nix` for package and
+module evaluations or builds. `tests/test_machine_local.py` retains the named local
 checks; their implementations live in `tests/machine_pychecks.py`. These checks
 use this repository's source files and flake, without requiring a parent checkout.
+
+Tests should check observable behavior and failure handling. Optional application
+and development-tool selections belong in Nix; do not duplicate them as package
+allowlists or denylists in tests. Avoid checking literal source text or repeating
+successful configuration assertions when an existing configuration check already
+covers them. For required dependencies, exercise the command or service that needs
+them. Keep rejection, approval, isolation and recovery tests that verify what
+happens before and after a failure.
 
 Tests use the guarded external Airlock store and write reports under
 `AIRLOCK_LOG_DIR`. The default store is
@@ -26,9 +35,6 @@ For a subset without Nix-marked or Qubes-marked cases:
 ```bash
 AIRLOCK_PYTEST_WARM_STORE=0 make test-quick PYTEST_ARGS="-m 'not nix and not qubes'"
 ```
-
-Some legacy local checks invoke Nix internally without a marker, so this is
-not a guarantee of a Nix-free run.
 
 The parent `airlock` repository runs these same component tests directly from
 its pinned `airlock-machine/` submodule, alongside its own USB assembly and

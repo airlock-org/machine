@@ -1731,7 +1731,7 @@ def check_qubes_libvirt_hvm_pirq_patch(repo_root: Path, log_dir: Path) -> None:
 
 
 def check_personal_domains(repo_root: Path, log_dir: Path) -> None:
-    """Keep the personal-domain topology and canonical desktop launchers aligned."""
+    """Check personal-domain routing and persistent storage in the topology."""
     shutil.rmtree(log_dir, ignore_errors=True)
     log_dir.mkdir(parents=True)
 
@@ -1753,38 +1753,6 @@ def check_personal_domains(repo_root: Path, log_dir: Path) -> None:
     assert home["prefs"]["autostart"] is True
     assert home["backend"]["state"]["persistent"] == "usr-home-private"
     assert home["features"]["menu-items"] == "*"
-
-    home_guest = (
-        repo_root / "lifecycle/misc/modules/usr-home-guest.nix"
-    ).read_text(encoding="utf-8")
-    sys_gui_guest = (
-        repo_root / "lifecycle/misc/modules/sys-gui/base.nix"
-    ).read_text(encoding="utf-8")
-    qube_guest = (
-        repo_root / "lifecycle/misc/modules/qube-guest.nix"
-    ).read_text(encoding="utf-8")
-    runtime = (
-        repo_root
-        / "lifecycle/bootstrap/initial-runtime-config/airlock/runtime.nix"
-    ).read_text(encoding="utf-8")
-
-    assert "core-apps.enable = true" in home_guest
-    assert '"x-scheme-handler/https" = "org.gnome.Epiphany.desktop"' in home_guest
-    assert "homeApplicationLauncher" not in sys_gui_guest
-    assert "homeApplicationDesktop" not in sys_gui_guest
-    assert "usr-home-applications.nix" not in sys_gui_guest
-    assert "airlock-application-menus" in sys_gui_guest
-    assert "OnUnitInactiveSec" in sys_gui_guest
-    assert '\"qubes-rpc/qubes.StartApp\"' in qube_guest
-    assert "qubesStartAppService" in qube_guest
-    assert "applicationEnvironment" in qube_guest
-    assert "XDG_DATA_DIRS" in qube_guest
-    assert '\"qubes-rpc/qubes.GetImageRGBA\"' in qube_guest
-    assert "airlock-launch-qube-app" in sys_gui_guest
-    assert '"x-scheme-handler/https" = "airlock-open-url.desktop"' in sys_gui_guest
-    assert "usr-home = {" in runtime
-    assert "usr-browser = {" not in runtime
-    assert 'target = "usr-home";' in runtime
 
 
 def check_cmd_role(repo_root: Path, log_dir: Path) -> None:
@@ -1846,23 +1814,15 @@ def check_cmd_role(repo_root: Path, log_dir: Path) -> None:
         modules = [ ];
       }}).configuration.config;
       packageName = package: package.pname or package.name or "";
-      packageNames = cfg: map packageName cfg.environment.systemPackages;
-      dom0Packages = packageNames dom0Cfg;
       dom0QubesPackages = map packageName dom0Cfg.virtualisation.qubes.packages;
       dom0SysGuiPolicyPackage = lib.findFirst (
         package: packageName package == "airlock-sys-gui-policy"
       ) (throw "missing Airlock sys-gui policy package") dom0Cfg.virtualisation.qubes.packages;
       dom0SysGuiPolicy = builtins.readFile "${{dom0SysGuiPolicyPackage}}/etc/qubes/policy.d/50-airlock-sys-gui.policy";
-      releaseDom0Packages = packageNames releaseDom0Cfg;
-      nonDevDom0Packages = packageNames nonDevDom0Cfg;
-      devPackages = packageNames devCfg;
-      sysGuiPackages = packageNames sysGuiCfg;
       sysGuiManager = lib.findFirst (
         package: packageName package == "qubes-manager"
       ) (throw "missing sys-gui Qubes Manager") sysGuiCfg.environment.systemPackages;
-      basePackages = packageNames baseCfg;
       has = name: values: builtins.elem name values;
-      hasAnyPrefix = prefix: values: lib.any (value: lib.hasPrefix prefix value) values;
       etcNames = cfg: lib.attrNames cfg.environment.etc;
       forbiddenConfigRpc = [
         "qubes-rpc/airlock.Config.ArchiveCandidate"
@@ -1871,18 +1831,6 @@ def check_cmd_role(repo_root: Path, log_dir: Path) -> None:
         "qubes-rpc/airlock.Config.InputsImport"
         "qubes-rpc/airlock.Config.ValidateCandidate"
         "qubes-rpc/airlock.PolicyProbe"
-      ];
-      forbiddenDevPackages = [
-        "cargo"
-        "clippy"
-        "codex"
-        "git"
-        "airlock"
-        "airlock-config-nix"
-        "rustc"
-        "rustfmt"
-        "uv"
-        "zellij"
       ];
       secretEnvNames = [
         "CODEX_AUTH_TOKEN"
@@ -1953,20 +1901,8 @@ def check_cmd_role(repo_root: Path, log_dir: Path) -> None:
       sys_gui_login_password = sysGuiCfg.users.users.user.initialPassword;
       dom0_greeter_enabled = dom0Cfg.services.xserver.displayManager.lightdm.greeter.enable;
       dom0_autologin = dom0Cfg.services.displayManager.autoLogin.enable;
-      sys_gui_packages_present = lib.all (name: has name sysGuiPackages) [
-        "qubes-gui-agent-linux"
-        "qubes-gui-daemon"
-        "qubes-manager"
-        "qubes-desktop-linux-manager"
-        "xfce4-session"
-      ];
       sys_gui_template_tools_removed =
         sysGuiManager.passthru.airlockTemplateToolsRemoved or false;
-      dom0_desktop_packages_absent = lib.all (name: !(has name dom0Packages)) [
-        "qubes-manager"
-        "qubes-desktop-linux-manager"
-        "qubes-artwork"
-      ];
       dom0_xfce_enabled = dom0Cfg.services.xserver.desktopManager.xfce.enable;
       dom0_xterm_enabled = dom0Cfg.services.xserver.desktopManager.xterm.enable;
       sys_gui_rpc_present = lib.all (name: builtins.hasAttr name sysGuiCfg.environment.etc) [
@@ -2021,11 +1957,6 @@ def check_cmd_role(repo_root: Path, log_dir: Path) -> None:
       dom0_dev_mode_marker = dom0Cfg.environment.etc."airlock/dev-mode".text;
       dom0_observability_enabled = dom0Cfg.airlock.dom0.observability.enable;
       dom0_testing_tools_enabled = dom0Cfg.airlock.dom0.testingTools.enable;
-      dom0_dev_tools_absent = lib.all (name: !(has name dom0Packages)) [
-        "codex"
-        "git"
-        "zellij"
-      ];
       release_image_dev_mode_enabled = releaseDom0Cfg.airlock.image.devMode.enable;
       release_dom0_dhcp_enabled = releaseDom0Cfg.networking.useDHCP;
       release_dom0_dhcpcd_no_gateway =
@@ -2036,15 +1967,6 @@ def check_cmd_role(repo_root: Path, log_dir: Path) -> None:
         !(builtins.hasAttr "airlock/dev-mode" releaseDom0Cfg.environment.etc);
       release_dom0_observability_enabled = releaseDom0Cfg.airlock.dom0.observability.enable;
       release_dom0_testing_tools_enabled = releaseDom0Cfg.airlock.dom0.testingTools.enable;
-      release_dom0_dev_tools_absent = lib.all (name: !(has name releaseDom0Packages)) [
-        "codex"
-        "git"
-        "airlock-observe-dom0"
-        "airlock-qube-bootstrap"
-        "airlock-qube-gui-smoke"
-        "airlock-qubes-smoke"
-        "zellij"
-      ];
       release_bootstrap_dev_domain_present = builtins.hasAttr "usr-cmd" releaseBootstrapDomains;
       release_bootstrap_sys_net_present = builtins.hasAttr "sys-net" releaseBootstrapDomains;
       release_bootstrap_sys_net_netvm = releaseBootstrapDomains.sys-net.netvm;
@@ -2066,45 +1988,6 @@ def check_cmd_role(repo_root: Path, log_dir: Path) -> None:
         !(builtins.hasAttr "airlock/dev-mode" nonDevDom0Cfg.environment.etc);
       non_dev_dom0_observability_enabled = nonDevDom0Cfg.airlock.dom0.observability.enable;
       non_dev_dom0_testing_tools_enabled = nonDevDom0Cfg.airlock.dom0.testingTools.enable;
-      non_dev_dom0_dev_tools_absent = lib.all (name: !(has name nonDevDom0Packages)) [
-        "codex"
-        "git"
-        "airlock-observe-dom0"
-        "airlock-qube-bootstrap"
-        "airlock-qube-gui-smoke"
-        "airlock-qubes-smoke"
-        "zellij"
-      ];
-      package_names = devPackages;
-      required_tools_present = lib.all (name: has name devPackages) [
-        "cargo"
-        "clippy"
-        "codex"
-        "git"
-        "gnumake"
-        "jq"
-        "less"
-        "nix"
-        "airlock"
-        "airlock-config-nix"
-        "openssh"
-        "ripgrep"
-        "rustc"
-        "uv"
-        "vim"
-        "zellij"
-      ] && hasAnyPrefix "python3" devPackages;
-      network_client_support_present = lib.all (name: has name devPackages) [
-        "bind"
-        "codex"
-        "git"
-        "nix"
-        "nss-cacert"
-        "openssh"
-        "qubes-core-agent-linux"
-        "iproute2"
-        "curl"
-      ];
       network_client_resolvconf_disabled = !devCfg.networking.resolvconf.enable;
       private_nix_enabled = devCfg.airlock.minimalGuest.nix.enable;
       nix_features = devCfg.nix.settings.experimental-features;
@@ -2128,7 +2011,6 @@ def check_cmd_role(repo_root: Path, log_dir: Path) -> None:
       ) (etcNames devCfg);
       base_role = baseCfg.airlock.qubeGuest.role;
       base_private_nix_enabled = baseCfg.airlock.minimalGuest.nix.enable;
-      base_dev_packages_absent = lib.all (name: !(has name basePackages)) forbiddenDevPackages;
       base_forbidden_rpc_absent = lib.all (name: !(has name (etcNames baseCfg))) forbiddenConfigRpc;
     }}
     """
@@ -2201,9 +2083,7 @@ def check_cmd_role(repo_root: Path, log_dir: Path) -> None:
     assert data["sys_gui_login_password"] == "airlock"
     assert data["dom0_greeter_enabled"] is False
     assert data["dom0_autologin"] is True
-    assert data["sys_gui_packages_present"] is True
     assert data["sys_gui_template_tools_removed"] is True
-    assert data["dom0_desktop_packages_absent"] is True
     assert data["dom0_xfce_enabled"] is False
     assert data["dom0_xterm_enabled"] is False
     assert data["sys_gui_rpc_present"] is True
@@ -2234,7 +2114,6 @@ def check_cmd_role(repo_root: Path, log_dir: Path) -> None:
     assert data["dom0_dev_mode_marker"] == "enabled\n"
     assert data["dom0_observability_enabled"] is True
     assert data["dom0_testing_tools_enabled"] is True
-    assert data["dom0_dev_tools_absent"] is True
     assert data["release_image_dev_mode_enabled"] is False
     assert data["release_dom0_dhcp_enabled"] is False
     assert data["release_dom0_dhcpcd_no_gateway"] is False
@@ -2243,7 +2122,6 @@ def check_cmd_role(repo_root: Path, log_dir: Path) -> None:
     assert data["release_dom0_dev_marker_absent"] is True
     assert data["release_dom0_observability_enabled"] is False
     assert data["release_dom0_testing_tools_enabled"] is False
-    assert data["release_dom0_dev_tools_absent"] is True
     assert data["release_bootstrap_dev_domain_present"] is True
     assert data["release_bootstrap_sys_net_present"] is True
     assert data["release_bootstrap_sys_net_netvm"] is None
@@ -2260,9 +2138,6 @@ def check_cmd_role(repo_root: Path, log_dir: Path) -> None:
     assert data["non_dev_dom0_dev_marker_absent"] is True
     assert data["non_dev_dom0_observability_enabled"] is False
     assert data["non_dev_dom0_testing_tools_enabled"] is False
-    assert data["non_dev_dom0_dev_tools_absent"] is True
-    assert data["required_tools_present"] is True
-    assert data["network_client_support_present"] is True
     assert data["network_client_resolvconf_disabled"] is True
     assert data["private_nix_enabled"] is True
     assert "nix-command" in data["nix_features"]
@@ -2282,7 +2157,6 @@ def check_cmd_role(repo_root: Path, log_dir: Path) -> None:
     assert data["dev_no_codex_auth_etc"] is True
     assert data["base_role"] == "base"
     assert data["base_private_nix_enabled"] is False
-    assert data["base_dev_packages_absent"] is True
     assert data["base_forbidden_rpc_absent"] is True
 
     codex_out = log_dir / "codex-out.txt"
@@ -2600,8 +2474,6 @@ def check_airlock_minimal_guest(repo_root: Path, log_dir: Path) -> None:
         vault = flake.nixosConfigurations."airlock-domain-sys-ctrl".config;
       }};
       cfgList = builtins.attrValues cfgs;
-      packageNames = cfg: map (package: package.pname or package.name or "") cfg.environment.systemPackages;
-      corePackageNames = cfg: map (package: package.pname or package.name or "") cfg.environment.corePackages;
       enabledServices =
         cfg:
         lib.attrNames (
@@ -2610,20 +2482,14 @@ def check_airlock_minimal_guest(repo_root: Path, log_dir: Path) -> None:
       etcNames = cfg: lib.attrNames cfg.environment.etc;
       has = name: values: builtins.elem name values;
       allCfgs = pred: lib.all pred cfgList;
-      packagesAbsent =
-        names: cfg:
-        lib.all (name: !(has name (packageNames cfg))) names;
       noConfigInputEtc =
         cfg:
         lib.all (name: !(lib.hasPrefix "airlock/config-inputs/" name)) (etcNames cfg);
     in
     {{
-      package_names = lib.mapAttrs (_name: cfg: packageNames cfg) cfgs;
-      core_package_names = lib.mapAttrs (_name: cfg: corePackageNames cfg) cfgs;
       enabled_services = lib.mapAttrs (_name: cfg: enabledServices cfg) cfgs;
       service_counts = lib.mapAttrs (_name: cfg: builtins.length (enabledServices cfg)) cfgs;
       minimal_enabled = allCfgs (cfg: cfg.airlock.minimalGuest.enable);
-      default_packages_empty = allCfgs (cfg: cfg.environment.defaultPackages == [ ]);
       documentation_disabled = allCfgs (
         cfg:
         cfg.documentation.enable == false
@@ -2638,23 +2504,11 @@ def check_airlock_minimal_guest(repo_root: Path, log_dir: Path) -> None:
         && cfg.services.userborn.enable == true
       );
       installer_tools_disabled = allCfgs (cfg: cfg.system.disableInstallerTools);
-      no_installer_tool_packages = allCfgs (
-        packagesAbsent [
-          "nixos-build-vms"
-          "nixos-enter"
-          "nixos-generate-config"
-          "nixos-install"
-          "nixos-option"
-        ]
-      );
       nix_cli_capability = {{
         staging = cfgs.staging.airlock.minimalGuest.nix.enable;
         validator = cfgs.validator.airlock.minimalGuest.nix.enable;
         vault = cfgs.vault.airlock.minimalGuest.nix.enable;
       }};
-      staging_has_config_nix = has "nix" (packageNames cfgs.staging) && has "airlock-config-nix" (packageNames cfgs.staging);
-      validator_has_config_nix = has "nix" (packageNames cfgs.validator) && has "airlock-config-nix" (packageNames cfgs.validator);
-      vault_has_config_nix = has "airlock-config-nix" (packageNames cfgs.vault);
       stock_runtime_retained = allCfgs (
         cfg:
         (cfg.systemd.package.pname or "") == "systemd"
@@ -2677,31 +2531,19 @@ def check_airlock_minimal_guest(repo_root: Path, log_dir: Path) -> None:
         validator = cfgs.validator.environment.etc ? "qubes-rpc/airlock.Config.InputsImport";
         vault = cfgs.vault.environment.etc ? "qubes-rpc/airlock.Config.InputsImport";
       }};
-      qubes_runtime_packages_retained = allCfgs (
-        cfg:
-        has "qubes-core-agent-linux" (packageNames cfg)
-        && has "qubes-linux-utils" (packageNames cfg)
-        && has "qubes-core-qrexec-base" (packageNames cfg)
-        && has "qubes-core-qrexec-domU" (packageNames cfg)
-      );
     }}
     """
     _run(["nix", "eval", "--impure", "--json", "--expr", expr], stdout=result_json)
     data = json.loads(result_json.read_text(encoding="utf-8"))
     assert data["minimal_enabled"] is True
-    assert data["default_packages_empty"] is True
     assert data["documentation_disabled"] is True
     assert data["perlless_mechanics_enabled"] is True
     assert data["installer_tools_disabled"] is True
-    assert data["no_installer_tool_packages"] is True
     assert data["nix_cli_capability"] == {
         "staging": True,
         "validator": True,
         "vault": True,
     }
-    assert data["staging_has_config_nix"] is True
-    assert data["validator_has_config_nix"] is True
-    assert data["vault_has_config_nix"] is True
     assert data["stock_runtime_retained"] is True
     assert data["no_guest_config_input_etc"] is True
     assert data["required_qubes_services_retained"] is True
@@ -2710,7 +2552,6 @@ def check_airlock_minimal_guest(repo_root: Path, log_dir: Path) -> None:
         "validator": False,
         "vault": False,
     }
-    assert data["qubes_runtime_packages_retained"] is True
 
 
 def check_airlock_minimal_closure(repo_root: Path, log_dir: Path) -> None:

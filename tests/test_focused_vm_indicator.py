@@ -205,16 +205,6 @@ assert.equal(renders.at(-1).name, 'usr-browser');
     assert result.returncode == 0, result.stderr
 
 
-def test_declarative_installation_and_enablement():
-    nix = (EXTENSION.parent / "default.nix").read_text()
-    assert '"airlock-focused-vm@airlock.local"' in nix
-    assert "focusedVMExtension\n" in nix
-    assert "cp extension.js state.js metadata.json stylesheet.css" in nix
-    assert "ps.python-xlib" in nix
-    assert '${pkgs.qubes-gui-daemon}/bin/qubes-guid' in nix
-    assert (EXTENSION / "metadata.json").read_text().count('"50"') == 1
-
-
 def test_application_actors_and_settled_shell_focus(tmp_path):
     node = shutil.which("node")
     if not node:

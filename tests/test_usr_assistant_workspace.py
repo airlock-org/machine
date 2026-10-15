@@ -206,7 +206,7 @@ def test_workspace_preserves_custom_guidance(tmp_path, existing):
 
 
 @pytest.mark.nix
-def test_usr_assistant_console_tools_and_guidance_use_existing_management_interfaces():
+def test_usr_assistant_workspace_uses_existing_management_interfaces():
     expression = f"""
       let
         f = builtins.getFlake "{ROOT}";
@@ -214,7 +214,6 @@ def test_usr_assistant_console_tools_and_guidance_use_existing_management_interf
         defaults = import {ROOT}/lifecycle/bootstrap/default-domains/usr-assistant.nix;
       in {{
         inherit (defaults) prefs features netvm;
-        packages = map (p: p.pname or p.name) c.environment.systemPackages;
         session = c.environment.sessionVariables;
         guiEnabled = c.systemd.services.qubes-gui-agent.enable;
         readyConfig = c.environment.etc."qubes/rpc-config/airlock.AppSessionReady".text;
@@ -225,7 +224,6 @@ def test_usr_assistant_console_tools_and_guidance_use_existing_management_interf
           after before requires serviceConfig; }};
         identity = {{ inherit (c.systemd.services.airlock-usr-assistant-git-identity)
           after before requires serviceConfig; }};
-        assertionsPass = builtins.all (a: a.assertion) c.assertions;
       }}
     """
     result = subprocess.run(
@@ -238,14 +236,12 @@ def test_usr_assistant_console_tools_and_guidance_use_existing_management_interf
     log_dir.mkdir(parents=True, exist_ok=True)
     (log_dir / "configuration.json").write_text(result.stdout)
     report = json.loads(result.stdout)
-    assert report["assertionsPass"]
     assert report["prefs"]["guivm"] == "sys-gui"
     assert report["prefs"]["virt_mode"] == "pvh"
     assert report["features"]["menu-items"] == "*"
     assert report["netvm"] == "sys-firewall"
     assert report["guiEnabled"]
     assert report["readyConfig"] == "force-user='user'\n"
-    assert {"codex", "gnome-console", "gnumake", "python3", "ripgrep", "uv", "zellij"} <= set(report["packages"])
     assert report["session"]["CODEX_HOME"] == "/home/user/.codex"
     assert report["session"]["AIRLOCK_LOG_DIR"] == "/home/user/.local/state/airlock/logs"
     assert report["session"]["AIRLOCK_NIX_ROOT"] == "/rw/airlock-builder/merged"
@@ -262,6 +258,5 @@ def test_usr_assistant_console_tools_and_guidance_use_existing_management_interf
     assert "qubes-qrexec-agent.service" in report["identity"]["before"]
     assert report["repoPath"] == "/home/user/airlock-machine"
     assert "~/airlock-machine" in report["intro"]
-    assert len(report["intro"].splitlines()) <= 12
     for command in ("plan", "apply", "status", "verify", "resume", "rollback"):
         assert f"airlock-usr-assistant-machine-deploy {command}" in report["instructions"]

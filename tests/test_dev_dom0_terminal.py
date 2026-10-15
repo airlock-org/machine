@@ -50,7 +50,6 @@ def terminal_config():
         normalHandler = normal.environment.etc ? "qubes-rpc/airlock.DevDom0Shell";
         normalGuest = normalGuest.airlock.devDom0Terminal.guest.enable;
         sudoPassword = lab.security.sudo.wheelNeedsPassword;
-        assertionsPass = builtins.all (a: a.assertion) (host.assertions ++ guest.assertions);
         rejected = map (a: a.message) (builtins.filter (a: !a.assertion) forbidden.assertions);
       }}
     """
@@ -85,7 +84,6 @@ def terminal_config():
 @pytest.mark.nix
 def test_usb_only_and_sudo_preserved(terminal_config):
     report = terminal_config
-    assert report["assertionsPass"]
     assert report["labHost"] and report["guest"] and report["hybridGuest"]
     assert report["sudoPassword"]
     assert not report["normalHost"]

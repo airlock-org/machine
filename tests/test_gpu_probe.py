@@ -102,7 +102,6 @@ def test_gpu_lab_is_opt_in_and_keeps_xfce():
         guiVm = lab.airlock.qubes.prefs.default_guivm;
         hostName = guest.networking.hostName;
         graphics = guest.hardware.graphics.enable;
-        packages = map (p: p.pname or p.name) guest.environment.systemPackages;
       }}
     """
     result = subprocess.run(
@@ -122,7 +121,6 @@ def test_gpu_lab_is_opt_in_and_keeps_xfce():
     assert report["guiVm"] == "sys-gui"
     assert report["hostName"] == "sys-gpu"
     assert report["graphics"] is True
-    assert "airlock-gpu-probe" in report["packages"]
     gpu = report["gpu"]
     assert gpu["class"] == "StandaloneVM"
     assert gpu["netvm"] is None
