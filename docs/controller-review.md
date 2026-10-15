@@ -55,7 +55,7 @@ Disconnecting the submitter does not grant approval or cancel the detached job.
 After interruption, query:
 
 ```sh
-airlock-usr-assistant-machine-deploy review-status --request-id REQUEST_ID
+airlock machine review-status --request-id REQUEST_ID
 ```
 
 States include queued, awaiting_approval, building, planned, built,

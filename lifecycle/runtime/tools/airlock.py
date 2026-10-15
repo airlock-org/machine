@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build and deploy a committed whole-machine release directly from usr-assistant."""
+"""Inspect, configure, and maintain an AirlockOS machine."""
 
 import argparse
 import base64
@@ -314,7 +314,13 @@ def run_detached(session, action):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description=__doc__)
+    root_parser = argparse.ArgumentParser(prog="airlock", description=__doc__)
+    commands = root_parser.add_subparsers(dest="command", required=True)
+    parser = commands.add_parser(
+        "machine",
+        help="plan, deploy, inspect, and recover the whole machine",
+        description="Manage committed machine configuration through the existing Qubes controller.",
+    )
     parser.add_argument(
         "action",
         choices=[
@@ -350,7 +356,7 @@ def main(argv=None):
     parser.add_argument("--retain", choices=("true", "false"))
     parser.add_argument("--allow-unexpired-trash", action="append", default=[])
     parser.add_argument("--before-expiry", action="store_true")
-    args = parser.parse_args(argv)
+    args = root_parser.parse_args(argv)
     if args.action == "review-status":
         if not args.request_id or args.legacy_dom0:
             parser.error("review-status requires --request-id and the controller route")
@@ -476,7 +482,7 @@ def main(argv=None):
             )
         return 0
     except (RuntimeError, OSError, subprocess.SubprocessError, ValueError) as exc:
-        print(f"airlock-usr-assistant-machine-deploy: {exc}", file=sys.stderr)
+        print(f"airlock machine: {exc}", file=sys.stderr)
         return 1
     finally:
         if session:

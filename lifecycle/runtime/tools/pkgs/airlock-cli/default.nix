@@ -1,12 +1,12 @@
 {
   coreutils,
   gitMinimal,
-  gnugrep,
-  gnutar,
-  jq,
+  gzip,
   lib,
   python3,
+  util-linux,
   writeShellApplication,
+  configNixStore ? null,
 }:
 
 writeShellApplication {
@@ -15,16 +15,18 @@ writeShellApplication {
   runtimeInputs = [
     coreutils
     gitMinimal
-    gnugrep
-    gnutar
-    jq
+    gzip
+    python3
+    util-linux
     python3.pkgs.qubes-core-qrexec.domU
-  ];
+  ] ++ lib.optional (configNixStore != null) configNixStore;
 
-  text = builtins.readFile ../../scripts/airlock-cli.sh;
+  text = ''
+    exec ${python3}/bin/python3 ${../../airlock.py} "$@"
+  '';
 
   meta = {
-    description = "Submit Airlock config candidates from an unprivileged Qubes VM";
+    description = "Inspect and manage AirlockOS machine configuration and deployment";
     license = lib.licenses.mit;
     platforms = [ "x86_64-linux" ];
   };

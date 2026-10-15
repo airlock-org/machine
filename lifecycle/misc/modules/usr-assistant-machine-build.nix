@@ -277,20 +277,8 @@ let
       --option experimental-features 'nix-command flakes local-overlay-store read-only-local-store' \
       --option build-hook "" --store "$store_uri" "$@"
   '';
-  deployTool = pkgs.writeShellApplication {
-    name = "airlock-usr-assistant-machine-deploy";
-    runtimeInputs = [
-      configNixStore
-      pkgs.coreutils
-      pkgs.gitMinimal
-      pkgs.gzip
-      pkgs.python3
-      pkgs.util-linux
-      pkgs.python3.pkgs.qubes-core-qrexec.domU
-    ];
-    text = ''
-      exec ${pkgs.python3}/bin/python3 ${../../runtime/tools/usr-assistant-machine-deploy.py} "$@"
-    '';
+  airlockCli = pkgs.callPackage ../../runtime/tools/pkgs/airlock-cli {
+    inherit configNixStore;
   };
   ctrlDeploy = pkgs.writeShellApplication {
     name = "airlock-sys-ctrl-guest-deploy";
@@ -315,7 +303,7 @@ in
     ctrlDeploy
     pkgs.gitMinimal
     pkgs.gnutar
-  ] ++ (if role == "usr-assistant" then [ deployTool ] else [ ]);
+  ] ++ (if role == "usr-assistant" then [ airlockCli ] else [ ]);
   systemd.services.airlock-controller-observe = lib.mkIf (role == "sys-ctrl") {
     description = "Record authoritative dom0 deployment outcomes";
     after = [ "qubes-qrexec-agent.service" ];

@@ -70,7 +70,6 @@ from local_checks.config_materialization import (
     check_config_apply_template_build_ref,
 )
 from local_checks.config_cli import (
-    check_airlock_cli,
     check_config_control,
     check_config_status,
 )
@@ -292,7 +291,6 @@ LOCAL_CHECKS = (
         "config-archive-domain-references",
         runner=check_config_archive_domain_references,
     ),
-    LocalCheck("airlock-cli", marks=(pytest.mark.nix,), runner=check_airlock_cli),
     LocalCheck("config-control", runner=check_config_control),
     LocalCheck("config-boot-verify", runner=check_config_boot_verify),
     LocalCheck("config-status", marks=(pytest.mark.nix,), runner=check_config_status),

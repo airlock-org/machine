@@ -65,8 +65,8 @@ Before editing deployable system configuration, inspect the target using the
 read-only commands:
 
 ```sh
-airlock-usr-assistant-machine-deploy status
-airlock-usr-assistant-machine-deploy verify
+airlock machine status
+airlock machine verify
 ```
 
 Establish the recorded deployed-source baseline and compare its tree with the
@@ -92,10 +92,10 @@ Once the check is clear, edit this checkout, verify according to the change,
 commit, recheck, then inspect the normal plan:
 
 ```sh
-airlock-usr-assistant-machine-deploy plan
-airlock-usr-assistant-machine-deploy apply
-airlock-usr-assistant-machine-deploy status
-airlock-usr-assistant-machine-deploy verify
+airlock machine plan
+airlock machine apply
+airlock machine status
+airlock machine verify
 ```
 
 These commands send locked committed source to sys-ctrl. Normal submissions

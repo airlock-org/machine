@@ -13,11 +13,34 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location(
-    "usr_assistant_machine_deploy",
-    ROOT / "lifecycle/runtime/tools/usr-assistant-machine-deploy.py",
+    "airlock_cli",
+    ROOT / "lifecycle/runtime/tools/airlock.py",
 )
 DEPLOY = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(DEPLOY)
+
+
+@pytest.mark.parametrize("arguments", [[], ["status"], ["check"], ["apply"], ["machine"], ["machine", "unknown"]])
+def test_invalid_commands_do_not_contact_the_machine(monkeypatch, arguments):
+    monkeypatch.setattr(DEPLOY.subprocess, "call", lambda *_a, **_k: pytest.fail("unexpected controller call"))
+    monkeypatch.setattr(DEPLOY.subprocess, "run", lambda *_a, **_k: pytest.fail("unexpected RPC call"))
+    with pytest.raises(SystemExit) as error:
+        DEPLOY.main(arguments)
+    assert error.value.code == 2
+
+
+@pytest.mark.parametrize("arguments", [["--help"], ["machine", "--help"]])
+def test_help_is_available_without_workspace_or_qrexec(tmp_path, arguments):
+    result = subprocess.run(
+        [DEPLOY.sys.executable, str(SPEC.origin), *arguments],
+        cwd=tmp_path,
+        env={**os.environ, "PATH": str(tmp_path)},
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0
+    assert "machine" in result.stdout
+    assert not result.stderr
 
 
 def release_manifest(revision="a" * 40, lock_hash="b" * 64):
@@ -33,7 +56,7 @@ def release_manifest(revision="a" * 40, lock_hash="b" * 64):
 def test_guest_apply_delegates_to_controller(monkeypatch):
     calls = []
     monkeypatch.setattr(DEPLOY.subprocess, "call", lambda argv: calls.append(argv) or 0)
-    assert DEPLOY.main(["guest-apply", "--target", "usr-home"]) == 0
+    assert DEPLOY.main(["machine", "guest-apply", "--target", "usr-home"]) == 0
     assert calls == [["airlock-sys-ctrl-guest-deploy", "apply", "usr-home",
                       "--repo", "/home/user/airlock-machine"]]
 
@@ -41,7 +64,7 @@ def test_guest_apply_delegates_to_controller(monkeypatch):
 def test_guest_plan_passes_explicit_checkout_to_controller(monkeypatch, tmp_path):
     calls = []
     monkeypatch.setattr(DEPLOY.subprocess, "call", lambda argv: calls.append(argv) or 0)
-    assert DEPLOY.main(["guest-plan", "--target", "usr-assistant", "--repo", str(tmp_path)]) == 0
+    assert DEPLOY.main(["machine", "guest-plan", "--target", "usr-assistant", "--repo", str(tmp_path)]) == 0
     assert calls == [["airlock-sys-ctrl-guest-deploy", "plan", "usr-assistant",
                       "--repo", str(tmp_path)]]
 
@@ -50,7 +73,7 @@ def test_guest_plan_passes_explicit_checkout_to_controller(monkeypatch, tmp_path
 def test_whole_machine_actions_delegate_to_controller_by_default(monkeypatch, action):
     calls = []
     monkeypatch.setattr(DEPLOY.subprocess, "call", lambda argv: calls.append(argv) or 0)
-    assert DEPLOY.main([action]) == 0
+    assert DEPLOY.main(["machine", action]) == 0
     assert calls == [["airlock-sys-ctrl-guest-deploy", "machine-" + action,
                       "--repo", str(DEPLOY.DEFAULT_REPO)]]
 
@@ -60,7 +83,7 @@ def test_rename_submission_uses_frontend_from_the_verified_checkout(tmp_path, mo
     events = []
     monkeypatch.setattr(DEPLOY, "source_identity", lambda repo: events.append(("verify", repo)))
     monkeypatch.setattr(DEPLOY.subprocess, "call", lambda argv: events.append(argv) or 0)
-    assert DEPLOY.main([action, "--assistant-rename", "--repo", str(tmp_path)]) == 0
+    assert DEPLOY.main(["machine", action, "--assistant-rename", "--repo", str(tmp_path)]) == 0
     assert events == [("verify", tmp_path), [DEPLOY.sys.executable,
         str(tmp_path / "lifecycle/runtime/tools/sys-ctrl-guest-deploy.py"),
         "machine-" + action, "--repo", str(tmp_path), "--assistant-rename"]]
@@ -70,7 +93,7 @@ def test_rename_submission_uses_frontend_from_the_verified_checkout(tmp_path, mo
 def test_rename_rejects_incompatible_actions_before_submission(monkeypatch, arguments):
     monkeypatch.setattr(DEPLOY.subprocess, "call", lambda *_: pytest.fail("submission attempted"))
     with pytest.raises(SystemExit) as error:
-        DEPLOY.main(arguments)
+        DEPLOY.main(["machine", *arguments])
     assert error.value.code == 2
 
 
@@ -329,7 +352,7 @@ def test_plan_builds_transfers_and_never_starts_apply(tmp_path, monkeypatch, cap
     monkeypatch.setattr(DEPLOY, "Dom0", PlanSession)
     PlanSession.instances.clear()
 
-    assert DEPLOY.main(["plan", "--legacy-dom0", "--state", str(tmp_path)]) == 0
+    assert DEPLOY.main(["machine", "plan", "--legacy-dom0", "--state", str(tmp_path)]) == 0
 
     session = PlanSession.instances[0]
     assert session.closed is True
@@ -357,7 +380,7 @@ def test_apply_uses_release_coordinator_in_a_detached_worker(tmp_path, monkeypat
     )
     PlanSession.instances.clear()
 
-    assert DEPLOY.main(["apply", "--legacy-dom0", "--state", str(tmp_path)]) == 0
+    assert DEPLOY.main(["machine", "apply", "--legacy-dom0", "--state", str(tmp_path)]) == 0
     assert started == [
         [
             "/nix/store/coordinator/bin/airlock-machine-deploy",
@@ -397,7 +420,7 @@ def test_maintenance_is_detached_and_does_not_build(action, arguments, monkeypat
         "run_detached",
         lambda _session, command: started.append(command) or "unit",
     )
-    assert DEPLOY.main([action, "--legacy-dom0", *arguments]) == 0
+    assert DEPLOY.main(["machine", action, "--legacy-dom0", *arguments]) == 0
     assert started == [["/controller", action, arguments[1], "--confirm", arguments[3]]]
 
 
@@ -441,14 +464,14 @@ def test_maintenance_forwards_early_purge_override(
         DEPLOY, "run_detached",
         lambda _session, command: started.append(command) or "unit",
     )
-    assert DEPLOY.main([action, "--legacy-dom0", *arguments]) == 0
+    assert DEPLOY.main(["machine", action, "--legacy-dom0", *arguments]) == 0
     assert started == [expected]
 
 
 def test_maintenance_refuses_wrong_confirmation_before_connecting(monkeypatch):
     monkeypatch.setattr(DEPLOY, "Dom0", lambda: pytest.fail("unexpected connection"))
     with pytest.raises(SystemExit):
-        DEPLOY.main(["trash-purge", "--identity", "123-vm", "--confirm", "456-vm"])
+        DEPLOY.main(["machine", "trash-purge", "--identity", "123-vm", "--confirm", "456-vm"])
 
 
 @pytest.mark.parametrize("action", ["status", "verify", "resume", "rollback"])
@@ -461,6 +484,6 @@ def test_normal_recovery_uses_typed_dom0_route_without_controller(monkeypatch, a
         return subprocess.CompletedProcess(argv, 0)
 
     monkeypatch.setattr(DEPLOY.subprocess, "run", run)
-    assert DEPLOY.main([action]) == 0
+    assert DEPLOY.main(["machine", action]) == 0
     assert calls == [(["qrexec-client-vm", "dom0", "airlock.Ctrl.MachineControl"],
                       {"schema": "airlock.machine-control.v1", "action": action})]

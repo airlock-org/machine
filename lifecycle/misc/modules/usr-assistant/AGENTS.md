@@ -29,7 +29,7 @@ asking for permission; apply a deployment when the user's request authorizes it.
 ## Check for older undeployed changes
 
 Before editing deployable system configuration for a live target, use read-only
-`airlock-usr-assistant-machine-deploy status` and `verify` and inspect the recorded
+`airlock machine status` and `verify` and inspect the recorded
 deployed-source provenance. Compare the deployed source tree with the checkout,
 including committed and uncommitted changes. Record the baseline identity and
 starting checkout revision. A clean working tree or successful build is not proof
@@ -95,10 +95,10 @@ For whole-machine changes, including VM additions, routing, preferences, or
 policy, run these commands from usr-assistant:
 
 ```sh
-airlock-usr-assistant-machine-deploy plan
-airlock-usr-assistant-machine-deploy apply
-airlock-usr-assistant-machine-deploy status
-airlock-usr-assistant-machine-deploy verify
+airlock machine plan
+airlock machine apply
+airlock machine status
+airlock machine verify
 ```
 
 `plan` builds and validates without activation. Inspect its changed/affected
@@ -110,10 +110,10 @@ the selected/running generations for the host and every VM.
 For a guest-package/module change with no topology or host-policy change:
 
 ```sh
-airlock-usr-assistant-machine-deploy guest-plan --target usr-home
-airlock-usr-assistant-machine-deploy guest-apply --target usr-home
-airlock-usr-assistant-machine-deploy status
-airlock-usr-assistant-machine-deploy verify
+airlock machine guest-plan --target usr-home
+airlock machine guest-apply --target usr-home
+airlock machine status
+airlock machine verify
 ```
 
 Replace `usr-home` with the changed guest. A usr-assistant update terminates this
@@ -129,14 +129,14 @@ Installing or updating usr-assistant itself still requires a guest restart.
 
 ## Observe and recover
 
-- `airlock-usr-assistant-machine-deploy status` reads the journal even when the
+- `airlock machine status` reads the journal even when the
   controller is unavailable; `verify` checks running generations.
 - `~/.local/share/airlock/machine-deploy/` contains agent deployment state.
   The controller keeps source candidates and observations under
   `~/.local/share/airlock/controller/` inside sys-ctrl.
 - If an interrupted transaction needs continuation, inspect status first,
-  then use `airlock-usr-assistant-machine-deploy resume` when appropriate.
-  `airlock-usr-assistant-machine-deploy rollback` restores the previous selection;
+  then use `airlock machine resume` when appropriate.
+  `airlock machine rollback` restores the previous selection;
   assess its restart effects and the user's authorized scope first.
 - The development-only `airlock-dom0-shell` provides diagnostics if needed.
   Use read-only observation first; normal deployment uses typed controller

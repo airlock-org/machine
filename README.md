@@ -21,9 +21,12 @@ Open **usr-assistant: Console** from GNOME, then inspect the running machine:
 
 ```sh
 cd ~/airlock-machine
-airlock-usr-assistant-machine-deploy status
-airlock-usr-assistant-machine-deploy verify
+airlock machine status
+airlock machine verify
 ```
+
+Use `airlock --help` to list command groups and `airlock machine --help` for
+machine actions and options.
 
 Follow the [workspace guide](docs/usr-assistant.md) to compare the checkout with
 the deployed source, edit and commit configuration, review the deployment plan,

@@ -648,7 +648,6 @@
           airlock-config-vms-smoke =
             pkgs.callPackage ./lifecycle/misc/tools/pkgs/airlock-config-vms-smoke
               { };
-          airlock-cli = pkgs.callPackage ./lifecycle/runtime/tools/pkgs/airlock-cli { };
           airlock = pkgs.callPackage ./lifecycle/runtime/tools/pkgs/airlock-cli { };
           codex = pkgs.codex;
           zellij = pkgs.zellij;
@@ -746,7 +745,7 @@
         qubes-memory-accounting = self.packages.${system}.qubes-linux-utils;
         config-inputs-import-package = self.packages.${system}.airlock-config-inputs-import;
         config-status-package = self.packages.${system}.airlock-config-status;
-        airlock-cli-package = self.packages.${system}.airlock-cli;
+        airlock-package = self.packages.${system}.airlock;
         module-contract = mkModuleContractCheck system;
         config-vms-smoke-package = self.packages.${system}.airlock-config-vms-smoke;
         nix-closure-domain-smoke-package = self.packages.${system}.airlock-nix-closure-domain-smoke;

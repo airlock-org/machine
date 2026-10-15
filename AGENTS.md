@@ -10,7 +10,7 @@
   lives in the parent `airlock` repository. Commit machine changes here first,
   then update and commit the `airlock-machine/` submodule pointer there.
   From the installed usr-assistant workspace, read `docs/usr-assistant.md` and use
-  `airlock-usr-assistant-machine-deploy` directly from this clean committed checkout;
+  `airlock machine` directly from this clean committed checkout;
   a parent checkout is not required. A successful build is not a live deployment.
 - Keep development observation separate from production behavior. Observation
   tools should report state without expanding Qubes control authority.

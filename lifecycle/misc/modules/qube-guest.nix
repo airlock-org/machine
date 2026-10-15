@@ -75,7 +75,6 @@ let
     exec ${pkgs.bash}/bin/bash ${upstreamGetImage}
   '';
   roleGit = pkgs.gitMinimal;
-  airlockCli = pkgs.callPackage ../../runtime/tools/pkgs/airlock-cli { };
   poolArtifacts = pkgs.python3.pkgs.callPackage ../../runtime/tools/pkgs/airlock-qubes-storage { };
   systemdPackage = config.systemd.package;
   configInputsPublicPath = "/etc/airlock/config-inputs";
@@ -190,7 +189,6 @@ let
     ];
     cmd = [
       (lib.hiPrio configNix)
-      airlockCli
       pkgs.bashInteractive
       pkgs.cacert
       pkgs.cargo

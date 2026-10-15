@@ -259,4 +259,4 @@ def test_usr_assistant_workspace_uses_existing_management_interfaces():
     assert report["repoPath"] == "/home/user/airlock-machine"
     assert "~/airlock-machine" in report["intro"]
     for command in ("plan", "apply", "status", "verify", "resume", "rollback"):
-        assert f"airlock-usr-assistant-machine-deploy {command}" in report["instructions"]
+        assert f"airlock machine {command}" in report["instructions"]
