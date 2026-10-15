@@ -37,6 +37,10 @@ activation leaves a required reboot pending until the user restarts the machine.
 Approve authorizes evaluation, building and deployment of that revision and lock
 hash within the displayed VM scope; Reject or closing the window returns feedback
 without building. No second routine approval is required when a plan is followed by apply for the same source and baseline.
+Source uploads have a two-minute total receive deadline, covering the header and
+archive. An incomplete upload releases the controller lock and reports failure;
+the later human approval wait has no such deadline. Guest plan/apply failures
+return structured errors over qrexec, retaining available lock and exit details.
 
 ## Enforcement
 
@@ -94,6 +98,8 @@ scope refusal, including when a VM restart interrupts the original reply.
 Queries reconcile the returned snapshot without rewriting the job record; the
 controller worker owns its updates. JSON publication uses a unique temporary
 file per write so concurrent publications cannot collide on a shared filename.
+Guest candidate publication also flushes the containing directory before it is
+acknowledged, including when reusing a previously published candidate.
 Prepared-plan records use the same writer. Replacements preserve existing file
 modes unless the caller explicitly chooses a mode; new private records use
 0600, while shared boot/status files explicitly use 0644.
@@ -108,6 +114,9 @@ controller returns its recorded job state with `observation_error` and
 ReviewControl calls time out after ten seconds. Submission feedback returns a
 recorded approval before requesting any remote status refresh; use review-status
 for a later observation of the background job.
+Unreadable or malformed controller job records report their request ID and path
+with `recovery_required: true`. Submission stops for explicit investigation and
+repair; it never discards or skips damaged history to bypass a pending operation.
 
 ## Lock ownership
 
@@ -130,6 +139,11 @@ grant authority or make a free lock busy. Missing or stale owner details are
 reported as unknown while a real lock is held; never delete a lock file or its
 metadata to force an operation through. A crashed process releases its kernel
 lock, and the next owner replaces any leftover metadata.
+Verified ownership also requires the live process's locked descriptor to match
+the recorded acquisition marker and lock-file identity. Details that cannot be
+verified are labelled unknown, including metadata left from an earlier operation
+in the same still-running process. The marker uses a descriptor position, without
+writing or extending the lock file.
 Metadata publication, process-identity lookup and metadata cleanup failures are
 logged as warnings. They cannot abort the protected operation or replace its
 original error; kernel exclusion and durable deployment journals remain required.

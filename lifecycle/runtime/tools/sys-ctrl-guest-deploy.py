@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import re
+import select
 from pathlib import Path
 import subprocess
 import sys
@@ -28,6 +29,40 @@ MACHINE_SCHEMA = "airlock.sys-ctrl-machine-release.v2"
 STATE = Path.home() / ".local/share/airlock/controller"
 BUILDER_STORE = Path("/rw/airlock-builder/merged")
 BUILD_RECORDS = Path.home() / ".local/share/airlock/machine-deploy"
+UPLOAD_TIMEOUT = 120
+
+
+class SourceReader:
+    """Read qrexec upload bytes against one deadline, without buffered waits."""
+
+    def __init__(self, stream):
+        self.stream = stream
+        self.deadline = time.monotonic() + UPLOAD_TIMEOUT
+        try:
+            self.descriptor = stream.fileno()
+        except (AttributeError, OSError):
+            self.descriptor = None  # In-memory streams used by local callers.
+
+    def read(self, count):
+        remaining = self.deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError(f"Source upload timed out after {UPLOAD_TIMEOUT} seconds")
+        if self.descriptor is None:
+            return self.stream.read(count)
+        if not select.select([self.descriptor], [], [], remaining)[0]:
+            raise TimeoutError(f"Source upload timed out after {UPLOAD_TIMEOUT} seconds")
+        return os.read(self.descriptor, count)
+
+    def readline(self, limit):
+        line = bytearray()
+        while len(line) < limit:
+            byte = self.read(1)
+            if not byte:
+                break
+            line.extend(byte)
+            if byte == b"\n":
+                break
+        return bytes(line)
 
 
 def candidate_directory(revision, assistant_rename=False):
@@ -116,7 +151,8 @@ def serve():
     caller = os.environ.get("QREXEC_REMOTE_DOMAIN")
     if caller not in {"usr-assistant", "sys-agent"}:
         raise ValueError("only usr-assistant may submit candidates")
-    line = sys.stdin.buffer.readline(4097)
+    incoming = SourceReader(sys.stdin.buffer)
+    line = incoming.readline(4097)
     if len(line) > 4096 or not line.endswith(b"\n"):
         raise ValueError("invalid request header")
     header = json.loads(line)
@@ -140,7 +176,8 @@ def serve():
         raise ValueError("unexpected submission fields")
     if review.REQUIRED.exists():
         for path in (STATE / "jobs").glob("*/status.json"):
-            if json.loads(path.read_text()).get("status") not in review.ACTIVE:
+            previous, _ = review.read_job(STATE, path.parent.name)
+            if previous["status"] not in review.ACTIVE:
                 continue
             pending = review.status(STATE, path.parent.name)
             if pending["status"] in review.ACTIVE:
@@ -155,7 +192,7 @@ def serve():
     with tempfile.TemporaryFile() as archive:
         remaining = size
         while remaining:
-            chunk = sys.stdin.buffer.read(min(1024 * 1024, remaining))
+            chunk = incoming.read(min(1024 * 1024, remaining))
             if not chunk:
                 raise ValueError("truncated source archive")
             archive.write(chunk)
@@ -211,7 +248,15 @@ def execute(action, target, revision, lock_hash, *, assistant_rename=False):
         input=json.dumps(receipt) + "\n", text=True, capture_output=True,
     )
     if result.returncode:
-        raise ValueError(f"dom0 guest {action} failed: {result.stderr.strip()[:4096]}")
+        try:
+            failure = json.loads(result.stdout)
+        except ValueError:
+            failure = {}
+        detail = failure.get("error") if isinstance(failure, dict) else None
+        error = review.ControlError({"op": "guest-" + action, "request_id": APPROVAL}, result,
+                                    str(detail or result.stderr or "No diagnostic output received")[:4096], failure,
+                                    service="airlock.Ctrl.Guest" + action.title())
+        raise error
     record(STATE / "candidates" / revision / f"guest-{target}-{action}.json", json.loads(result.stdout))
     print(result.stdout, end="")
 
@@ -515,11 +560,19 @@ def main():
             return 0
         options = {"assistant_rename": True} if getattr(args, "assistant_rename", False) else {}
         return request(args.action, getattr(args, "target", None), getattr(args, "repo", REPO), **options)
+    except review.CorruptJob as exc:
+        print(json.dumps({"status": "failed", "error": str(exc), "request_id": exc.identity,
+                          "record": str(exc.path), "recovery_required": True}), flush=True)
+        print(str(exc), file=sys.stderr)
+        return 1
     except BlockingIOError as exc:
         print(json.dumps({"status": "busy", "error": str(exc),
                           **({"lock": exc.holder} if isinstance(exc, LockBusy) else {})}), flush=True)
         return 24
     except (ValueError, OSError, subprocess.SubprocessError, json.JSONDecodeError, KeyError, IndexError, TypeError) as exc:
+        if args.action in {"serve", "review-status-serve"}:
+            print(json.dumps({"status": "failed", "operation": args.action,
+                              "error": str(exc)[:4096]}), flush=True)
         print(f"airlock-sys-ctrl-guest-deploy: {exc}", file=sys.stderr)
         return 1
 

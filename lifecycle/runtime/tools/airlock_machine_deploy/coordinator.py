@@ -484,6 +484,11 @@ class Coordinator:
                 temporary.rename(candidate)
             finally:
                 shutil.rmtree(temporary, ignore_errors=True)
+        descriptor = os.open(candidate.parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
         return candidate
 
     def inspect_guest(self, receipt):

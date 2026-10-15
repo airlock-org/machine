@@ -16,6 +16,7 @@ REQUIRED = Path("/etc/airlock/controller-review-required")
 ACTIVE = {"queued", "awaiting_approval", "building"}
 EXITS = {"rejected": 20, "cancelled": 21, "scope_exceeded": 22, "stale_review": 23, "failed": 1}
 CONTROL_TIMEOUT = 10
+JOB_STATES = ACTIVE | set(EXITS) | {"planned", "built", "deployment_started"}
 
 class Stopped(Exception):
     def __init__(self, status):
@@ -23,13 +24,20 @@ class Stopped(Exception):
         self.status = status
 
 
+class CorruptJob(ValueError):
+    def __init__(self, identity, path, reason):
+        self.identity, self.path = identity, path
+        super().__init__(f"Controller job {identity} at {path} is unreadable or invalid: {reason}. "
+                         "Inspect and explicitly repair this record before submitting changes; history was not skipped.")
+
+
 class ControlError(ValueError):
-    def __init__(self, request, result, message, response=None):
+    def __init__(self, request, result, message, response=None, *, service="ReviewControl"):
         self.details = {"operation": request.get("op"), "request_id": request.get("request_id"),
                         "exit_code": result.returncode, "stdout": result.stdout[-4096:],
-                        "stderr": result.stderr[-4096:], "response": response}
+                        "stderr": result.stderr[-4096:], "response": response, "service": service}
         outcome = f"exit {result.returncode}" if result.returncode is not None else "no exit code"
-        super().__init__(f"ReviewControl {request.get('op')} request {request.get('request_id', '(new)')} "
+        super().__init__(f"{service} {request.get('op')} request {request.get('request_id', '(new)')} "
                          f"failed ({outcome}): {message}")
 
 def user_env():
@@ -69,10 +77,23 @@ def job_path(state, identity):
         raise ValueError("invalid request ID")
     return state / "jobs" / identity / "status.json"
 
+
+def read_job(state, identity):
+    path = state / "jobs" / str(identity) / "status.json"
+    try:
+        path = job_path(state, identity)
+        snapshot = path.read_bytes()
+        value = json.loads(snapshot)
+        if (not isinstance(value, dict) or not isinstance(value.get("status"), str)
+                or value["status"] not in JOB_STATES
+                or value.get("request_id", identity) != identity):
+            raise ValueError("invalid job status or request identity")
+    except (OSError, ValueError, TypeError) as exc:
+        raise CorruptJob(identity, path, str(exc)[:1024]) from exc
+    return value, snapshot
+
 def status(state, identity, *, refresh=True):
-    path = job_path(state, identity)
-    snapshot = path.read_bytes()
-    value = json.loads(snapshot)
+    value, snapshot = read_job(state, identity)
     if not refresh and value.get("decision") == "approved":
         return value
     value["controller_lock"] = lock_status(state / "lock")
@@ -93,9 +114,9 @@ def status(state, identity, *, refresh=True):
             value["observation_error"] = "Could not inspect controller worker: " + str(exc)
             return value
         if running.returncode:
-            current = path.read_bytes()
+            current_value, current = read_job(state, identity)
             if current != snapshot:
-                return {**json.loads(current), "controller_lock": lock_status(state / "lock")}
+                return {**current_value, "controller_lock": lock_status(state / "lock")}
             value.update(status="cancelled" if value["status"] == "awaiting_approval" else "failed",
                          error="Controller job was interrupted; no new approval was granted by reconnecting.")
     return value
@@ -174,7 +195,7 @@ def authorize(deploy, header, update):
 
 def work(deploy, identity, operation=None):
     path = job_path(deploy.STATE, identity)
-    value = status(deploy.STATE, identity)
+    value, _ = read_job(deploy.STATE, identity)
     header = value["request"]
     def update(phase, **extra):
         if operation:

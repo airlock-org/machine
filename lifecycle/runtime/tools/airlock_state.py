@@ -6,6 +6,7 @@ import logging
 import os
 from pathlib import Path
 import stat
+import secrets
 import tempfile
 import time
 
@@ -70,10 +71,23 @@ def lock_status(path):
             identity = _process_identity(owner["pid"])
             if any(owner[key] != value for key, value in identity.items()):
                 raise ValueError("stale lock owner")
+            descriptor = Path(f"/proc/{owner['pid']}/fd/{owner['lock_fd']}")
+            current = stream.fileno()
+            holder = descriptor.stat()
+            actual = os.fstat(current)
+            if (holder.st_dev, holder.st_ino) != (actual.st_dev, actual.st_ino):
+                raise ValueError("owner descriptor no longer refers to this lock")
+            information = Path(f"/proc/{owner['pid']}/fdinfo/{owner['lock_fd']}").read_text()
+            fields = dict(line.split(":", 1) for line in information.splitlines() if ":" in line)
+            if (int(fields["pos"].strip()) != owner["lock_position"]
+                    or not any("FLOCK" in line and "WRITE" in line
+                               for line in information.splitlines() if line.startswith("lock:"))):
+                raise ValueError("owner details belong to a different lock acquisition")
             elapsed = max(0, time.monotonic() - owner["acquired_monotonic"])
-            return {**owner, "held": True, "elapsed_seconds": round(elapsed, 1)}
+            return {**owner, "held": True, "verified": True, "elapsed_seconds": round(elapsed, 1)}
         except (OSError, ValueError, KeyError, TypeError, IndexError):
-            return {"held": True, "owner": "Unknown operation", "reason": "Owner details unavailable"}
+            return {"held": True, "verified": False, "owner": "Unknown operation",
+                    "reason": "Current owner details could not be verified"}
 
 
 class LockBusy(BlockingIOError):
@@ -107,6 +121,15 @@ class NamedLock:
                 fcntl.flock(self.stream, fcntl.LOCK_EX | (0 if self.blocking else fcntl.LOCK_NB))
             except BlockingIOError as exc:
                 raise LockBusy(lock_status(self.path)) from exc
+            # A kernel-held descriptor position identifies this acquisition even
+            # if every attempt to replace stale diagnostic metadata fails.
+            self.info.update(lock_fd=self.stream.fileno(), lock_position=None)
+            try:
+                position = secrets.randbits(32) + 1
+                os.lseek(self.stream.fileno(), position, os.SEEK_SET)
+                self.info["lock_position"] = position
+            except OSError as exc:
+                LOGGER.warning("Cannot identify lock acquisition for %s: %s", self.path, exc)
             self._remove_metadata()
             self.info.update(pid=os.getpid(), acquired_at=time.time(),
                              acquired_monotonic=time.monotonic())
