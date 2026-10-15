@@ -170,6 +170,157 @@ assert.equal(WorkspacePreview.prototype._init,originalInit);
 """, shell=True)
 
 
+@pytest.mark.parametrize("wm_class", ["sys-ctrl:airlock-ctrl", "sys-ctrl:org.airlock.ctrl"])
+def test_new_control_review_switches_workspace_and_focuses_once(javascript, wm_class):
+    javascript(REVIEW_SETUP + f"const wmClass={json.dumps(wm_class)};" + """
+const {ext,home,terminal}=reviewDesktop();
+const review=openReview(ext,{wmClass});
+assert.equal(review.workspace,terminal.workspace);
+assert.equal(wm.current,home.workspace);
+assert.equal(activations.length,0);
+overview.visible=true;
+mapWindow(review);
+assert.equal(wm.current,review.workspace);
+assert.equal(display.focus_window,review);
+assert.equal(overview.visible,false);
+assert.equal(activations.length,1);
+home.workspace.activate();
+review.emit('notify::wm-class');
+mapWindow(review);ext._sync();
+assert.equal(activations.length,1);
+assert.equal(wm.current,home.workspace);
+const next=openReview(ext,{wmClass});mapWindow(next);
+assert.equal(activations.length,2);
+assert.equal(display.focus_window,next);
+ext.disable();
+""", shell=True)
+
+
+@pytest.mark.parametrize("identity,wm_class,kind,transient", [
+    ({"kind": "vm", "name": "usr-home"}, "sys-ctrl:airlock-ctrl", 0, False),
+    ({"kind": "unknown"}, "sys-ctrl:airlock-ctrl", 0, False),
+    ({"kind": "local", "name": "sys-gui"}, "sys-ctrl:airlock-ctrl", 0, False),
+    ({"kind": "vm", "name": "sys-ctrl"}, "sys-ctrl:org.gnome.Console", 0, False),
+    ({"kind": "vm", "name": "sys-ctrl"}, "sys-ctrl:airlock-ctrl-spoof", 0, False),
+    ({"kind": "vm", "name": "sys-ctrl"}, "org.airlock.ctrl", 0, False),
+    ({"kind": "vm", "name": "sys-ctrl"}, "sys-ctrl:airlock-ctrl", 1, False),
+    ({"kind": "vm", "name": "sys-ctrl"}, "sys-ctrl:airlock-ctrl", 0, True),
+])
+def test_other_windows_cannot_request_review_focus(javascript, identity, wm_class, kind, transient):
+    options = json.dumps({"origin": identity, "wmClass": wm_class, "kind": kind, "transient": transient})
+    javascript(REVIEW_SETUP + f"const options={options};" + """
+const {ext,home}=reviewDesktop();
+const window=openReview(ext,options);mapWindow(window);
+window.emit('notify::wm-class');ext._sync();
+assert.equal(activations.length,0);
+assert.equal(wm.current,home.workspace);
+ext.disable();
+""", shell=True)
+
+
+@pytest.mark.parametrize("order", ["identity-before-map", "map-before-identity", "class-after-map"])
+def test_review_focus_waits_for_identity_mapping_and_class(javascript, order):
+    javascript(REVIEW_SETUP + f"const order={json.dumps(order)};" + """
+const {ext,home}=reviewDesktop();
+const review=openReview(ext,{origin:UNKNOWN,wmClass:order==='class-after-map'?null:'sys-ctrl:airlock-ctrl'});
+if(order!=='identity-before-map')mapWindow(review);
+assert.equal(activations.length,0);
+review.origin={kind:'vm',name:'sys-ctrl'};
+await ext._scan();
+if(order==='identity-before-map'){
+ assert.equal(activations.length,0);
+ mapWindow(review);
+}else if(order==='class-after-map'){
+ assert.equal(activations.length,0);
+ review.wmInstance='sys-ctrl:airlock-ctrl';review.emit('notify::wm-class');
+}
+assert.equal(activations.length,1);
+assert.equal(wm.current,review.workspace);
+assert.equal(display.focus_window,review);
+home.workspace.activate();await ext._scan();
+assert.equal(activations.length,1);
+assert.equal(wm.current,home.workspace);
+ext.disable();
+""", shell=True)
+
+
+@pytest.mark.parametrize("mode", ["isLocked", "isGreeter"])
+def test_review_waits_for_unlocked_desktop(javascript, mode):
+    javascript(REVIEW_SETUP + f"const mode={json.dumps(mode)};" + """
+const {ext,home}=reviewDesktop();
+shellMocks.Main.sessionMode[mode]=true;
+const review=openReview(ext);mapWindow(review);
+assert.equal(activations.length,0);
+assert.equal(wm.current,home.workspace);
+shellMocks.Main.sessionMode[mode]=false;
+shellMocks.Main.sessionMode.emit('updated');
+assert.equal(activations.length,1);
+assert.equal(display.focus_window,review);
+home.workspace.activate();shellMocks.Main.sessionMode.emit('updated');
+assert.equal(activations.length,1);
+assert.equal(wm.current,home.workspace);
+ext.disable();
+""", shell=True)
+
+
+def test_extension_reload_does_not_refocus_existing_review(javascript):
+    javascript(REVIEW_SETUP + """
+const {ext,home}=reviewDesktop();
+const review=openReview(ext);mapWindow(review);
+assert.equal(activations.length,1);
+ext.disable();home.workspace.activate();
+ext.enable();finishInventory();await ext._scan();mapWindow(review);
+review.emit('notify::wm-class');
+assert.equal(activations.length,1);
+assert.equal(wm.current,home.workspace);
+ext.disable();
+""", shell=True)
+
+
+@pytest.mark.parametrize("cleanup", ["closed", "disabled"])
+def test_pending_review_focus_is_cancelled_on_cleanup(javascript, cleanup):
+    javascript(REVIEW_SETUP + f"const cleanup={json.dumps(cleanup)};" + """
+const {ext,home}=reviewDesktop();
+shellMocks.Main.sessionMode.isLocked=true;
+const review=openReview(ext);mapWindow(review);
+if(cleanup==='closed'){
+ review.emit('unmanaged');allWindows.delete(review);
+}else ext.disable();
+shellMocks.Main.sessionMode.isLocked=false;
+shellMocks.Main.sessionMode.emit('updated');
+review.emit('notify::wm-class');mapWindow(review);
+assert.equal(activations.length,0);
+assert.equal(wm.current,home.workspace);
+if(cleanup==='closed')ext.disable();
+""", shell=True)
+
+
+REVIEW_SETUP = """
+// Identity is supplied at the existing trusted-reader boundary. Guest-provided
+// class/title metadata deliberately remains independent for spoofing tests.
+function reviewDesktop(){
+ const home=new Window(wm.workspaces[0]),terminal=new Window(wm.workspaces[1]);
+ home.origin={kind:'vm',name:'usr-home'};terminal.origin={kind:'vm',name:'sys-ctrl'};
+ actors.push({meta_window:home},{meta_window:terminal});
+ const ext=new Controller();
+ ext._resolveSync=window=>window.origin??UNKNOWN;
+ ext._resolve=async window=>window.origin??UNKNOWN;
+ ext.enable();finishInventory();
+ ext._identities.set(home,home.origin);ext._identities.set(terminal,terminal.origin);
+ ext._sync();home.workspace.activate();
+ return {ext,home,terminal};
+}
+function openReview(ext,{origin={kind:'vm',name:'sys-ctrl'},wmClass='sys-ctrl:airlock-ctrl',kind=0,transient=false}={}){
+ const window=new Window(wm.current,kind);
+ Object.assign(window,{origin,wmClass,parent:transient?[...allWindows][0]:null,title:'Airlock Control'});
+ actors.push({meta_window:window});
+ display.emit('window-created',window);
+ return window;
+}
+const mapWindow=window=>global.window_manager.emit('map',{meta_window:window});
+"""
+
+
 MOCKS = """
 class Signals {
  constructor(){this.handlers=new Map();this.next=1;}
@@ -220,7 +371,9 @@ class Window extends Signals {
  get_window_type(){return this.kind;}
  get_client_type(){return 1;}
  is_on_all_workspaces(){return false;}
- get_transient_for(){return null;}
+ get_transient_for(){return this.parent??null;}
+ get_wm_class(){return this.wmClass??null;}
+ get_wm_class_instance(){return this.wmInstance??null;}
  get_workspace(){return this.workspace;}
  located_on_workspace(workspace){return this.workspace===workspace;}
  change_workspace(workspace){this.moves++;this.workspace=workspace;this.emit('workspace-changed');}
@@ -244,7 +397,7 @@ const inventoryFile={
 };
 const monitor=new Signals();monitor.cancel=()=>{monitor.cancelled=true;};
 const wm=new Manager(), display=new Signals(), actors=[];
-globalThis.global={workspace_manager:wm,display,get_current_time:()=>42,get_pointer:()=>[0,0,0],get_window_actors:()=>actors};
+globalThis.global={workspace_manager:wm,window_manager:new Signals(),display,get_current_time:()=>42,get_pointer:()=>[0,0,0],get_window_actors:()=>actors};
 class WorkspacePreview extends Actor {
  constructor(workspace){super();this._init(workspace);}
  _init(workspace){this.metaWorkspace=workspace;this._background=new Actor();this.add_child(this._background);}
@@ -259,6 +412,7 @@ class InjectionManager {
  clear(){for(const restore of this.restore.reverse())restore();}
 }
 const overview=Object.assign(new Signals(),{visible:false,toggles:0,allowed:true,shouldToggleByCornerOrButton(){return this.allowed;},
+ hide(){this.visible=false;},
  toggle(){this.visible=!this.visible;this.toggles++;},
  _overview:{controls:{_thumbnailsBox:{_thumbnails:[]},_workspacesDisplay:{_workspacesViews:[]}}}});
 const nativeIndicators=new Actor(),activities=new Actor({reactive:true,can_focus:true,accessible_name:'Activities'});
@@ -267,6 +421,7 @@ activities._clickGesture=new Signals();activities._clickGesture.connect('recogni
  if(overview.shouldToggleByCornerOrButton())overview.toggle();});
 activities.vfunc_scroll_event=event=>event;
 activities.handleDragOver=source=>source;
+const activations=[];
 globalThis.shellMocks={
  Clutter:{ActorAlign:{CENTER:0},ModifierType:{SHIFT_MASK:1},BindConstraint:class {constructor(properties){Object.assign(this,properties);}},BindCoordinate:{SIZE:1,ALL:2}},Gio:{Settings,Cancellable,
  File:{new_for_path:path=>path.endsWith('inventory.json')?inventoryFile:{monitor_directory:()=>monitor}},
@@ -281,7 +436,8 @@ globalThis.shellMocks={
  Meta:{Window,WindowType:{NORMAL:0,DIALOG:1,MODAL_DIALOG:2},WindowClientType:{WAYLAND:1}},
  St:{BoxLayout:Actor,Widget:Actor,Label:Actor,Button:Actor,ThemeContext:{get_for_stage:()=>({scaleFactor:1})}},
  PanelMenu:{Button:Actor},DND:{DragMotionResult:{MOVE_DROP:2,CONTINUE:3,NO_DROP:0}},
- Main:{panel:{statusArea:{activities},addToStatusArea(name,indicator,index,side){this.placement={name,indicator,index,side};}},
+ Main:{activateWindow(window,time){activations.push({window,time});window.workspace.activate();display.focus_window=window;overview.hide();},
+ panel:{statusArea:{activities},addToStatusArea(name,indicator,index,side){this.placement={name,indicator,index,side};}},
  layoutManager:{addChrome(){},removeChrome(){},primaryMonitor:{x:0,y:0,width:1920,height:1080},findMonitorForActor(){return this.primaryMonitor;}},
  overview,sessionMode:new Signals(),wm:{_shouldAnimateActor:()=>true,actionMoveWindow(window,workspace){window.change_workspace(workspace);workspace.activate();}}},
  Workspace:{Workspace:WorkspacePreview,WorkspaceBackground:class {_updateBorderRadius(){}}},WorkspaceThumbnail:{WorkspaceThumbnail:ThumbnailPreview,ThumbnailsBox:class {_init(){} _updateIndicator(){} addThumbnails(){}}},InjectionManager,

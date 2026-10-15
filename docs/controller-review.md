@@ -6,6 +6,11 @@ application runs in sys-ctrl and forwards its window through the existing Qubes
 GUI agent to sys-gui. App source is a pinned monorepo input, not an adjacent
 checkout or a copy edited inside the machine repository.
 
+In GNOME, sys-gui switches to a newly opened review's workspace and focuses the
+Airlock Control window once, after checking its Qubes VM origin and application
+class. Reviews that arrive while the desktop is locked wait until unlock.
+Routine refreshes and extension reloads do not reactivate an existing window.
+
 Fresh images embed the machine Git revision and lock hash in the host
 generation's `etc/airlock/machine-source.json`. Dom0 uses that identity for
 the initial review baseline before any release has been selected. The boot

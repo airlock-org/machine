@@ -23,6 +23,9 @@ const WORKSPACE_XML = `<node><interface name="org.airlock.Workspaces">
 </interface></node>`;
 
 const TYPES = [Meta.WindowType.NORMAL, Meta.WindowType.DIALOG, Meta.WindowType.MODAL_DIALOG];
+// Qubes prefixes both WM_CLASS fields with the originating VM name. The X11
+// backend uses the executable name; app-id based backends use org.airlock.ctrl.
+const REVIEW_CLASSES = new Set(['sys-ctrl:airlock-ctrl', 'sys-ctrl:org.airlock.ctrl']);
 
 export default class VMWorkspacesExtension extends Extension {
     enable() {
@@ -33,6 +36,8 @@ export default class VMWorkspacesExtension extends Extension {
         this._windows = new Map();
         this._identities = new Map();
         this._pendingPlacement = new Set();
+        this._pendingReviewFocus = new Set();
+        this._mappedWindows = new WeakSet();
         this._owners = new Map();
         this._launches = new Map();
         this._heldActors = new Map();
@@ -103,9 +108,18 @@ export default class VMWorkspacesExtension extends Extension {
             this._watch(window);
             if (TYPES.includes(window.get_window_type())) {
                 this._pendingPlacement.add(window);
+                if (window.get_window_type() === Meta.WindowType.NORMAL && !window.get_transient_for())
+                    this._pendingReviewFocus.add(window);
                 this._prepareWindow(window);
             }
             this._queue();
+        });
+        this._connect(global.window_manager, 'map', (_manager, actor) => {
+            const window = actor.meta_window;
+            if (this._windows.has(window)) {
+                this._mappedWindows.add(window);
+                this._presentReview(window);
+            }
         });
         for (const actor of global.get_window_actors())
             this._watch(actor.meta_window);
@@ -134,17 +148,21 @@ export default class VMWorkspacesExtension extends Extension {
             this._queue();
         });
         const sticky = window.connect('notify::on-all-workspaces', () => this._enforceWorkspace(window));
+        // Mutter notifies wm-class when either class or instance changes.
+        const wmClass = window.connect('notify::wm-class', () => this._presentReview(window));
         const unmanaged = window.connect('unmanaged', () => {
             window.disconnect(changed);
             window.disconnect(unmanaged);
             window.disconnect(sticky);
+            window.disconnect(wmClass);
             this._windows.delete(window);
             this._identities.delete(window);
             this._pendingPlacement.delete(window);
+            this._pendingReviewFocus.delete(window);
             this._lastWorkspace.delete(window);
             this._queue();
         });
-        this._windows.set(window, [changed, unmanaged, sticky]);
+        this._windows.set(window, [changed, unmanaged, sticky, wmClass]);
         this._lastWorkspace.set(window, window.get_workspace());
     }
 
@@ -200,6 +218,34 @@ export default class VMWorkspacesExtension extends Extension {
         this._indicator.visible = this._groups.length > 0 &&
             !Main.sessionMode.isLocked && !Main.sessionMode.isGreeter;
         this._hideTooltip();
+        for (const window of this._pendingReviewFocus)
+            this._presentReview(window);
+    }
+
+    _presentReview(window) {
+        if (!this._active || !this._pendingReviewFocus.has(window) ||
+            this._pendingPlacement.has(window) || !this._mappedWindows.has(window))
+            return;
+        const identity = this._identities.get(window);
+        if (!identity || identity.kind === 'unknown')
+            return;
+        // Application metadata is not proof of VM origin. Only the existing
+        // qubes-guid provenance reader can qualify a window for this exception.
+        if (identity.kind !== 'vm' || identity.name !== 'sys-ctrl') {
+            this._pendingReviewFocus.delete(window);
+            return;
+        }
+        if (window.get_window_type() !== Meta.WindowType.NORMAL || window.get_transient_for() ||
+            ![window.get_wm_class(), window.get_wm_class_instance()].some(value => REVIEW_CLASSES.has(value)) ||
+            Main.sessionMode.isLocked || Main.sessionMode.isGreeter)
+            return;
+        const workspace = window.get_workspace();
+        if (!workspace || workspace.index() < 0)
+            return;
+        // Remove before activation, which emits workspace/focus notifications.
+        // Refreshes and extension reloads must not repeatedly steal focus.
+        this._pendingReviewFocus.delete(window);
+        Main.activateWindow(window, global.get_current_time());
     }
 
     _loadInventory() {
@@ -779,6 +825,7 @@ export default class VMWorkspacesExtension extends Extension {
         }
         this._releaseActor(window);
         this._enforceWorkspace(window);
+        this._presentReview(window);
     }
 
     _prepareWindow(window) {
@@ -1010,6 +1057,7 @@ export default class VMWorkspacesExtension extends Extension {
                 window.disconnect(id);
         }
         this._windows.clear();
+        this._pendingReviewFocus.clear();
         this._lastWorkspace.clear();
         this._internalMoves.clear();
         this._cache.clear();
