@@ -486,8 +486,6 @@ def send_machine_transport(action, transport, revision, lock_hash, receipts):
 
 
 def observe():
-    for path in (STATE / "jobs").glob("*/status.json"):
-        review.reconcile(sys.modules[__name__], path.parent.name)
     result = subprocess.run(
         ["qrexec-client-vm", "dom0", "airlock.Ctrl.MachineControl"],
         input=json.dumps({"schema": "airlock.machine-control.v1", "action": "status"}) + "\n",
