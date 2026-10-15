@@ -101,6 +101,10 @@ in
     # RPC must see package icons and theme indexes through the active profile.
     environment.pathsToLink = [ "/share/icons" "/share/pixmaps" ];
 
+    # Terminals render inside each application VM and need fallback glyphs for
+    # Powerline separators and other Nerd Font symbols used by tools like Zellij.
+    fonts.packages = [ pkgs.nerd-fonts.symbols-only ];
+
     # Qubes supplies a private X server and forwards individual windows to the
     # GuiVM. App VMs do not need their own desktop or display manager.
     environment.systemPackages = [
