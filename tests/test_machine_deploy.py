@@ -1053,6 +1053,47 @@ def test_guest_candidate_updates_boot_system_and_preserves_other_options(
     machine.apply(machine.initial, recover=True)
 
 
+@pytest.mark.parametrize("damage", [None, "system", "provenance"])
+def test_successive_guest_updates_reuse_and_validate_unchanged_pool_generations(
+    machine, topology, tmp_path, monkeypatch, damage
+):
+    first_receipt = guest_receipt(machine, topology)
+    first = machine.guest_candidate(first_receipt)
+    machine.apply(first)
+    retained = deepcopy(machine.generation_details)
+    retained["selected"] = True
+
+    receipt = deepcopy(first_receipt)
+    receipt.update(domain="usr-assistant", generation=18,
+                   system=topology["domains"]["usr-assistant"]["backend"]["system"]["source"] + "-new",
+                   manifest="/var/lib/airlock/closure-store/domains/usr-assistant/generations/18/manifest.json")
+    updated = deepcopy(retained)
+    updated.update({key: receipt[key] for key in ("domain", "generation", "system", "manifest")})
+    updated.update(selected=False, closure_source="/controller-only/usr-assistant/closure")
+    updated["approval"]["source"] = updated["closure_source"]
+    monkeypatch.setattr(machine, "generation_info",
+                        lambda name, generation: {("usr-home", 17): retained,
+                                                  ("usr-assistant", 18): updated}[(name, generation)])
+    candidate = machine.guest_candidate(receipt)
+    manifest, wanted = deploy.load_release(candidate)
+    assert manifest["stagedGenerations"] == {"usr-home": 17, "usr-assistant": 18}
+    assert machine.inspect(candidate)["changed"] == ["usr-assistant"]
+    if damage == "system":
+        retained["system"] = "/wrong-system"
+    elif damage == "provenance":
+        retained["provenance"]["source_revision"] = "f" * 40
+    transaction = tmp_path / "second-transaction"
+    transaction.mkdir()
+    machine.calls.clear()
+    if damage:
+        with pytest.raises(deploy.DeploymentError, match="mismatch"):
+            machine.stage(candidate, wanted, ["usr-assistant"], transaction)
+    else:
+        machine.stage(candidate, wanted, ["usr-assistant"], transaction)
+        assert deploy.read_json(transaction / "staged.json") == manifest["stagedGenerations"]
+    assert not any(call[0] == "airlock-closure-store" for call in machine.calls)
+
+
 def test_guest_update_after_migration_does_not_repeat_retirement_or_private_copy(
     machine, topology
 ):

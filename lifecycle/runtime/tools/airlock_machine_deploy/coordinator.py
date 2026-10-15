@@ -425,8 +425,7 @@ class Coordinator:
             # belong to the transition into the baseline, not later releases.
             retireDomains=[],
             privateVolumeCopies={},
-            stagedGenerations={**(current_release.get("stagedGenerations", {})
-                                  if current_release.get("guestTransport") == "direct-pool-v1" else {}),
+            stagedGenerations={**current_release.get("stagedGenerations", {}),
                                domain: generation},
             guestRootArtifacts={**current_release.get("guestRootArtifacts", {}),
                                 domain: info["root_artifact"]},
@@ -510,12 +509,16 @@ class Coordinator:
             if set(preferred) != expected:
                 raise DeploymentError("direct release is missing admitted generations")
             names = sorted(set(names) | expected)
-        unexpected = set(preferred) - set(names)
+        unexpected = set(preferred) - set(topology["domains"])
         if unexpected:
             raise DeploymentError(
-                "staged generation is not part of this plan: "
+                "staged generation is not part of this topology: "
                 + ", ".join(sorted(unexpected))
             )
+        # Setup converges the whole topology. Previously admitted, unchanged
+        # guests still need their verified pool binding when the original
+        # closure descriptor exists only in the controller's private store.
+        names = sorted(set(names) | set(preferred))
         staged = {}
         for name in names:
             backend = topology["domains"][name]["backend"]
