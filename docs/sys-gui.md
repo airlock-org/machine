@@ -94,8 +94,8 @@ diagnostics are in `journalctl -b -u display-manager` inside `sys-gui`.
 
 In GNOME, forwarded applications supply their own title bars. The trusted Qubes
 GUI daemon requests no additional window-manager decorations. Forwarded windows
-from every application VM have a two-pixel outline in their Qubes label colour
-(for example, red for `usr-assistant`). The daemon draws this on the outer pixels
+from every application VM have a two-pixel outline in their Qubes label colour.
+The daemon draws this on the outer pixels
 of the forwarded window using the VM identity supplied by Qubes, independently
 of application names or classes. Docked tray icons have no added outline.
 This includes personal VMs such as `usr-home`, using the same thickness for

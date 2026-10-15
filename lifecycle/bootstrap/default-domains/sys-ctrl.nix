@@ -1,6 +1,6 @@
 {
   guestHostName = "sys-ctrl";
-  label = "black";
+  label = "red";
   rootImageSizeMiB = 2048;
   # Candidate history and the writable Nix store live in the Qubes private
   # volume, independently of the immutable guest root and shared dom0 pool.

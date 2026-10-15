@@ -24,6 +24,7 @@ let
     "purple"
     "black"
     "khaki"
+    "light-gray"
   ];
 
   qrexecActions = [

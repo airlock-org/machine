@@ -356,7 +356,7 @@
       configRoleDefaults = {
         sys-ctrl = {
           guestHostName = "sys-ctrl";
-          label = "black";
+          label = "red";
           netvm = "sys-firewall";
           rootImageSizeMiB = 128;
           state.persistentSize = configNixPrivateSizeBytes;

@@ -1,6 +1,6 @@
 {
   guestHostName = "usr-assistant";
-  label = "red";
+  label = "light-gray";
   rootImageSizeMiB = 1024;
   netvm = "sys-firewall";
   prefs = {
@@ -16,6 +16,7 @@
     virt_mode = "pvh";
   };
   features = {
+    "airlock-label-color" = "0xd3d3d3";
     "airlock-managed" = "1";
     "airlock-gui-reconnect" = "1";
     "airlock-role" = "usr-assistant";

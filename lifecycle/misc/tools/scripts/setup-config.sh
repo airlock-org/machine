@@ -2277,7 +2277,7 @@ import sys
 import qubesadmin
 
 name, color = sys.argv[1:]
-if name != "khaki" or not re.fullmatch(r"0x[0-9a-fA-F]{6}", color):
+if name not in {"khaki", "light-gray"} or not re.fullmatch(r"0x[0-9a-fA-F]{6}", color):
     raise ValueError("invalid managed custom label")
 app = qubesadmin.Qubes()
 try:
