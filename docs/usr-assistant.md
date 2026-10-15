@@ -67,14 +67,23 @@ git -C ~/airlock-machine config --local user.name 'Your Name'
 git -C ~/airlock-machine config --local user.email 'you@example.com'
 ```
 
-Create a branch when the seeded checkout is detached. Prepare pinned
-Python dependencies with `uv sync --locked`, then run `make test-quick`.
-Tests use the installed Python, with automatic Python downloads disabled.
-Reports go to `$AIRLOCK_LOG_DIR` (`~/.local/state/airlock/logs`).
+Create a branch when the seeded checkout is detached. Match verification to the
+change: routine package-list additions/removals skip repository tests; review
+and commit the exact diff, obtain required source approval before evaluation/build,
+then apply and verify the requested package state. Keep normal Nix build checks
+enabled. Changes to implementation, services, policy or deployment need relevant
+tests; use `make test-quick` when shared behavior could be affected. Do not add
+tests that merely repeat the configured package list. Documentation changes need
+diff and formatting review rather than executable tests.
+
+When testing is needed, prepare pinned Python dependencies with `uv sync --locked`.
+Tests use the installed Python, with automatic Python downloads disabled. Reports
+go to `$AIRLOCK_LOG_DIR` (`~/.local/state/airlock/logs`).
 
 ## Change the running machine
 
-Edit and test this checkout, commit the change, then inspect the normal plan:
+Edit this checkout, verify according to the change, commit, then inspect the
+normal plan:
 
 ```sh
 airlock-usr-assistant-machine-deploy plan

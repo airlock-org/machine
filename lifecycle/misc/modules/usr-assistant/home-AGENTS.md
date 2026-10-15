@@ -7,5 +7,7 @@ start there with `AGENTS.md`, `README.md`,
 and `docs/usr-assistant.md` before changing the system.
 
 Full VM, testing, deployment and recovery guidance is in
-`/etc/airlock/usr-assistant/AGENTS.md`. Test and commit changes in the checkout,
-inspect the deployment plan, and verify the running generations after apply.
+`/etc/airlock/usr-assistant/AGENTS.md`. Follow the checkout's verification rules:
+routine package-list additions/removals skip repository tests; implementation
+changes need relevant tests. Commit changes, inspect the deployment plan, and
+verify the running generations and requested package state after apply.

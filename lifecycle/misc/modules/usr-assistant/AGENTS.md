@@ -36,12 +36,24 @@ chooses a personal identity; preserve existing local or global identity settings
 The seeded remote can point at the external development computer; a working
 upstream remote is not required for local commits or deployment.
 
-Run `make test-quick`. The usr-assistant login environment sets `AIRLOCK_LOG_DIR`
-to `/home/user/.local/state/airlock/logs`; keep the test reports and logs there.
+Match verification to the change, following the checkout's `AGENTS.md`:
+
+- For routine package-list additions/removals, skip repository tests. Review and
+  commit the exact diff, obtain required source approval before evaluation/build,
+  then apply and verify the requested package state. Keep normal Nix build checks
+  enabled; this exception does not cover implementation, service or policy changes.
+- For implementation, service, policy or deployment changes, run relevant tests.
+  Run `make test-quick` when shared behavior could be affected. Add meaningful
+  regressions in pytest, rather than tests that repeat the configured package list.
+- For documentation changes, review the diff and check formatting; executable
+  tests are unnecessary.
+
+When testing is needed, `uv sync --locked` prepares the pinned Python dependencies.
+The usr-assistant login environment sets `AIRLOCK_LOG_DIR` to
+`/home/user/.local/state/airlock/logs`; keep the test reports and logs there.
 The quick suite must remain free of Nix evaluations/builds and automatic tool
-provisioning. `uv sync --locked` prepares the pinned Python dependencies if
-needed before testing. Add meaningful regressions in pytest. Run focused
-`make test-nix` checks only when the change needs evaluation or packaged checks.
+provisioning. Run focused `make test-nix` checks only when the change needs
+evaluation or packaged checks.
 Commit each coherent change, including `flake.lock` when deliberately changed.
 Deployment requires a clean committed checkout.
 

@@ -1,6 +1,16 @@
 # Component testing
 
-`airlock-machine` owns the runtime component tests. Run them from this checkout:
+`airlock-machine` owns the runtime component tests.
+
+Choose verification according to the change. Routine package-list additions and
+removals do not need repository tests: review and commit the exact diff, obtain
+required source approval before evaluation/build, then apply and verify the
+requested package state. Keep normal Nix build checks enabled. Implementation,
+service, policy and deployment changes need relevant tests; run `make test-quick`
+when shared behavior could be affected. Documentation changes need diff and
+formatting review rather than executable tests.
+
+Run tests from this checkout:
 
 ```bash
 make test-quick
