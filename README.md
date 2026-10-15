@@ -25,9 +25,6 @@ airlock machine status
 airlock machine verify
 ```
 
-Use `airlock --help` to list command groups and `airlock machine --help` for
-machine actions and options.
-
 Follow the [workspace guide](docs/usr-assistant.md) to compare the checkout with
 the deployed source, edit and commit configuration, review the deployment plan,
 and apply and verify changes. It also covers source approval and recovery.
