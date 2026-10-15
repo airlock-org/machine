@@ -6,50 +6,50 @@
 </p>
 <p align="center">Machine configuration</p>
 
-This repository defines the NixOS configuration for [AirlockOS](https://github.com/airlock-org/airlock):
-dom0, system VMs, and user VMs. It contains the VM topology, bootstrap,
-runtime services and packages, and component tests, using the Qubes architecture.
+This repository is the machine configuration workspace for
+[AirlockOS](https://github.com/airlock-org/airlock). On an installed system, it
+lives at `~/airlock-machine` inside `usr-assistant`. Use it to review and edit
+the Nix configuration for dom0 and the other VMs, commit changes, and submit
+deployments.
 
-The parent [airlock repository](https://github.com/airlock-org/airlock) handles
-image assembly, provisioning, deployment from an external computer, and
-integration tests. It pins this repository as a Git submodule.
+`usr-assistant` is the system workspace for configuration and administration.
+Personal applications and files remain in `usr-home`.
 
-## Build and checks
+## Using the workspace
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for prerequisites. Prepare dependencies
-and run the quick checks:
-
-```sh
-uv sync --locked
-make test-quick
-```
-
-For Nix builds on x86_64-linux, choose an isolated development-store location:
+Open **usr-assistant: Console** from GNOME, then inspect the running machine:
 
 ```sh
-export AIRLOCK_DATA_ROOT=/path/to/airlock-data
-# Optional Nix evaluations and package checks:
-make test-nix
-make machine-build
+cd ~/airlock-machine
+airlock-usr-assistant-machine-deploy status
+airlock-usr-assistant-machine-deploy verify
 ```
 
-The whole-machine release outputs are:
+Follow the [workspace guide](docs/usr-assistant.md) to compare the checkout with
+the deployed source, edit and commit configuration, review the deployment plan,
+and apply and verify changes. It also covers source approval and recovery.
+Installed-machine changes do not require a parent repository checkout or a push
+to GitHub.
 
-```text
-.#airlock-machine-release-usb-lab
-.#airlock-machine-release-usb-gui-lab
-```
+## Configuration files
 
-They contain the dom0 system, VM topology, setup and deployment programs, source
-revision, and lock hash. USB disk image assembly lives in the parent repository.
+- [flake.nix](flake.nix): machine configurations and release outputs.
+- [lifecycle/misc/modules/](lifecycle/misc/modules/): NixOS modules for VM software and services.
+- [lifecycle/bootstrap/default-domains/](lifecycle/bootstrap/default-domains/): default VM topology and settings.
 
-## Documentation
+See the [configuration guide](https://github.com/airlock-org/airlock/blob/main/docs/lab-configuration.md)
+for module composition and hardware settings.
 
-- [Personal applications and files in usr-home](docs/usr-home.md).
-- [System workspace in usr-assistant](docs/usr-assistant.md): configuration, administration, and deployment from the installed machine.
-- [Component testing](docs/testing.md).
-- [Machine configuration](https://github.com/airlock-org/airlock/blob/main/docs/lab-configuration.md): configuration modules and hardware settings.
-- [Deployment and rollback](https://github.com/airlock-org/airlock/blob/main/docs/machine-deployment.md): deployment from an external computer and recovery procedures.
+## Contributing
+
+This repository also contains bootstrap and deployment tooling, runtime
+services and packages, and component tests. [CONTRIBUTING.md](CONTRIBUTING.md)
+covers developer setup, checks, and release builds.
+
+The parent [airlock repository](https://github.com/airlock-org/airlock) pins this
+repository as a Git submodule and handles image assembly, provisioning, external
+deployment tooling, and integration tests. For deployment from an external
+computer, use its [deployment guide](https://github.com/airlock-org/airlock/blob/main/docs/machine-deployment.md).
 
 AirlockOS is under active development. Qubes OS security equivalence has not
 been established. See [SECURITY.md](SECURITY.md) for limitations and reporting.

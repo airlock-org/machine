@@ -1,62 +1,35 @@
-# Development workspace in usr-assistant
+# System workspace in usr-assistant
 
-`usr-assistant` is a separate development domain with a persistent machine
-checkout and command-line tools, including Codex in Console. Everyday
-applications and personal files remain in `usr-home`.
+`usr-assistant` is a separate VM for machine configuration and administration.
+Its persistent checkout at `~/airlock-machine` is the configuration workspace
+for the installed machine. Everyday applications and personal files remain in
+`usr-home`.
 
 System changes use the existing Qubes mechanisms. Sys-ctrl validates and builds
 committed source; dom0 retains policy, lifecycle, storage, and activation
 authority. Development-specific dom0 access is explicitly configured.
 
-Search GNOME for **usr-assistant: Console**. Console is the ordinary GNOME Console
-application running inside usr-assistant, with its windows forwarded through Qubes
-to sys-gui. It is discovered from the VM's own desktop entries, like apps in
-usr-home. Open it and start Codex in the persistent machine checkout:
+## Open the workspace
+
+Search GNOME for **usr-assistant: Console**. Console runs in usr-assistant, with
+its windows forwarded through Qubes to sys-gui, like applications in usr-home.
+Open the checkout:
 
 ```sh
 cd ~/airlock-machine
-codex
+git status
 ```
 
 Workspace software is declared in the
-[guest module](../lifecycle/misc/modules/usr-assistant-guest.nix) and its imports.
-The checkout, login credentials, session history, and Python dependency
-cache live on usr-assistant's private volume and survive root-generation updates.
-The existing upstream remote is not needed to commit and deploy locally.
-
-On x86_64 Linux, the complete upstream Codex release is pinned by
-`lifecycle/misc/overlays/codex-release.nix`. Its CLI, code-mode host,
-sandbox tools and other package-relative runtimes are installed together;
-glibc-linked runtime helpers are adapted to Nix during the build. Update the
-version and archive hash in `lifecycle/runtime/tools/pkgs/codex-release/default.nix`,
-then commit, deploy and verify `codex --version` in the running usr-assistant.
-An npm or home-directory replacement would not update this managed package.
+[VM module](../lifecycle/misc/modules/usr-assistant-guest.nix) and its imports.
+The checkout, login credentials, session history, and Python dependency cache
+live on usr-assistant's private volume and survive system-generation updates.
+Committing and deploying locally does not require pushing to the upstream remote.
 
 Usr-assistant uses PVH with no assigned PCI devices. Sys-net owns the physical
 network hardware; usr-assistant reaches the internet through sys-firewall.
 
-## First use
-
-Codex needs your own login. For a ChatGPT account with device login enabled,
-run `codex login --device-auth` in usr-assistant, then complete the displayed code
-using a browser in usr-home. API-key login is also available. Credentials remain
-inside usr-assistant; the system does not import another VM's browser profile or
-embed authentication in the machine configuration.
-
-`~/AGENTS.md` is a brief introduction pointing to `~/airlock-machine` and the
-full installed guidance. On upgrade, the previous `~/dev/airlock-machine`
-checkout moves as a whole, preserving local branches and uncommitted files.
-An existing destination or user-written home introduction is preserved.
-If you already had a `.venv` in the moved checkout, run
-`uv sync --locked --reinstall` once to refresh launchers containing the old path.
-
-`CODEX_HOME` points at `~/.codex`. On first boot, a symlink there named
-`AGENTS.md` points at `/etc/airlock/usr-assistant/AGENTS.md`, which contains the VM
-map, source locations, tests, deployment, observation, and recovery commands.
-It follows the selected system generation. An existing user-written file or
-override is preserved. The checkout's own `AGENTS.md` supplies project rules.
-Official setup references: [authentication](https://developers.openai.com/codex/auth/)
-and [instruction discovery](https://developers.openai.com/codex/guides/agents-md/).
+## Git identity and checks
 
 Setup fills missing Git name and email values with `Airlock User` and
 `user@airlock.invalid` in `~/airlock-machine` only. It runs after source seeding
@@ -99,7 +72,7 @@ airlock-usr-assistant-machine-deploy verify
 Establish the recorded deployed-source baseline and compare its tree with the
 checkout, including committed and uncommitted changes. Record that identity and
 the starting checkout revision. A clean Git tree or successful build does not
-prove deployment. Check host and guest state: a single-guest update does not
+prove deployment. Check dom0 and the other VMs: a single-VM update does not
 establish that the whole checkout is active, and an uncompleted activation or
 required reboot remains pending.
 
@@ -125,22 +98,24 @@ airlock-usr-assistant-machine-deploy status
 airlock-usr-assistant-machine-deploy verify
 ```
 
-These commands send locked committed source to sys-ctrl. The controller builds
-and admits validated artifacts through the existing Qubes interfaces; dom0
-coordinates activation. No parent `airlock` checkout is needed for installed
-machine changes. The external development computer still uses its parent repo
-and submodule workflow for image and development-tool changes.
+These commands send locked committed source to sys-ctrl. Normal submissions
+require [source approval](controller-review.md) before evaluation and building.
+The controller builds and admits validated artifacts through the existing Qubes
+interfaces; dom0 coordinates activation. No parent `airlock` checkout is needed
+for installed-machine changes. The external development computer still uses its
+parent repo and submodule workflow for image and development-tool changes.
 
-The single-guest `guest-plan --target VM` / `guest-apply --target VM` route is
-for guest-only changes. Use the whole-machine route for topology, new VMs,
-routing, preferences, and host policy. Read the plan before activation.
-Status and verification are required after apply. If the host requires a
-reboot, verify again after the laptop restarts.
+The `guest-plan --target VM` / `guest-apply --target VM` route is
+for changes limited to an existing VM. Use the whole-machine route for topology,
+new VMs, routing, preferences, and dom0 policy. Read the plan before activation.
+Status and verification are required after apply. If dom0 requires a reboot,
+verify again after the machine restarts.
 
-Updating usr-assistant closes its Console and Codex processes. Deployment continues
-in a detached dom0 worker; reconnect and use `codex resume` after checking the
-worker outcome. Zellij can preserve an interactive session across terminal/SSH
-disconnects, but cannot keep a process alive across a VM restart.
+Updating usr-assistant closes its running applications. Deployment continues in
+a detached dom0 worker. Reopen Console after the VM restarts and check the worker
+outcome; if using Codex, continue with `codex resume`. Zellij can preserve an
+interactive session across terminal/SSH disconnects, but cannot keep a process
+alive across a VM restart.
 
 For recovery, inspect `status` before using `resume` or `rollback`. A failed
 controller does not prevent the typed status/verification/recovery interface.
@@ -152,10 +127,43 @@ Fix the committed source rather than leaving runtime configuration overlays.
 The installed `nix` command selects the approved pool-backed builder store at
 `/rw/airlock-builder/merged`; read-only shared inputs remain pinned independently
 by dom0. Workspace state and logs live under `~/.local/state/airlock`.
-Do not run the external-development GC targets against the guest builder or
-collect the shared pool or dom0 store.
+Do not run the external-development GC targets against the usr-assistant builder
+or collect the shared pool or dom0 store.
 
-The main files are `flake.nix`, guest modules in `lifecycle/misc/modules/`, VM
+The main files are `flake.nix`, VM modules in `lifecycle/misc/modules/`, VM
 defaults in `lifecycle/bootstrap/default-domains/`, and deployment clients in
 `lifecycle/runtime/tools/`. See [the builder design](config-system.md) and the
-parent repository's `docs/machine-deployment.md` when working externally.
+[external deployment guide](https://github.com/airlock-org/airlock/blob/main/docs/machine-deployment.md)
+when working from another computer.
+
+## Optional: using Codex
+
+Codex is available in Console. Start it from the configuration checkout:
+
+```sh
+cd ~/airlock-machine
+codex
+```
+
+Codex needs your own login. For a ChatGPT account with device login enabled,
+run `codex login --device-auth` in usr-assistant, then complete the displayed code
+using a browser in usr-home. API-key login is also available. Credentials remain
+inside usr-assistant; the system does not import another VM's browser profile or
+embed authentication in the machine configuration.
+
+`CODEX_HOME` points at `~/.codex`. On first boot, a symlink there named
+`AGENTS.md` points at `/etc/airlock/usr-assistant/AGENTS.md`, which contains the VM
+map, source locations, tests, deployment, observation, and recovery commands.
+It follows the selected system generation. An existing user-written file or
+override is preserved. The checkout's own `AGENTS.md` supplies project rules.
+Official setup references: [authentication](https://developers.openai.com/codex/auth/)
+and [instruction discovery](https://developers.openai.com/codex/guides/agents-md/).
+
+## Workspace instructions and older checkouts
+
+`~/AGENTS.md` is a brief introduction pointing to `~/airlock-machine` and the
+full installed guidance. On upgrade, the previous `~/dev/airlock-machine`
+checkout moves as a whole, preserving local branches and uncommitted files.
+An existing destination or user-written home introduction is preserved.
+If you already had a `.venv` in the moved checkout, run
+`uv sync --locked --reinstall` once to refresh launchers containing the old path.
