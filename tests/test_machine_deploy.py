@@ -1094,6 +1094,68 @@ def test_successive_guest_updates_reuse_and_validate_unchanged_pool_generations(
     assert not any(call[0] == "airlock-closure-store" for call in machine.calls)
 
 
+@pytest.fixture
+def retained_guest_baseline(machine, topology, monkeypatch):
+    receipt = guest_receipt(machine, topology)
+    admitted = deepcopy(machine.generation_details)
+    retained = deepcopy(admitted)
+    backend = topology["domains"]["usr-assistant"]["backend"]
+    source = "/expired/build/assistant-closure"
+    backend["store"]["source"] = source
+    retained.update(domain="usr-assistant", generation=9, selected=True,
+                    system=backend["system"]["source"], closure_source=source)
+    retained["approval"]["source"] = source
+    retained["provenance"]["source_revision"] = "c" * 40
+    manifest = deploy.read_json(machine.initial / "release.json")
+    manifest.update(stagedGenerations={"usr-assistant": 9},
+                    guestRootArtifacts={"usr-assistant": retained["root_artifact"]},
+                    guestProvenance={"usr-assistant": {
+                        "revision": "c" * 40, "lockHash": "b" * 64}})
+    deploy.atomic_json(machine.initial / "release.json", manifest)
+    deploy.atomic_json(machine.initial / "topology.json", topology)
+    deploy.atomic_json(machine.initial / "staged.json", manifest["stagedGenerations"])
+    monkeypatch.setattr(machine, "generation_info", lambda name, generation:
+                        retained if name == "usr-assistant" else admitted)
+    return receipt, retained
+
+
+@pytest.mark.parametrize("recovery", ["resume", "rollback"])
+def test_guest_update_preserves_retained_guests_with_expired_build_sources(
+    machine, retained_guest_baseline, recovery
+):
+    receipt, _ = retained_guest_baseline
+    candidate = machine.guest_candidate(receipt)
+    assert deploy.read_json(candidate / "staged.json") == {
+        "usr-assistant": 9, "usr-home": 17}
+    machine.fail_after = "/nix/store/setup/bin/airlock-setup-config"
+    with pytest.raises(deploy.DeploymentError, match="after storage selection"):
+        machine.apply(candidate)
+    assert machine.status()["plan"]["stop"] == ["usr-home"]
+    staged = machine.state / "transactions" / machine.status()["id"] / "staged.json"
+    assert deploy.read_json(staged)["usr-assistant"] == 9
+    machine.fail_after = None
+    machine.calls.clear()
+    machine.pool_match = 1
+    result = machine.apply(candidate if recovery == "resume" else machine.initial,
+                           recover=True)
+    assert result["phase"] == "reboot-required"
+    staged = machine.state / "transactions" / result["id"] / "staged.json"
+    assert deploy.read_json(staged)["usr-assistant"] == 9
+    assert not any(call[:2] == ("airlock-closure-store", "admit")
+                   for call in machine.calls)
+
+
+def test_unchanged_retained_generation_is_validated_before_guest_disruption(
+    machine, retained_guest_baseline
+):
+    receipt, retained = retained_guest_baseline
+    candidate = machine.guest_candidate(receipt)
+    retained["system"] = "/nix/store/unexpected-system"
+    with pytest.raises(deploy.DeploymentError, match="identity mismatch"):
+        machine.apply(candidate)
+    assert not any(call[0] == "qvm-shutdown" for call in machine.calls)
+
+
 def test_guest_update_after_migration_does_not_repeat_retirement_or_private_copy(
     machine, topology
 ):

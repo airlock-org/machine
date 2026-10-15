@@ -509,7 +509,10 @@ class Coordinator:
             if set(preferred) != expected:
                 raise DeploymentError("direct release is missing admitted generations")
             names = sorted(set(names) | expected)
-        unexpected = set(preferred) - set(topology["domains"])
+        unexpected = set(preferred) - {
+            name for name, domain in topology["domains"].items()
+            if domain["backend"]["type"] == "nix-closure"
+        }
         if unexpected:
             raise DeploymentError(
                 "staged generation is not part of this topology: "

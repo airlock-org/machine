@@ -27,6 +27,7 @@ def manager(tmp_path, monkeypatch):
     monkeypatch.setattr(review, "load_release", lambda path: (
         baseline if str(path) == "baseline" else candidate, {"domains": {"sys-ctrl": {}, "usr-home": {}}}))
     instance = review.Reviews(coordinator)
+    instance.baseline_manifest = baseline
     instance.candidate = candidate
     instance.plan = plan
     return instance
@@ -56,6 +57,21 @@ def test_pending_cannot_build_and_same_candidate_reuses_one_approval(manager):
     with pytest.raises(review.DeploymentError, match="stale_review"):
         manager.require(approved["request_id"], "c" * 40, "d" * 64)
     assert pending(manager)["request_id"] != approved["request_id"]
+
+
+def test_baseline_lock_change_invalidates_approval_without_revision_change(manager):
+    approved = approve(manager)
+    manager.baseline_manifest["lockHash"] = "f" * 64
+    with pytest.raises(review.DeploymentError, match="stale_review"):
+        manager.require(approved["request_id"], "c" * 40, "d" * 64)
+    assert pending(manager)["request_id"] != approved["request_id"]
+
+
+@pytest.mark.parametrize("lock_hash", [None, "", "g" * 64, "a" * 63, 123])
+def test_review_rejects_baseline_without_valid_lock_identity(manager, lock_hash):
+    manager.baseline_manifest["lockHash"] = lock_hash
+    with pytest.raises(review.DeploymentError, match="baseline is unavailable"):
+        pending(manager)
 
 
 @pytest.mark.parametrize("decision,status", [("reject", "rejected"), ("cancelled", "cancelled")])
