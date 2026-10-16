@@ -292,7 +292,7 @@ let
       pkgs.python3 pkgs.systemd pkgs.python3.pkgs.qubes-core-qrexec.domU
     ];
     text = if cfg.configNixPackage != null then ''
-      exec ${lib.getExe cfg.configNixPackage} ${lib.optionalString (role == "usr-assistant") "__nix-submit"} "$@"
+      exec ${lib.getExe roleNixPackage} ${lib.optionalString (role == "usr-assistant") "__nix-submit"} "$@"
     '' else ''
       exec ${pkgs.python3}/bin/python3 ${lib.fileset.toSource {
         root = ../../runtime/tools;
