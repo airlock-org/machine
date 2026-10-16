@@ -287,7 +287,9 @@ let
       pkgs.coreutils pkgs.gitMinimal pkgs.gnutar pkgs.gzip pkgs.gawk pkgs.jq
       pkgs.python3 pkgs.systemd pkgs.python3.pkgs.qubes-core-qrexec.domU
     ];
-    text = ''
+    text = if cfg.configNixPackage != null then ''
+      exec ${lib.getExe cfg.configNixPackage} "$@"
+    '' else ''
       exec ${pkgs.python3}/bin/python3 ${lib.fileset.toSource {
         root = ../../runtime/tools;
         fileset = lib.fileset.unions [
@@ -307,7 +309,8 @@ in
     ctrlDeploy
     pkgs.gitMinimal
     pkgs.gnutar
-  ] ++ (if role == "usr-assistant" then [ airlockCli ] else [ ]);
+  ] ++ lib.optional (cfg.configNixPackage != null) cfg.configNixPackage
+    ++ (if role == "usr-assistant" then [ airlockCli ] else [ ]);
   systemd.services.airlock-controller-observe = lib.mkIf (role == "sys-ctrl") {
     description = "Record authoritative dom0 deployment outcomes";
     after = [ "qubes-qrexec-agent.service" ];
@@ -325,7 +328,7 @@ in
   environment.etc."qubes-rpc/airlock.Ctrl.GuestDeploy" = lib.mkIf (role == "sys-ctrl") {
     source = pkgs.writeShellScript "airlock-ctrl-guest-deploy-qrexec" ''
       # Old host policy still names sys-agent during the controller bootstrap.
-      # Python accepts that caller only for the explicit rename wire protocol;
+      # The controller accepts that caller only for the explicit rename wire protocol;
       # normal requests require usr-assistant. The host Qubes policy is unchanged.
       case "''${QREXEC_REMOTE_DOMAIN:-}" in
         usr-assistant|sys-agent) ;;

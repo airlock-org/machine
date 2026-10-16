@@ -6,6 +6,14 @@ application runs in sys-ctrl and forwards its window through the existing Qubes
 GUI agent to sys-gui. App source is a pinned monorepo input, not an adjacent
 checkout or a copy edited inside the machine repository.
 
+The default domains install separate `airlock-nix-client` and
+`airlock-nix-controller` release packages from that same pinned apps input.
+The existing `airlock machine` commands and qrexec services keep their public
+interfaces. Rust owns submission, review, detached jobs and build/transfer
+orchestration; the existing dom0 coordinator and Qubes services retain approval,
+admission and activation authority. Python controller sources remain available
+for older module consumers that do not select a Rust role package.
+
 In GNOME, sys-gui switches to a newly opened review's workspace and focuses the
 Airlock Control window once, after checking its Qubes VM origin and application
 class. Reviews that arrive while the desktop is locked wait until unlock.
@@ -95,6 +103,8 @@ Use normal status/verify for actual
 deployment completion; deployment_started only acknowledges the detached dom0
 worker. Status reconciliation detects controller interruption and root-side
 scope refusal, including when a VM restart interrupts the original reply.
+The Rust snapshot exposes root-side progress and scope refusal in
+`deployment_observation`, separately from the worker-owned `status`.
 Queries reconcile the returned snapshot without rewriting the job record; the
 controller worker owns its updates. JSON publication uses a unique temporary
 file per write so concurrent publications cannot collide on a shared filename.
@@ -142,10 +152,11 @@ lock, and the next owner replaces any leftover metadata.
 Verified ownership also requires the live process's locked descriptor to match
 the recorded acquisition marker and lock-file identity. Details that cannot be
 verified are labelled unknown, including metadata left from an earlier operation
-in the same still-running process. The marker uses a descriptor position, without
-writing or extending the lock file.
+in the same still-running process. The marker uses a descriptor position. Python lock diagnostics use a separate
+owner record; Rust controller locks retain bounded owner metadata in the stable
+lock inode itself. Neither implementation renames or deletes the held lock.
 Metadata publication, process-identity lookup and metadata cleanup failures are
-logged as warnings. They cannot abort the protected operation or replace its
+reported as warnings or unavailable owner diagnostics. They cannot abort the protected operation or replace its
 original error; kernel exclusion and durable deployment journals remain required.
 
 ## Development administration
@@ -158,3 +169,18 @@ An explicit development-host `--legacy-dom0` apply uses the coordinator's
 development-mode marker, preserves artifact validation and deployment journaling,
 and records `administrative: true` in the transaction. Normal controller requests
 cannot select this option; the review marker and Qubes policy remain enabled.
+
+## Rust controller records
+
+New controller records live under
+`~/.local/share/airlock/controller/rust-v1/records/`. Jobs are named
+`job-REQUEST_ID.json`; reviews, builds, plans, apply acknowledgements and dom0
+observations have separate resource names and writer locks. The operation lock
+is `.locks/operation-controller.lock`. Source archives and build GC roots are
+retained alongside these directories. The observation timer never rewrites jobs.
+
+Legacy Python history is preserved. A request-ID lookup still returns its record,
+labelled `record_format: legacy-python`. A new submission checks both namespaces:
+a running legacy worker blocks submission, an inactive interrupted job does not
+become approved, and a damaged record requires explicit recovery. Switching
+executables is not permission to discard unresolved history.

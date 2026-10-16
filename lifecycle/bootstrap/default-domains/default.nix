@@ -59,8 +59,9 @@ let
       guestRole = "usr-assistant";
       inherit extraSpecialArgs;
       modules = [
-        ({ lib, ... }: {
+        ({ lib, pkgs, ... }: {
           networking.hostName = usrAssistantRoleDefaults.guestHostName;
+          airlock.qubeGuest.configNixPackage = pkgs.callPackage "${airlockCtrlSource}/airlock-nix/package.nix" { role = "client"; };
           # Match the personal application VMs on the current lab display.
           airlock.appGui.scale = lib.mkDefault 3;
         })
@@ -92,6 +93,7 @@ let
         ({ pkgs, ... }: {
           networking.hostName = sysCtrlRoleDefaults.guestHostName;
           airlock.qubeGuest.configRepoPath = "/home/user/dev/airlock-machine";
+          airlock.qubeGuest.configNixPackage = pkgs.callPackage "${airlockCtrlSource}/airlock-nix/package.nix" { role = "controller"; };
           # Bound concurrent builds in the controller's fixed memory budget.
           nix.settings.max-jobs = 1;
           nix.settings.sandbox = true;

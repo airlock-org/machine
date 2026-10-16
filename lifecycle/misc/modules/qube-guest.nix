@@ -426,6 +426,12 @@ in
       description = "Editable config repository path in the sys-config-staging role.";
     };
 
+    configNixPackage = lib.mkOption {
+      type = lib.types.nullOr lib.types.package;
+      default = null;
+      description = "Role-specific Airlock Nix client or controller package; null retains the legacy Python route.";
+    };
+
     configValidationPath = lib.mkOption {
       type = lib.types.str;
       default = "/home/${cfg.user}/airlock-config-validation";
