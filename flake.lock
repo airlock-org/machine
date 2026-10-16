@@ -8,18 +8,18 @@
       },
       "locked": {
         "dir": "apps",
-        "lastModified": 1792111051,
-        "narHash": "sha256-5t2FKuwhHLWKx2Gr2kspEbwDlMM+lmdBJVmS5GKAqwM=",
+        "lastModified": 1792144154,
+        "narHash": "sha256-2X/viL21fnCLIDbK2TG5m84IVzbatwmDaoJxmxsArmw=",
         "ref": "refs/heads/main",
-        "rev": "4515545b8f71d5da005b11efca1c45d7828876c1",
-        "revCount": 1081,
+        "rev": "48959dfaeb9ea941d9b541ad2d03859d966ae88f",
+        "revCount": 1083,
         "submodules": false,
         "type": "git",
         "url": "https://github.com/airlock-org/airlock.git"
       },
       "original": {
         "dir": "apps",
-        "rev": "4515545b8f71d5da005b11efca1c45d7828876c1",
+        "rev": "48959dfaeb9ea941d9b541ad2d03859d966ae88f",
         "type": "git",
         "url": "https://github.com/airlock-org/airlock.git"
       }

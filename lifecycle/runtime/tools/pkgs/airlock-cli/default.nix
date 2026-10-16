@@ -7,10 +7,11 @@
   util-linux,
   writeShellApplication,
   configNixStore ? null,
+  commandName ? "airlock",
 }:
 
 writeShellApplication {
-  name = "airlock";
+  name = commandName;
 
   runtimeInputs = [
     coreutils
@@ -28,6 +29,7 @@ writeShellApplication {
   meta = {
     description = "Inspect and manage AirlockOS machine configuration and deployment";
     license = lib.licenses.mit;
+    mainProgram = commandName;
     platforms = [ "x86_64-linux" ];
   };
 }

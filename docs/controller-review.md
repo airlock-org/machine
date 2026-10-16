@@ -6,8 +6,8 @@ application runs in sys-ctrl and forwards its window through the existing Qubes
 GUI agent to sys-gui. App source is a pinned monorepo input, not an adjacent
 checkout or a copy edited inside the machine repository.
 
-The default domains install separate `airlock-nix-client` and
-`airlock-nix-controller` release packages from that same pinned apps input.
+The default domains install separate `airlock-cli` (providing `airlock`) and
+`airlock-nix-service` release packages from that same pinned apps input.
 The existing `airlock machine` commands and qrexec services keep their public
 interfaces. Rust owns submission, review, detached jobs and build/transfer
 orchestration; the existing dom0 coordinator and Qubes services retain approval,

@@ -279,7 +279,11 @@ let
   '';
   airlockCli = pkgs.callPackage ../../runtime/tools/pkgs/airlock-cli {
     inherit configNixStore;
+    commandName = if cfg.configNixPackage != null then "airlock-machine-cli" else "airlock";
   };
+  roleNixPackage = if role == "usr-assistant" && cfg.configNixPackage != null
+    then cfg.configNixPackage.override { machineCli = airlockCli; }
+    else cfg.configNixPackage;
   ctrlDeploy = pkgs.writeShellApplication {
     name = "airlock-sys-ctrl-guest-deploy";
     runtimeInputs = [
@@ -288,7 +292,7 @@ let
       pkgs.python3 pkgs.systemd pkgs.python3.pkgs.qubes-core-qrexec.domU
     ];
     text = if cfg.configNixPackage != null then ''
-      exec ${lib.getExe cfg.configNixPackage} "$@"
+      exec ${lib.getExe cfg.configNixPackage} ${lib.optionalString (role == "usr-assistant") "__nix-submit"} "$@"
     '' else ''
       exec ${pkgs.python3}/bin/python3 ${lib.fileset.toSource {
         root = ../../runtime/tools;
@@ -309,7 +313,7 @@ in
     ctrlDeploy
     pkgs.gitMinimal
     pkgs.gnutar
-  ] ++ lib.optional (cfg.configNixPackage != null) cfg.configNixPackage
+  ] ++ lib.optional (roleNixPackage != null) roleNixPackage
     ++ (if role == "usr-assistant" then [ airlockCli ] else [ ]);
   systemd.services.airlock-controller-observe = lib.mkIf (role == "sys-ctrl") {
     description = "Record authoritative dom0 deployment outcomes";

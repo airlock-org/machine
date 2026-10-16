@@ -175,7 +175,7 @@ def authorize(deploy, header, update):
                 env[name] = value
         if not env.get("DISPLAY") and not env.get("WAYLAND_DISPLAY"):
             raise ValueError("controller graphical session is unavailable; no build was started")
-        app = os.environ.get("AIRLOCK_CTRL_BIN", "/run/current-system/sw/bin/airlock-ctrl")
+        app = os.environ.get("AIRLOCK_CTRL_BIN", "/run/current-system/sw/bin/airlock-ctrl-gui")
         result = subprocess.run([app, "--repo", str(deploy.REPO), "--base", context["baseline"],
                                  "--candidate", header["revision"], "--approval-request", str(path)],
                                 env=env, capture_output=True, text=True)

@@ -429,7 +429,7 @@ in
     configNixPackage = lib.mkOption {
       type = lib.types.nullOr lib.types.package;
       default = null;
-      description = "Role-specific Airlock Nix client or controller package; null retains the legacy Python route.";
+      description = "Role-specific airlock-cli or airlock-nix-service package; null retains the legacy Python route.";
     };
 
     configValidationPath = lib.mkOption {
