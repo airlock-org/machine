@@ -1,7 +1,7 @@
 SHELL := bash
 
 # Prefer explicitly supplied or installed native tooling; the parent bootstrap supports source checkouts.
-AIRLOCK_DEV_BIN ?= $(or $(shell command -v airlock-dev 2>/dev/null),$(abspath ../lifecycle/misc/tools/scripts/airlock-dev.sh))
+AIRLOCK_DEV_BIN ?= $(or $(shell command -v airlock-dev 2>/dev/null),$(abspath ../crates/airlock-dev/scripts/airlock-dev.sh))
 AIRLOCK_DEV = $(AIRLOCK_DEV_BIN) --repository-root "$(CURDIR)"
 AIRLOCK_NIX = $(AIRLOCK_DEV) with-environment -- environment run-store -- nix
 AIRLOCK_LOG_DIR ?= $(if $(AIRLOCK_DATA_ROOT),$(AIRLOCK_DATA_ROOT)/logs/airlock-machine,$(if $(wildcard /run/media/user/data/.),/run/media/user/data/airlock/logs/airlock-machine,$(CURDIR)/.airlock-logs))

@@ -6,7 +6,7 @@ if [ -z "$_AIRLOCK_ENV_NATIVE" ]; then
   if command -v airlock-dev >/dev/null 2>&1; then
     _AIRLOCK_ENV_NATIVE=airlock-dev
   else
-    _AIRLOCK_ENV_NATIVE="$ROOT/../lifecycle/misc/tools/scripts/airlock-dev.sh"
+    _AIRLOCK_ENV_NATIVE="$ROOT/../crates/airlock-dev/scripts/airlock-dev.sh"
   fi
 fi
 _AIRLOCK_ENV_EXPORTS="$("$_AIRLOCK_ENV_NATIVE" --repository-root "$ROOT" environment exports)" || return

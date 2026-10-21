@@ -38,7 +38,7 @@ Commit each coherent change here. When working in the parent checkout, update
 and commit its submodule pin afterwards. Installed-machine changes use the
 [deployment workflow](scripts/runtime/README.md) without a parent checkout.
 For external image/provisioning work, use the parent's
-[image operations](https://github.com/airlock-org/airlock/blob/main/lifecycle/image/tools/README.md).
+[image operations](https://github.com/airlock-org/airlock/blob/main/docs/image-operations.md).
 
 Keep implementation explanations in source and tests. Product documentation
 belongs to the website; Git history retains investigation and validation records.

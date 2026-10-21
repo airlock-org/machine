@@ -55,7 +55,7 @@ covers developer setup, checks, and release builds.
 The parent [airlock repository](https://github.com/airlock-org/airlock) pins this
 repository as a Git submodule and handles image assembly, provisioning, external
 deployment tooling, and integration tests. For deployment from an external
-computer, use its [development operations](https://github.com/airlock-org/airlock/blob/main/lifecycle/misc/tools/README.md).
+computer, use its [development operations](https://github.com/airlock-org/airlock/blob/main/docs/development-operations.md).
 
 AirlockOS is under active development. Qubes OS security equivalence has not
 been established. See [SECURITY.md](SECURITY.md) for limitations and reporting.
