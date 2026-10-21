@@ -46,9 +46,10 @@ the prepared artifact, outside Git. Preparation does not build or deploy a machi
 ## Contributing
 
 Supporting files are grouped by purpose: `assets/` holds component files,
-`bootstrap/` holds the initial editable runtime configuration, `scripts/` groups
-bootstrap, runtime, development and validation commands, and `patches/` holds
-upstream changes by package. Upstream source remains in `vendor/`.
+`bootstrap/` holds the initial editable runtime configuration, `scripts/` holds
+installed-machine operating guidance and the workstation environment adapter,
+and `patches/` holds upstream changes by package. Upstream source remains in
+`vendor/`.
 [CONTRIBUTING.md](CONTRIBUTING.md)
 covers developer setup, checks, and release builds.
 

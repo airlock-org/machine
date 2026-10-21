@@ -20,7 +20,8 @@ asking for permission; apply a deployment when the user's request authorizes it.
   with `git status`, `AGENTS.md`, `README.md`, and `scripts/runtime/README.md` there.
 - Machine declarations are in `src/`; reusable VM and host components are in
   the admitted `airlock-config` Rust crate. `make prepare` emits a separate source tree and prints its `path:` flake
-  reference. Keep generated Nix outside Git. Deployment clients are in `scripts/runtime/`.
+  reference. Keep generated Nix outside Git. Use the installed `airlock machine`
+  commands for deployment; `scripts/runtime/README.md` explains their workflow.
 - Preserve Xen, qrexec, QubesDB, qubesd, libvirt, and Qubes policy. Prefer the
   upstream integrations; author configuration in Rust/Rusix.
 - Commit successful fixes in the checkout; temporary live edits, `/run`
