@@ -9,7 +9,7 @@
 +function airlockCapture(operation, kind, file) {
 +    try {
 +        Gio.Subprocess.new([
-+            '@captureHelper@', 'capture', operation, kind, file.get_path(),
++            '@captureHelper@', 'screen-capture', operation, kind, file.get_path(),
 +            '--config', '@captureConfig@',
 +        ], Gio.SubprocessFlags.NONE);
 +    } catch (error) {
@@ -94,7 +94,7 @@
 +                // Do not transfer at the UI's earlier recording-state change.
 +                try {
 +                    Gio.Subprocess.new([
-+                        '@captureHelper@', 'capture', 'enqueue', 'video', this._filePath,
++                        '@captureHelper@', 'screen-capture', 'enqueue', 'video', this._filePath,
 +                        '--config', '@captureConfig@',
 +                    ], Gio.SubprocessFlags.NONE);
 +                } catch (error) {
