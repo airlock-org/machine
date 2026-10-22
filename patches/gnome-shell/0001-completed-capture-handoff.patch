@@ -9,7 +9,7 @@
 +function airlockCapture(operation, kind, file) {
 +    try {
 +        Gio.Subprocess.new([
-+            '@captureHelper@', 'screen-capture', operation, kind, file.get_path(),
++            '@captureHelper@', '@captureCommand@', operation, kind, file.get_path(),
 +            '--config', '@captureConfig@',
 +        ], Gio.SubprocessFlags.NONE);
 +    } catch (error) {
@@ -33,13 +33,13 @@
 -                }
 -
 -                app.launch([file], global.create_app_launch_context(0, -1));
-+                airlockCapture('show', 'video', file);
++                airlockCapture('@captureShow@', 'video', file);
              });
              notification.connect('activated', () => {
                  try {
 -                    Gio.app_info_launch_default_for_uri(
 -                        file.get_uri(), global.create_app_launch_context(0, -1));
-+                    airlockCapture('open', 'video', file);
++                    airlockCapture('@captureOpen@', 'video', file);
                  } catch (err) {
                      logError(err, 'Error opening screencast');
                  }
@@ -55,7 +55,7 @@
  
          // Add it to recent files.
          saveRecentFile(file);
-+        airlockCapture('enqueue', 'image', file);
++        airlockCapture('@captureEnqueue@', 'image', file);
      }
  
      // Create a St.ImageContent icon for the notification. We want
@@ -73,13 +73,13 @@
 -            }
 -
 -            app.launch([file], global.create_app_launch_context(0, -1));
-+            airlockCapture('show', 'image', file);
++            airlockCapture('@captureShow@', 'image', file);
          });
          notification.connect('activated', () => {
              try {
 -                Gio.app_info_launch_default_for_uri(
 -                    file.get_uri(), global.create_app_launch_context(0, -1));
-+                airlockCapture('open', 'image', file);
++                airlockCapture('@captureOpen@', 'image', file);
              } catch (err) {
                  logError(err, 'Error opening screenshot');
              }
@@ -94,7 +94,7 @@
 +                // Do not transfer at the UI's earlier recording-state change.
 +                try {
 +                    Gio.Subprocess.new([
-+                        '@captureHelper@', 'screen-capture', 'enqueue', 'video', this._filePath,
++                        '@captureHelper@', '@captureCommand@', '@captureEnqueue@', 'video', this._filePath,
 +                        '--config', '@captureConfig@',
 +                    ], Gio.SubprocessFlags.NONE);
 +                } catch (error) {
