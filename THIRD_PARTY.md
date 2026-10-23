@@ -9,7 +9,7 @@ copyright, license, and redistribution requirements.
 
 | Source | Relationship |
 | --- | --- |
-| [CertainLach/nixos-qubes](https://github.com/CertainLach/nixos-qubes) | Vendored Qubes/NixOS packaging and module base, with local compatibility fixes. |
+| [CertainLach/nixos-qubes](https://github.com/CertainLach/nixos-qubes) | Qubes/NixOS packaging and module base, vendored with local compatibility fixes in the pinned Airlock application source. |
 | [NixOS/nixpkgs](https://github.com/NixOS/nixpkgs) | Locked NixOS/Xen modules and packages; individual package licenses vary. |
 | [Qubes OS](https://github.com/QubesOS) | Existing control, RPC, policy, GUI, storage, and VM lifecycle stack. |
 | [Xen](https://xenproject.org/) and [libvirt](https://libvirt.org/) | Upstream virtualization stack and packaging patches. |
