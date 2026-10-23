@@ -16,9 +16,10 @@ copyright, license, and redistribution requirements.
 | [GNOME Shell](https://gitlab.gnome.org/GNOME/gnome-shell), [pyxdg](https://gitlab.freedesktop.org/xdg/pyxdg), and [EROFS utilities](https://git.kernel.org/pub/scm/linux/kernel/git/xiang/erofs-utils.git/) | Targeted derived patches for integration and storage fixes. |
 
 Exact fetched revisions are recorded in the flake locks and package definitions.
-Patch directories group changes by upstream project; patch headers retain
-provenance. A package's Nix license metadata is not a license grant for all
-source in this repository.
+Shared integration patches come from `crates/patches` in the pinned Airlock
+application source, grouped by upstream project with provenance retained in their
+headers. A package's Nix license metadata is not a license grant for all source
+in this repository.
 
 ## Outstanding vendored-source terms
 

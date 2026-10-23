@@ -48,8 +48,8 @@ the prepared artifact, outside Git. Preparation does not build or deploy a machi
 Supporting files are grouped by purpose: `assets/` holds component files,
 `bootstrap/` holds the initial editable runtime configuration, `scripts/` holds
 installed-machine operating guidance and the workstation environment adapter,
-and `patches/` holds upstream changes by package. Upstream source remains in
-`vendor/`.
+and upstream source remains in `vendor/`. Shared integration patches and desktop
+implementation assets come from the pinned Airlock application source.
 [CONTRIBUTING.md](CONTRIBUTING.md)
 covers developer setup, checks, and release builds.
 
