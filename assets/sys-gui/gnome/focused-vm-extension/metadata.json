@@ -1,7 +1,0 @@
-{
-  "name": "Airlock Focused VM",
-  "description": "Show the focused application's Qubes VM and label colour.",
-  "uuid": "airlock-focused-vm@airlock.local",
-  "shell-version": ["50"],
-  "version": 1
-}
