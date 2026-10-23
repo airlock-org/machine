@@ -6,7 +6,7 @@ older development snapshots are not supported releases.
 
 ## Sensitive reports
 
-Use GitHub's [private vulnerability reporting](https://github.com/airlock-org/machine/security/advisories/new)
+Use GitHub's [private vulnerability reporting](https://github.com/airlockos-org/airlockos-machine/security/advisories/new)
 when available. Otherwise, arrange a private reporting channel with the
 maintainer. Do not post exploit details, credentials, or sensitive machine
 information in a public issue. No response-time commitment is currently offered.
