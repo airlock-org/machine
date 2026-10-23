@@ -20,12 +20,12 @@ export default class StartupProgressExtension extends Extension {
         this._started = GLib.get_monotonic_time();
         this._snapshot = null;
         this._observedWorking = false;
-        this._button = new PanelMenu.Button(0.0, 'Application startup');
+        this._button = new PanelMenu.Button(0.0, 'Airlock startup');
         const box = new St.BoxLayout({style_class: 'airlock-startup-panel'});
         this._spinner = new Animation.Spinner(16, {hideOnStop: true});
         this._warning = new St.Icon({icon_name: 'dialog-warning-symbolic',
             style_class: 'system-status-icon', visible: false});
-        this._label = new St.Label({text: 'Starting apps',
+        this._label = new St.Label({text: 'Starting Airlock',
             y_align: Clutter.ActorAlign.CENTER});
         box.add_child(this._spinner);
         box.add_child(this._warning);
@@ -91,10 +91,11 @@ export default class StartupProgressExtension extends Extension {
     _unavailable() {
         // Keep the last per-VM observations visible; lost transport cannot mean completion.
         this._button.show();
-        this._label.text = 'Starting apps';
-        this._warning.hide();
+        this._label.text = 'Startup status unavailable';
+        this._warning.show();
         this._spinner.play();
         this._summary.label.text = 'Startup status unavailable; retrying. Showing the last known VM status.';
+        this._button.accessible_name = this._summary.label.text;
         this._updateElapsed();
         this._schedule();
     }
@@ -130,7 +131,7 @@ export default class StartupProgressExtension extends Extension {
         if (!snapshot.complete) {
             this._observedWorking = true;
             this._button.show();
-            this._label.text = snapshot.attention ? 'Startup needs attention' : 'Starting apps';
+            this._label.text = snapshot.attention ? 'Startup needs attention' : 'Starting Airlock';
             return;
         }
 
@@ -139,7 +140,7 @@ export default class StartupProgressExtension extends Extension {
             this._button.hide();
             return;
         }
-        this._label.text = 'Apps ready';
+        this._label.text = 'Ready';
         this._timer = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 5, () => {
             this._timer = 0;
             this._button.menu.close();
