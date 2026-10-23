@@ -31,5 +31,6 @@ pub fn machine() -> Result<MachineSnapshot, AuthoringError> {
     machine.add(&assistant)?;
 
     machine.set_host(&gui, &firewall, &controller);
+    components::diagnostics::enable(&mut machine, &assistant);
     machine.finish()
 }

@@ -15,14 +15,26 @@ name = "airlock-config"
 version = "0.1.0"
 dependencies = [
  "airlock-build",
+ "airlock-diagnostics",
  "airlock-machine-core",
  "airlock-nix-core",
  "airlock-sys-gui-service",
+ "anyhow",
  "rusix",
  "serde",
  "serde_json",
  "sha2",
  "tempfile",
+]
+
+[[package]]
+name = "airlock-diagnostics"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde",
+ "serde_json",
+ "vstd",
 ]
 
 [[package]]
