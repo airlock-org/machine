@@ -38,6 +38,12 @@ that committed changes are deployed. A selected release awaiting activation or
 reboot is still pending; a single-VM update does not prove that the entire
 checkout is active on the host and every VM.
 
+A fresh USB uses `phase: image-baseline` with `selection: null` until its first
+deployment. Read the image's `baseline.revision` and `baseline.lock_hash` from
+`status`; require `baseline.initialized`, matching host/source observations, and
+a successful `verify` before editing. If initialization is incomplete, let
+startup finish and retry. Image verification does not create deployment history.
+
 If older deployable changes or an unfinished/failed current deployment remain,
 stop before making new system changes. Report the pending commits/files, affected
 components and deployment state, then ask whether the user wants to deploy,

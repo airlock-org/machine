@@ -18,6 +18,11 @@ uncommitted changes. Stop for older undeployed work, an incomplete or failed
 deployment, a required reboot, or an unknown baseline. Follow the checkout's
 `AGENTS.md` for resolving and rechecking that state.
 
+A fresh USB reports `phase: image-baseline` and `selection: null`. Its source is
+in `baseline.revision` and `baseline.lock_hash`; successful `verify` checks that
+image and the running VM generations before the first deployment. An
+uninitialized baseline means startup must finish before verification can pass.
+
 After making and committing the intended changes:
 
 ```sh
