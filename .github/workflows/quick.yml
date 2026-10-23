@@ -53,7 +53,7 @@ jobs:
           make rust-check
       - name: Exercise shared native machine regressions
         run: |
-          make test-quick
+          make -C "$AIRLOCK_TEST_SOURCE" test-quick
           make -C "$AIRLOCK_TEST_SOURCE" test-native-mounts
       - name: Retain validation evidence
         if: always()

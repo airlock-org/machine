@@ -23,5 +23,3 @@
 # Rust compilation artifacts stay in ignored build directories.
 /flake.nix
 /generated/
-/bootstrap/initial-runtime-config/flake.nix
-/bootstrap/initial-runtime-config/generated/

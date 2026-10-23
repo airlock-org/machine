@@ -1,65 +1,18 @@
-<p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/airlock-wordmark-thin-red-dark.svg">
-    <img alt="AirlockOS" src="docs/assets/airlock-wordmark-thin-red-light.svg" height="64">
-  </picture>
-</p>
-<p align="center">Machine configuration</p>
+# Machine configuration
 
-This repository is the machine configuration workspace for
-[AirlockOS](https://github.com/airlock-org/airlock). On an installed system, it
-lives at `~/airlock-machine` inside `usr-assistant`. Use it to review and edit
-the Rust configuration for dom0 and the other VMs, commit changes, and submit
-deployments.
+Edit [src/machine.rs](src/machine.rs) to configure this computer's VMs,
+connections and enabled features. [GUI border settings](assets/sys-gui/gnome/gui-style.json)
+are the remaining separate machine setting. Shared implementation, validation
+machines and operating guidance come from the pinned Airlock application source.
 
-`usr-assistant` is the system workspace for configuration and administration.
-Personal applications and files remain in `usr-home`.
+On an installed system this checkout lives at `~/airlock-machine` in
+`usr-assistant`. Read [AGENTS.md](AGENTS.md) before changing it. The installed
+guide at `/etc/airlock/usr-assistant/AGENTS.md` explains inspection, source
+approval, deployment and verification; local commits do not require a GitHub push.
 
-## Using the workspace
+`make prepare` emits an inspectable Nix build tree outside Git. It does not
+build or deploy the system. Application dependencies and their offline Cargo
+sources are supplied by the installed authoring environment.
 
-Open **usr-assistant: Console** from GNOME, then inspect the running machine:
-
-```sh
-cd ~/airlock-machine
-airlock machine status
-airlock machine verify
-```
-
-[Deployment and recovery commands](scripts/runtime/README.md) cover
-source approval, planning, activation, and verification. Installed-machine
-changes do not require a parent checkout or a push to GitHub.
-
-## Authoring
-
-Start with [the physical machine](src/physical.rs). Each VM is declared,
-configured through its typed handle and registered with the machine. Shared
-system composition and runtime contracts come from the pinned `airlock-config`
-crate. [The nested machine](src/bootstrap.rs) supplies the validation environment.
-
-Commit Rust source and dependency locks. `make prepare` inside an installed
-authoring VM emits a content-addressed build tree under ignored `target/nix/`
-and prints its `path:` flake reference. The admitted input mount supplies the authoring library and
-offline Cargo dependencies. Workstations can override those paths with
-`AIRLOCK_APPS` and `AIRLOCK_CARGO_VENDOR`. Generated Nix remains inspectable in
-the prepared artifact, outside Git. Preparation does not build or deploy a machine.
-
-## Contributing
-
-Supporting files are grouped by purpose: `assets/` holds component files,
-`bootstrap/` holds the initial editable runtime configuration, `scripts/` holds
-installed-machine operating guidance and the workstation environment adapter.
-Shared integration patches, desktop implementation assets and the vendored
-Qubes/NixOS integration come from the pinned Airlock application source.
-[CONTRIBUTING.md](CONTRIBUTING.md)
-covers developer setup, checks, and release builds.
-
-The parent [airlock repository](https://github.com/airlock-org/airlock) pins this
-repository as a Git submodule and handles image assembly, provisioning, external
-deployment tooling, and integration tests. For deployment from an external
-computer, use its [development operations](https://github.com/airlock-org/airlock/blob/main/docs/development-operations.md).
-
-AirlockOS is under active development. Qubes OS security equivalence has not
-been established. See [SECURITY.md](SECURITY.md) for limitations and reporting.
-
-Original code is [MIT licensed](LICENSE). Dependencies retain their own terms;
-see [third-party notices](THIRD_PARTY.md).
+Original configuration is [MIT licensed](LICENSE). See [SECURITY.md](SECURITY.md)
+and [third-party notices](THIRD_PARTY.md) for security and dependency terms.
